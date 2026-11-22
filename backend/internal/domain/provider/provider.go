@@ -17,6 +17,10 @@ type Message struct {
 	Images  []Image      `json:"images,omitempty"`  // only when the model has image_input
 	Calls   []ToolCall   `json:"calls,omitempty"`   // asked by the model (Role = "assistant")
 	Results []ToolResult `json:"results,omitempty"` // returned to the model (Role = "tool")
+	// Opaque is the provider's own encoding of an assistant answer (for example reasoning
+	// blocks that must be replayed unchanged). Only the adapter that produced it reads it;
+	// it is content, so it never goes to logs or events.
+	Opaque json.RawMessage `json:"opaque,omitempty"`
 }
 
 // Image is an inline image input.
