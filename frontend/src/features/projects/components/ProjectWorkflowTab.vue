@@ -4,6 +4,7 @@ import { useI18n } from 'vue-i18n'
 import { ROUTE_NAMES } from '@/app/router/routeNames'
 import { useFormat } from '@/shared/format/useFormat'
 import StateLabel from '@/shared/ui/StateLabel.vue'
+import RepositoryPanel from '@/features/repository/components/RepositoryPanel.vue'
 import type { StageSummary } from '../api/projectsApi'
 import { useCurrentProjectStore } from '../stores/currentProjectStore'
 
@@ -122,6 +123,11 @@ function waitingDependencies(stage: StageSummary): string {
         </li>
       </ul>
     </template>
+
+    <!-- ESP-06: the clone address of the project repository, for whoever has a role (US-42). -->
+    <div class="mt-6">
+      <RepositoryPanel v-if="store.project" :project-id="store.project.id" />
+    </div>
   </section>
 </template>
 
