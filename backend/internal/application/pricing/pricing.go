@@ -153,7 +153,8 @@ func (s *Service) CorrectPrice(ctx context.Context, principal identity.Principal
 	if err != nil {
 		return pricing.Price{}, err
 	}
-	if current.Version() != version {
+	// "*" (If-Match: *) accepts any current version; the trigger still refuses periods in force or used.
+	if version != "*" && current.Version() != version {
 		return pricing.Price{}, failure.New(failure.KindConflict, CodeFailedPrecondition, nil)
 	}
 	if current.Used || !current.EffectiveSince.After(s.now()) {

@@ -132,6 +132,10 @@ services:
       context: ./frontend
     environment:
       API_BASE_URL: /api/v1
+      # marco1: the login page offers the fixed dev identity (POST /api/v1/dev/session).
+      DEV_SIGN_IN: "true"
+    depends_on:
+      - api
     ports:
       - "127.0.0.1:8080:8080"
 
