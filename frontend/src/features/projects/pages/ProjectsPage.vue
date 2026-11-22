@@ -5,6 +5,7 @@ import { ROUTE_NAMES } from '@/app/router/routeNames'
 import type { ProjectState } from '@/shared/api/contract'
 import { useLoader } from '@/shared/composables/useLoader'
 import { useFormat } from '@/shared/format/useFormat'
+import { useSessionStore } from '@/shared/session/sessionStore'
 import LoadingState from '@/shared/ui/LoadingState.vue'
 import ProblemAlert from '@/shared/ui/ProblemAlert.vue'
 import StateLabel from '@/shared/ui/StateLabel.vue'
@@ -18,6 +19,9 @@ const route = useRoute()
 const router = useRouter()
 const format = useFormat()
 const filter = ref<StateFilter>('all')
+const session = useSessionStore()
+/** ESP-26 section 2: the administrator also lists every project of the organization (US-02 CA-6). */
+const scope = ref<'my' | 'organization'>('my')
 const projects = ref<Project[]>([])
 const counts = ref<Partial<Record<ProjectState, number>>>({})
 const nextCursor = ref<string | null>(null)
@@ -27,6 +31,7 @@ const moreFailure = ref<unknown>()
 const loader = useLoader(async () => {
   const page = await projectsApi.listProjects({
     state: filter.value === 'all' ? undefined : [filter.value],
+    scope: scope.value,
   })
   projects.value = page.items
   counts.value = page.count_by_state
@@ -41,7 +46,7 @@ const notice = computed(() => {
   return typeof value === 'string' && STREAM_END_NOTICES.has(value) ? value : undefined
 })
 
-watch(filter, () => void loader.run(), { immediate: true })
+watch([filter, scope], () => void loader.run(), { immediate: true })
 
 /** CA-04-8: the next page comes in without repeating or skipping a project. */
 async function loadMore(): Promise<void> {
@@ -52,6 +57,7 @@ async function loadMore(): Promise<void> {
     const page = await projectsApi.listProjects({
       state: filter.value === 'all' ? undefined : [filter.value],
       cursor: nextCursor.value,
+      scope: scope.value,
     })
     const known = new Set(projects.value.map((project) => project.id))
     projects.value = [...projects.value, ...page.items.filter((project) => !known.has(project.id))]
@@ -98,6 +104,25 @@ function dismissNotice(): void {
     >
       {{ $t(`projects.list.notices.${notice}`) }}
     </v-alert>
+
+    <div
+      v-if="session.isAdministrator"
+      role="group"
+      :aria-label="$t('projects.list.scopeLabel')"
+      class="d-flex flex-wrap ga-2 mb-2"
+    >
+      <v-btn
+        v-for="value in ['my', 'organization'] as const"
+        :key="value"
+        :variant="scope === value ? 'flat' : 'outlined'"
+        :color="scope === value ? 'primary' : undefined"
+        :aria-pressed="scope === value"
+        size="small"
+        @click="scope = value"
+      >
+        {{ $t(`projects.list.scopes.${value}`) }}
+      </v-btn>
+    </div>
 
     <!-- ESP-04: one state filter at a time, each with its count; the active one is exposed as pressed. -->
     <div

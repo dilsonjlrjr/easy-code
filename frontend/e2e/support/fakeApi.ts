@@ -50,6 +50,12 @@ export interface ProjectState {
   checkpoints: Record<string, Json[]>
   questions: Record<string, Json[]>
   history: Json[]
+  /** `Member` items (US-02); the creator starts as lead and approver (RN-1). */
+  members: Json[]
+  /** Gate rounds by gate id, newest last (`GateRound`, US-06). */
+  gates: Partial<Record<string, Json[]>>
+  /** Overrides of `getStage` by stage id (tokens, cost, findings...). */
+  stageDetails: Partial<Record<string, Json>>
   artifacts: Partial<
     Record<string, { current: Json; versions: Json[]; byVersion: Partial<Record<number, Json>> }>
   >
@@ -113,6 +119,8 @@ export class FakeApi {
   sessionExpired = false
   /** `authenticated_at` within 10 min; otherwise approving a gate asks for the step-up (ADR-19). */
   recentlyAuthenticated = true
+  /** The user assigned the approver role to themselves less than 24 h ago (US-02 CA-8). */
+  selfAssignedApprover = false
   attachmentLimit = 1024 * 1024
   providers: ProviderState[] = [
     { id: 'anthropic', name: 'Anthropic', key: { status: 'missing', last_test: null } },
@@ -123,6 +131,13 @@ export class FakeApi {
   projects: Partial<Record<string, ProjectState>> = {}
   commands: Record<string, Json> = {}
   pendingItems: Json[] = []
+  /** Scripted connections of `watchNotices` (`/me/events`). */
+  noticeStreams: StreamScript[] = []
+  /** Organization directory for `searchUsers` (US-02). */
+  directory: Array<{ id: string; name: string }> = [
+    { id: 'ana', name: 'Ana Souza' },
+    { id: 'bruno', name: 'Bruno Lima' },
+  ]
   /** Requests seen, for assertions (method, path, headers, body). */
   readonly requests: Array<{
     method: string
@@ -202,6 +217,16 @@ export class FakeApi {
       checkpoints: {},
       questions: {},
       history: [],
+      members: [
+        {
+          user: { id: 'dev', name: 'Dev' },
+          roles: ['lead', 'approver'],
+          assigned_by: { id: 'dev', name: 'Dev' },
+          assigned_at: '2026-11-20T10:00:00-03:00',
+        },
+      ],
+      gates: {},
+      stageDetails: {},
       artifacts: {},
       streams: [],
       ...state,
@@ -221,6 +246,13 @@ export class FakeApi {
   expireSession(): void {
     this.signedIn = false
     this.sessionExpired = true
+  }
+
+  /** The seeded state of a project (fails the test when it was not seeded). */
+  project(projectId: string): ProjectState {
+    const state = this.projects[projectId]
+    if (!state) throw new Error(`project ${projectId} was not seeded`)
+    return state
   }
 
   streamRequests(projectId: string): Array<{ url: string; lastEventId: string | undefined }> {
@@ -266,7 +298,7 @@ export class FakeApi {
     }
 
     const segments = path.split('/').filter(Boolean)
-    const response = this.dispatch(method, segments, body, url)
+    const response = this.dispatch(method, segments, body, url, request.headers())
     if ('sse' in response) {
       return route.fulfill({
         status: 200,
@@ -302,6 +334,7 @@ export class FakeApi {
     segments: string[],
     body: unknown,
     url: URL,
+    headers: Record<string, string> = {},
   ): { status: number; body?: unknown; headers?: Record<string, string> } | { sse: string } {
     const [first, second, third, fourth, fifth, sixth, seventh] = segments as Array<
       string | undefined
@@ -328,9 +361,26 @@ export class FakeApi {
       return { status: 204 }
     }
     if (first === 'pending-items') {
+      const types = url.searchParams.getAll('type')
+      const items = this.pendingItems.filter(
+        (item) => !types.length || types.includes(String(item.type)),
+      )
+      return { status: 200, body: { items, next_cursor: null, total: items.length } }
+    }
+    if (first === 'me' && second === 'events') {
+      const script = this.noticeStreams.shift()
+      script?.onServe?.()
+      return { sse: script?.body ?? 'retry: 60000\n\n: hb\n\n' }
+    }
+
+    if (first === 'users' && !second) {
+      const search = (url.searchParams.get('search') ?? '').toLowerCase()
       return {
         status: 200,
-        body: { items: this.pendingItems, next_cursor: null, total: this.pendingItems.length },
+        body: {
+          items: this.directory.filter((person) => person.name.toLowerCase().includes(search)),
+          next_cursor: null,
+        },
       }
     }
 
@@ -449,7 +499,7 @@ export class FakeApi {
     }
     if (third === 'configuration') {
       if (method === 'PATCH') {
-        const change = input
+        const change: Json = { ...input }
         const pair = change.model_pair as { execution?: { model?: string } } | undefined
         const model = this.models.find((item) => item.model === pair?.execution?.model)
         if (model && model.capabilities.tool_use === false) {
@@ -457,6 +507,15 @@ export class FakeApi {
             status: 409,
             body: problem('model-without-capability', 409, { missing_capacity: 'tool_use' }),
           }
+        }
+        if (['completed', 'canceled'].includes(String(state.project.state))) {
+          return { status: 409, body: problem('state-conflict', 409) }
+        }
+        if (change.constraints) {
+          change.constraints = this.versionConstraints(
+            state.configuration.constraints as Json | null | undefined,
+            change.constraints as Json,
+          )
         }
         const changes = (change.pair_by_stage as Json | undefined) ?? {}
         const current = (state.configuration.pair_by_stage as Json | undefined) ?? {}
@@ -472,9 +531,13 @@ export class FakeApi {
         headers: { ETag: `"${String(state.etag)}"` },
       }
     }
+    if (third === 'gates' && fourth && fifth === 'rounds')
+      return this.gateRounds(state, method, fourth, sixth, seventh, input, headers)
+    if (third === 'members') return this.members(state, method, fourth, input)
     if (third === 'start') return this.startWorkflow(state)
     if (third === 'commands' && fourth) return { status: 200, body: this.commands[fourth] }
     if (third === 'workflow') return { status: 200, body: state.workflow }
+    if (third === 'stages' && fourth) return this.stage(state, fourth)
     if (third === 'events' && fourth === 'history') {
       const waveId = url.searchParams.get('waveId')
       const items = state.history.filter((event) => !waveId || event.waveid === waveId)
@@ -565,6 +628,174 @@ export class FakeApi {
     return command
   }
 
+  /** listGateRounds, getGateRound, approveGate and rejectGate with the rules of US-06 and ADR-19. */
+  private gateRounds(
+    state: ProjectState,
+    method: string,
+    gateId: string,
+    roundText: string | undefined,
+    action: string | undefined,
+    input: Json,
+    headers: Record<string, string>,
+  ): { status: number; body?: unknown } {
+    const rounds = state.gates[gateId] ?? []
+    if (!roundText) {
+      const items = [...rounds].reverse().map((item) => ({
+        gate: item.gate,
+        stage: item.stage,
+        round: item.round,
+        state: item.state,
+        opened_at: item.opened_at,
+        decision: item.decision ?? null,
+      }))
+      return { status: 200, body: { items } }
+    }
+    const round = rounds.find((item) => String(item.round) === roundText)
+    if (!round) return { status: 404, body: problem('not-found', 404) }
+    if (method === 'GET' && !action) return { status: 200, body: round }
+    const roles = (state.project.my_roles as string[] | undefined) ?? []
+    if (!roles.includes('approver')) return { status: 403, body: problem('forbidden', 403) }
+    if (headers['x-csrf-token'] !== 'csrf-dev')
+      return { status: 403, body: problem('invalid-csrf', 403) }
+    if (round.state !== 'awaiting_human')
+      return { status: 409, body: problem('state-conflict', 409) }
+    if (this.selfAssignedApprover)
+      return { status: 409, body: problem('separation-of-duties', 409) }
+    const checks = (round.checks as Json[] | undefined) ?? []
+    const human = checks.filter((check) => check.type === 'human').map((check) => check.check)
+    const record = {
+      per: { type: 'human', id: this.user.id, user: { id: this.user.id, name: this.user.name } },
+      when: '2026-11-22T10:10:00-03:00',
+      origin: 'web',
+    }
+    const stages = (state.workflow.stages as Json[] | undefined) ?? []
+    const stageIndex = stages.findIndex((stage) => stage.id === round.stage)
+    if (action === 'approval') {
+      if (!this.recentlyAuthenticated)
+        return { status: 401, body: problem('reauthentication-required', 401) }
+      const confirmed = (input.confirmed_human_checks as string[] | undefined) ?? []
+      const missing = human.filter((check) => !confirmed.includes(check))
+      if (missing.length > 0) return { status: 400, body: problem('pending-human-check', 400) }
+      round.state = 'approved'
+      round.decision = { result: 'approved', record, comment: input.comment }
+      for (const check of checks) if (check.type === 'human') check.status = 'passed'
+      const stage = stages[stageIndex] as Json | undefined
+      if (stage) stage.state = 'approved'
+      const next = stages[stageIndex + 1] as Json | undefined
+      if (next) next.state = 'ready'
+    } else if (action === 'rejection') {
+      const reason = typeof input.reason === 'string' ? input.reason.trim() : ''
+      if (!reason) return { status: 400, body: problem('validation', 400) }
+      round.state = 'rejected'
+      round.decision = { result: 'rejected', record, reason }
+      const stage = stages[stageIndex] as Json | undefined
+      if (stage) stage.state = 'returned'
+    } else {
+      return { status: 404, body: problem('not-found', 404) }
+    }
+    round.available_actions = []
+    this.pendingItems = this.pendingItems.filter(
+      (item) => (item.target as Json).id !== `${gateId}/${String(round.round)}`,
+    )
+    return { status: 200, body: round }
+  }
+
+  /** US-54 CA-3 / PL-13: the whole list becomes the next version; new items get the next RESTR-NN. */
+  private versionConstraints(previous: Json | null | undefined, input: Json): Json {
+    const known = ((previous?.items as Json[] | undefined) ?? []).map((item) =>
+      Number(String(item.id).slice('RESTR-'.length)),
+    )
+    let next = Math.max(0, ...known)
+    const items = ((input.items as Json[] | undefined) ?? []).map((item) =>
+      item.id ? item : { ...item, id: `RESTR-${String(++next).padStart(2, '0')}` },
+    )
+    return {
+      version: Number(previous?.version ?? 0) + 1,
+      items,
+      defined_by: { id: this.user.id, name: this.user.name },
+      defined_at: '2026-11-22T10:00:00-03:00',
+    }
+  }
+
+  /** getStage (US-49 CA-2): the workflow item plus its waves, artifacts and totals. */
+  private stage(state: ProjectState, stageId: string): { status: number; body: unknown } {
+    const stages = (state.workflow.stages as Json[] | undefined) ?? []
+    const summary = stages.find((item) => item.id === stageId)
+    if (!summary) return { status: 404, body: problem('not-found', 404) }
+    const zero = { value: '0', currency: 'BRL' }
+    return {
+      status: 200,
+      body: {
+        ...summary,
+        waves: state.waves.filter((wave) => wave.stage === stageId),
+        artifacts: Object.values(state.artifacts).flatMap((item) =>
+          item && item.current.stage === stageId ? [item.current] : [],
+        ),
+        findings: [],
+        tokens: { input: 0, output: 0, read_cache: 0, write_cache: 0 },
+        detailed_cost: { useful: zero, lost: zero, total: zero },
+        time: { execution_ms: 0, cycle_ms: 0 },
+        approval: { mode: 'human', required_role: 'approver' },
+        ...(state.stageDetails[stageId] ?? {}),
+      },
+    }
+  }
+
+  /** listMembers, setMemberRoles and removeMember with the rules of US-02 (RN-2, RN-3, ER-26-4). */
+  private members(
+    state: ProjectState,
+    method: string,
+    userId: string | undefined,
+    input: Json,
+  ): { status: number; body?: unknown } {
+    if (!userId) return { status: 200, body: { items: state.members } }
+    const roles = (input.roles as string[] | undefined) ?? []
+    const current = state.members.find((member) => (member.user as Json).id === userId)
+    const isAdministrator = this.user.organization_roles.includes('administrator')
+    const approversAfter = (next: Json[]) =>
+      next.filter((member) => (member.roles as string[]).includes('approver')).length
+    if (method === 'DELETE') {
+      if (!current) return { status: 404, body: problem('not-found', 404) }
+      if ((current.roles as string[]).includes('lead'))
+        return { status: 409, body: problem('lead-required', 409) }
+      const next = state.members.filter((member) => member !== current)
+      if (approversAfter(next) === 0) return { status: 409, body: problem('last-approver', 409) }
+      state.members = next
+      return { status: 204 }
+    }
+    const alreadyLead = (current?.roles as string[] | undefined)?.includes('lead') ?? false
+    if (roles.includes('lead') && !alreadyLead) {
+      if (!isAdministrator) return { status: 403, body: problem('forbidden', 403) }
+      if (userId === this.user.id)
+        return { status: 409, body: problem('separation-of-duties', 409) }
+    }
+    if (current && (current.roles as string[]).includes('lead') && !roles.includes('lead'))
+      return { status: 409, body: problem('lead-required', 409) }
+    const person = this.directory.find((item) => item.id === userId) ?? current?.user
+    if (!person) return { status: 404, body: problem('not-found', 404) }
+    const updated: Json = {
+      user: person,
+      roles,
+      assigned_by: { id: this.user.id, name: this.user.name },
+      assigned_at: '2026-11-22T10:00:00-03:00',
+    }
+    let next = current
+      ? state.members.map((member) => (member === current ? updated : member))
+      : [...state.members, updated]
+    if (roles.includes('lead') && !alreadyLead) {
+      // US-02 RN-3: the previous lead loses the role in the same operation.
+      next = next.map((member) =>
+        member === updated
+          ? member
+          : { ...member, roles: (member.roles as string[]).filter((role) => role !== 'lead') },
+      )
+      state.project = { ...state.project, lead: person }
+    }
+    if (approversAfter(next) === 0) return { status: 409, body: problem('last-approver', 409) }
+    state.members = next
+    return { status: 200, body: updated }
+  }
+
   private createProject(input: Json): { status: number; body: unknown } {
     if (input.provider_submission_acknowledgment !== true) {
       return { status: 400, body: problem('validation', 400) }
@@ -589,6 +820,9 @@ export class FakeApi {
         last_sequence: 1,
       },
     })
+    if (input.constraints) {
+      state.configuration.constraints = this.versionConstraints(null, input.constraints as Json)
+    }
     return { status: 201, body: state.project }
   }
 
@@ -701,6 +935,42 @@ export function waveDetail(id: string, state: string, overrides: Json = {}): Jso
     available_actions: state === 'awaiting_user' ? ['answer', 'cancel'] : ['cancel'],
     last_checkpoint: null,
     expected_outputs: [],
+    ...overrides,
+  }
+}
+
+/** A gate round awaiting a human decision, with one automatic and one human check (ESP-12). */
+export function gateRound(gate: string, stage: string, round: number, overrides: Json = {}): Json {
+  return {
+    gate,
+    stage,
+    round,
+    state: 'awaiting_human',
+    opened_at: '2026-11-22T09:00:00-03:00',
+    decision: null,
+    approval_mode: 'human',
+    min_approvals: 1,
+    outputs: [{ artifact: 'VISAO', version: 2, type: 'VISAO', state: 'in_review' }],
+    checks: [
+      {
+        check: 'schema.valid',
+        name: 'Artefatos válidos no esquema',
+        type: 'automatic',
+        failure_severity: 'blocks',
+        status: 'passed',
+        evidence: [{ reference: 'VISAO', message: 'esquema conferido' }],
+      },
+      {
+        check: 'us.criteria_testable',
+        name: 'Critérios de aceite testáveis',
+        type: 'human',
+        failure_severity: 'blocks',
+        status: 'pending',
+      },
+    ],
+    blocking_findings: [],
+    non_blocking_findings: [],
+    available_actions: ['approve', 'reject'],
     ...overrides,
   }
 }

@@ -15,6 +15,7 @@ function fakeApi(overrides: Partial<ProjectsApi> = {}): ProjectsApi {
     startWorkflow: vi.fn().mockResolvedValue(aCommand()),
     getCommand: vi.fn().mockResolvedValue(aCommand({ state: 'applied' })),
     getWorkflow: vi.fn(),
+    getStage: vi.fn(),
     listWaves: vi.fn(),
     ...overrides,
   }

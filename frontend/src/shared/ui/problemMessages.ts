@@ -31,6 +31,7 @@ const KNOWN_SLUGS = new Set([
   'requires-web-session',
   'pending-human-check',
   'blocking-check-failed',
+  'invalid-csrf',
 ])
 
 const STATUS_FALLBACK: Record<number, string> = {

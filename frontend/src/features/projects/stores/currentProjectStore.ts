@@ -40,6 +40,8 @@ export const useCurrentProjectStore = defineStore('current-project', () => {
   const project = ref<Project>()
   const workflow = ref<Workflow>()
   const waves = ref<WaveSummary[]>([])
+  /** Grows on every reload, so nested views (stage detail) re-read their own data (US-49 CA-3). */
+  const revision = ref(0)
 
   async function load(projectId: string): Promise<number | undefined> {
     const loadedProject = await api.getProject(projectId)
@@ -54,6 +56,7 @@ export const useCurrentProjectStore = defineStore('current-project', () => {
     waves.value = [...loadedWaves].sort((left, right) =>
       right.created_at.localeCompare(left.created_at),
     )
+    revision.value += 1
     return loadedProject.last_sequence
   }
 
@@ -63,5 +66,5 @@ export const useCurrentProjectStore = defineStore('current-project', () => {
     waves.value = []
   }
 
-  return { project, workflow, waves, load, clear }
+  return { project, workflow, waves, revision, load, clear }
 })

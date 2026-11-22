@@ -9,6 +9,7 @@ import { waitForCommand } from '@/shared/commands/waitForCommand'
 import { useAnnouncer } from '@/shared/composables/useAnnouncer'
 import { useLoader } from '@/shared/composables/useLoader'
 import { describeEvent } from '@/shared/events/eventDescriptions'
+import { useSessionStore } from '@/shared/session/sessionStore'
 import type { CloudEvent, EventClass } from '@/shared/events/eventStream'
 import { useProjectEventStream } from '@/shared/events/useProjectEventStream'
 import AppBreadcrumbs from '@/shared/ui/AppBreadcrumbs.vue'
@@ -29,6 +30,7 @@ const store = useCurrentProjectStore()
 const notices = useProjectNoticesStore()
 const { message, announce } = useAnnouncer()
 const live = useProjectEventStream()
+const session = useSessionStore()
 
 const projectId = computed(() => String(route.params.projectId))
 const startFailure = ref<unknown>()
@@ -51,6 +53,10 @@ const loader = useLoader(async () => {
 const project = computed(() => store.project)
 const notFound = computed(() => isApiError(loader.error.value) && loader.error.value.status === 404)
 const canStart = computed(() => project.value?.available_actions?.includes('start') ?? false)
+/** ESP-26 section 6: the administrator without a role sees the project as such, and it is audited. */
+const viewedAsAdministrator = computed(
+  () => session.isAdministrator && (project.value?.my_roles.length ?? 0) === 0,
+)
 const openQuestionWave = computed(() =>
   project.value?.summary?.active_waves?.find((wave) => wave.state === 'awaiting_user'),
 )
@@ -60,6 +66,7 @@ const tabs = computed(() => [
   { name: ROUTE_NAMES.projectWaves, label: t('pages.project.waves') },
   { name: ROUTE_NAMES.projectArtifacts, label: t('pages.project.artifacts') },
   { name: ROUTE_NAMES.projectConfiguration, label: t('pages.project.configuration') },
+  { name: ROUTE_NAMES.projectMembers, label: t('pages.project.members') },
 ])
 
 const breadcrumbs = computed(() => [
@@ -154,6 +161,15 @@ onBeforeUnmount(() => {
         {{ $t('projects.list.lead', { name: project.lead.name }) }}
       </p>
       <div role="status" class="sr-only">{{ message }}</div>
+      <v-alert
+        v-if="viewedAsAdministrator"
+        type="info"
+        variant="tonal"
+        class="mb-4"
+        data-testid="administrator-view"
+      >
+        {{ $t('pages.project.asAdministrator') }}
+      </v-alert>
 
       <!-- ESP-06 3.2: contextual notice, one per situation. -->
       <v-alert
@@ -193,7 +209,11 @@ onBeforeUnmount(() => {
       <StartRefusal v-if="startFailure" :error="startFailure" class="mb-4" />
 
       <nav :aria-label="$t('projects.view.sections')" class="mb-6">
-        <v-tabs color="primary" :model-value="route.name" show-arrows>
+        <v-tabs
+          color="primary"
+          :model-value="route.name === ROUTE_NAMES.stage ? ROUTE_NAMES.project : route.name"
+          show-arrows
+        >
           <v-tab
             v-for="tab in tabs"
             :key="tab.name"
