@@ -3,6 +3,7 @@ package specs_test
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 
 	"easycode/internal/infrastructure/specs"
@@ -139,5 +140,34 @@ func TestDBAAndDesignerPolicies(t *testing.T) {
 	}
 	if _, ok := designer.Category("build"); ok {
 		t.Fatal("designer does not build")
+	}
+}
+
+// US-43 CA-1: the native catalog has each skill with name, description, stages and agents and an estimated size.
+func TestNativeSkillsCatalog(t *testing.T) {
+	skills, err := specs.NativeSkills()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(skills) != 17 {
+		t.Fatalf("17 native skills, got %d", len(skills))
+	}
+	byName := map[string]int{}
+	for i, s := range skills {
+		byName[s.Name] = i
+		if s.Description == "" || len(s.Agents) == 0 || len(s.Stages) == 0 || s.SizeTokens() < 1 || len(s.Hash()) != 64 || s.Files["SKILL.md"] == "" {
+			t.Fatalf("incomplete skill %+v", s.Name)
+		}
+	}
+	postgres := skills[byName["modelagem-postgresql"]]
+	if fmt.Sprint(postgres.Agents) != "[dba-agent developer-agent]" || fmt.Sprint(postgres.Stages) != "[data implementation validation]" {
+		t.Fatalf("agents and stages of modelagem-postgresql: %v %v", postgres.Agents, postgres.Stages)
+	}
+	if _, ok := byName["ux-acessibilidade"]; !ok {
+		t.Fatal("design skill missing")
+	}
+	profile, err := specs.Profile("dba-agent")
+	if err != nil || profile.Name != "DBA / Database Engineer" || !strings.HasPrefix(profile.Role, "Você é o DBA") || len(profile.Limits) == 0 || fmt.Sprint(profile.Delivery) != "[DIC PERSIST]" {
+		t.Fatalf("profile: %+v %v", profile, err)
 	}
 }

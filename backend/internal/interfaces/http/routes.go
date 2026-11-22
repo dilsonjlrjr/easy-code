@@ -74,6 +74,17 @@ func (a *api) register(router *Router) {
 		router.Handle(fasthttp.MethodGet, "/git/{repository}/info/refs", a.gitReferences)
 		router.Handle(fasthttp.MethodPost, "/git/{repository}/git-upload-pack", a.gitUploadPack)
 	}
+	if a.deps.Skills != nil {
+		router.Handle(fasthttp.MethodGet, APIPrefix+"/skills", auth(a.listSkills))
+		router.Handle(fasthttp.MethodGet, APIPrefix+"/skills/{skillId}", auth(a.getSkill))
+	}
+	if a.deps.Agents != nil {
+		p := APIPrefix + "/projects/{projectId}/agents"
+		router.Handle(fasthttp.MethodGet, p, auth(a.listProjectAgents))
+		router.Handle(fasthttp.MethodGet, p+"/{agent}", auth(a.getProjectAgent))
+		router.Handle(fasthttp.MethodPut, p+"/{agent}/configuration", auth(a.modifyAgentConfiguration))
+		router.Handle(fasthttp.MethodGet, p+"/{agent}/configuration/versions", auth(a.listAgentConfigurationVersions))
+	}
 	if a.deps.Pending != nil {
 		router.Handle(fasthttp.MethodGet, APIPrefix+"/pending-items", auth(a.listPendingItems))
 	}

@@ -12,6 +12,7 @@ import (
 	"easycode/internal/domain/failure"
 	"easycode/internal/domain/identity"
 	"easycode/internal/domain/provider"
+	domainskill "easycode/internal/domain/skill"
 )
 
 // WaveUseCases are the wave reads and the answer to a question (US-09, US-10, US-11, US-36).
@@ -40,10 +41,11 @@ func tokensOf(u provider.Usage) tokensJSON {
 }
 
 type detailedCostJSON struct {
-	Useful        moneyJSON `json:"useful"`
-	Lost          moneyJSON `json:"lost"`
-	Total         moneyJSON `json:"total"`
-	EstimatedLost moneyJSON `json:"estimated_lost"`
+	Useful        moneyJSON          `json:"useful"`
+	Lost          moneyJSON          `json:"lost"`
+	Total         moneyJSON          `json:"total"`
+	EstimatedLost moneyJSON          `json:"estimated_lost"`
+	PerProvider   []providerCostJSON `json:"per_provider,omitempty"`
 }
 
 func costOf(c appwave.Cost) detailedCostJSON {
@@ -103,12 +105,25 @@ type waveJSON struct {
 	AvailableActions []string             `json:"available_actions"`
 }
 
+type providerCostJSON struct {
+	Provider string    `json:"provider"`
+	Total    moneyJSON `json:"total"`
+}
+
+func skillVersions(skills []domainskill.Pinned) []map[string]any {
+	out := []map[string]any{}
+	for _, s := range skills {
+		out = append(out, map[string]any{"skill": s.Name, "version": s.Version})
+	}
+	return out
+}
+
 func waveOf(v appwave.View) waveJSON {
 	out := waveJSON{
 		waveSummaryJSON: waveSummaryOf(v.Summary),
 		Models: pairJSON{Reasoning: &modelRefJSON{Provider: v.Reasoning.Provider, Model: v.Reasoning.Model},
 			Execution: &modelRefJSON{Provider: v.Execution.Provider, Model: v.Execution.Model}},
-		Versions: map[string]any{"instructions": v.InstructionVersion, "agent_configuration": v.ConfigVersion, "skills": []any{}},
+		Versions: map[string]any{"instructions": v.InstructionVersion, "agent_configuration": v.ConfigVersion, "skills": skillVersions(v.Skills)},
 		Tokens:   tokensOf(v.Tokens), Cost: costOf(v.Cost),
 		Time:         map[string]int64{"execution_ms": v.ExecutionMs, "cycle_ms": v.CycleMs},
 		FailureCause: optional(v.FailureCause), ArtifactErrors: v.ArtifactErrors, LastCheckpoint: v.LastCheckpoint,
@@ -117,6 +132,9 @@ func waveOf(v appwave.View) waveJSON {
 	}
 	if v.PriceTable != "" {
 		out.Versions["price_table"] = v.PriceTable
+	}
+	for _, c := range v.PerProvider {
+		out.Cost.PerProvider = append(out.Cost.PerProvider, providerCostJSON{Provider: c.Provider, Total: moneyJSON{c.Total, v.Cost.Currency}})
 	}
 	if v.InputsDigest != "" {
 		out.Versions["inputs_summary_sha256"] = v.InputsDigest

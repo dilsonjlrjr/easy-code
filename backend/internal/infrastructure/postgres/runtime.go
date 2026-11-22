@@ -14,6 +14,7 @@ import (
 	"easycode/internal/application/runtime"
 	"easycode/internal/domain/failure"
 	"easycode/internal/domain/pricing"
+	"easycode/internal/domain/skill"
 	"easycode/internal/domain/workflow"
 )
 
@@ -183,6 +184,17 @@ SELECT v.path, v.author FROM easycode.waves w JOIN easycode.artifacts a ON a.pro
 	if in.Opinions, err = l.opinions(ctx, c.WaveID); err != nil {
 		return in, err
 	}
+	skills, err := loadedSkills(ctx, q, c.WaveID)
+	if err != nil {
+		return in, err
+	}
+	in.Skills = skill.Render(skills)
+	in.SkillFiles = map[string]string{}
+	for _, loaded := range skills {
+		for file, content := range loaded.Files {
+			in.SkillFiles[skill.Path(loaded.Name, file)] = content
+		}
+	}
 	rows, err := q.Query(WithOperation(ctx, "waves.models"), `
 SELECT wm.role, m.id, m.provider, m.name FROM easycode.wave_models wm JOIN easycode.models m ON m.id = wm.model_id WHERE wm.wave_id = $1`, c.WaveID)
 	if err != nil {
@@ -318,6 +330,14 @@ VALUES ($1, $2, $3, $4, $5, $6, nullif($7, ''), nullif(left($8, 200), ''), $9, n
 			if err != nil {
 				return runtime.Totals{}, fmt.Errorf("record tool: %w", classify(err))
 			}
+		}
+	}
+	if tool := step.Tool; tool != nil && tool.Skill != "" {
+		_, err := q.Exec(WithOperation(ctx, "wave_skills.complete"), `
+UPDATE easycode.wave_skills ws SET load = 'complete' FROM easycode.skill_versions v JOIN easycode.skills s ON s.id = v.skill_id
+ WHERE ws.wave_id = $1 AND v.id = ws.skill_version_id AND s.name = $2`, lease.WaveID, tool.Skill)
+		if err != nil {
+			return runtime.Totals{}, fmt.Errorf("skill loaded: %w", classify(err))
 		}
 	}
 	totals, err := l.totals(ctx, lease.WaveID)

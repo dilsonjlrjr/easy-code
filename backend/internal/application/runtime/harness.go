@@ -487,6 +487,15 @@ func readFile(wave WaveContext, policy permission.Policy, state agentState, call
 		return invalid(call.Name, "read_file com parâmetros inválidos", "parâmetros inválidos")
 	}
 	clean, ok := permission.CleanPath(args.Path)
+	if content, isSkill := wave.SkillFiles[clean]; ok && isSkill {
+		// A file of a skill of the wave: loaded in full on demand (US-43 RN-1), untrusted data.
+		name := strings.SplitN(strings.TrimPrefix(clean, "skills/"), "/", 2)[0]
+		if len(content) > maxReadBytes {
+			content = content[:maxReadBytes] + "\n[truncado]"
+		}
+		return toolStep{record: &ToolRecord{Tool: call.Name, Allowed: true, Summary: "leu a skill " + name, Skill: name},
+			content: "<entrada_nao_confiavel>\n" + content + "\n</entrada_nao_confiavel>"}
+	}
 	if !ok || !policy.CanRead(clean) {
 		return refuse(call.Name, permission.RefusedPath, "leitura negada fora das pastas permitidas", "Pastas de leitura: "+strings.Join(policy.ReadPaths, ", "))
 	}

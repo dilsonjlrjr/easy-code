@@ -39,6 +39,8 @@ type Dependencies struct {
 	Workflow      WorkflowUseCases
 	Artifacts     ArtifactUseCases
 	Waves         WaveUseCases
+	Skills        SkillUseCases // US-43
+	Agents        AgentUseCases // US-43
 	Gates         GateUseCases
 	Pending       PendingUseCases
 	// Repository serves getRepository and the git clone (US-42).

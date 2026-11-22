@@ -150,6 +150,25 @@ SELECT wm.role, m.provider, m.name FROM easycode.wave_models wm JOIN easycode.mo
 	rows.Close()
 	_ = q.QueryRow(WithOperation(ctx, "waves.price_table"),
 		"SELECT coalesce(max(price_id)::text, '') FROM easycode.model_calls WHERE wave_id = $1", waveID).Scan(&v.PriceTable)
+	if v.Skills, err = waveSkillRefs(ctx, q, waveID); err != nil {
+		return v, err
+	}
+	// US-24 CA-3: the cost of the calls per provider (useful and lost).
+	costs, err := q.Query(WithOperation(ctx, "model_calls.cost_per_provider"), `
+SELECT m.provider, sum(c.cost)::text FROM easycode.model_calls c JOIN easycode.models m ON m.id = c.model_id
+ WHERE c.wave_id = $1 AND c.result IS NOT NULL GROUP BY m.provider ORDER BY m.provider`, waveID)
+	if err != nil {
+		return v, fmt.Errorf("cost per provider: %w", classify(err))
+	}
+	v.PerProvider, err = pgx.CollectRows(costs, func(row pgx.CollectableRow) (appwave.ProviderCost, error) {
+		var c appwave.ProviderCost
+		err := row.Scan(&c.Provider, &c.Total)
+		c.Total = pricing.NormalizeDecimal(c.Total)
+		return c, err
+	})
+	if err != nil {
+		return v, err
+	}
 	v.Outputs, err = w.outputs(ctx, waveID, v)
 	return v, err
 }

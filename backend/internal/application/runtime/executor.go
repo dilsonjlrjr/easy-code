@@ -256,7 +256,7 @@ func (e *Executor) execute(ctx context.Context, c Claimed) error {
 		Instruction: text, BusinessNeed: inputs.BusinessNeed, Constraints: inputs.Constraints, Language: inputs.Language,
 		WritablePaths: agent.WritablePaths, Outputs: e.outputs(c.Stage), Models: inputs.Models, Feedback: inputs.Feedback,
 		Policy: agent.Policy, Approved: inputs.Approved, Mode: agent.ModeIn(c.Stage), Task: inputs.Task, Image: e.settings.Image,
-		Opinions: inputs.Opinions, Skills: inputs.Skills,
+		Opinions: inputs.Opinions, Skills: inputs.Skills, SkillFiles: inputs.SkillFiles,
 	}
 	if wave.Reviewing() {
 		wave.Outputs = nil // the delivery of a participant wave is its opinion

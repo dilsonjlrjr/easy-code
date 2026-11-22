@@ -59,6 +59,9 @@ type WaveContext struct {
 	// Opinions are the review opinions the participants of the stage gave in their waves; the lead
 	// copies them into its artifact (VALIDACAO.pareceres, consolidated by the orchestrator).
 	Opinions []workflow.ReviewOpinion
+	// SkillFiles are the full files of the skills of the wave (skills/<name>/<file>), untrusted data read
+	// with read_file only when the agent needs them (US-43 RN-1).
+	SkillFiles map[string]string
 }
 
 // Reviewing reports whether the wave only gives the agent's review opinion (participant wave).
@@ -100,6 +103,7 @@ type ToolRecord struct {
 	Success       bool
 	Summary       string
 	Execution     *Execution // execute_command in the sandbox (US-41)
+	Skill         string     // skill whose full content was read (wave_skills.load = complete)
 }
 
 // Execution is the evidence of a command run in the sandbox (US-41 CA-1, CA-2, CA-3).

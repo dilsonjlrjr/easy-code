@@ -233,6 +233,9 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8::interval, $9::interval, $10, nullif($11,
 	if err != nil {
 		return appworkflow.QueuedWave{}, fmt.Errorf("insert wave: %w", classify(err))
 	}
+	if err := waveSkills(ctx, q, projectID, waveID, wave.Agent); err != nil {
+		return appworkflow.QueuedWave{}, err
+	}
 	_, err = q.Exec(WithOperation(ctx, "wave_models.insert"), `
 INSERT INTO easycode.wave_models (wave_id, role, model_id, mode, reason)
 VALUES ($1, 'reasoning', $2, 'manual', 'project_configuration'), ($1, 'execution', $3, 'manual', 'project_configuration')`,

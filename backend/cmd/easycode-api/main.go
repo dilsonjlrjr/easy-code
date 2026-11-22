@@ -23,6 +23,7 @@ import (
 	"easycode/internal/application/providerkey"
 	apprepository "easycode/internal/application/repository"
 	appsession "easycode/internal/application/session"
+	appskill "easycode/internal/application/skill"
 	appwave "easycode/internal/application/wave"
 	appworkflow "easycode/internal/application/workflow"
 	"easycode/internal/infrastructure/config"
@@ -194,6 +195,8 @@ func productDependencies(cfg config.Config, pool *pgxpool.Pool, logger *slog.Log
 		Pending:       apppending.NewService(postgres.NewPending(pool, definition)),
 		Waves:         waves,
 		Access:        waves,
+		Skills:        appskill.NewService(postgres.NewSkills(pool)),
+		Agents:        appskill.NewAgents(tx, projects, specs.AgentProfiles{}, postgres.NewSkills(pool), postgres.NewSkills(pool), trail),
 		Repository:    apprepository.NewService(projects, git.New(cfg.ReposDir), cfg.GitBaseURL, git.MainBranch),
 	}
 	if cfg.Providers.SealingPublicKeyFile == "" {

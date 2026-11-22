@@ -73,5 +73,11 @@
   "problem.separation-of-duties.title": "Role assigned less than 24 hours ago",
   "problem.separation-of-duties.detail": "Whoever assigned the approver role to themselves waits 24 hours before approving a gate of the project; the administrator does not assign roles to themselves.",
   "pending.gate.title": "Gate {gate} (round {round}) awaiting decision",
-  "pending.question.title": "Questions of the {agent} agent in wave {wave}"
+  "pending.question.title": "Questions of the {agent} agent in wave {wave}",
+  "problem.tool-not-allowed.title": "Tool outside the agent role",
+  "problem.tool-not-allowed.detail": "The tool {tool} is not allowed for the role of the agent (permissoes.yaml).",
+  "problem.blocked-skill.title": "Skill version not available",
+  "problem.blocked-skill.detail": "The skill version {skill} is not unblocked and cannot be associated.",
+  "problem.constraint-violated.title": "Invalid data",
+  "problem.constraint-violated.detail": "The request breaks a rule of the data. Review the values sent."
 }

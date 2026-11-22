@@ -51,6 +51,7 @@ check-specs:
 	@cmp -s ../../specs/dominio/governanca/permissoes.yaml $(SPECS_DIR)/governanca/permissoes.yaml || { echo "drift: permissoes.yaml (make sync-specs)"; exit 1; }
 	@diff -rq ../../specs/dominio/artefatos $(SPECS_DIR)/artefatos --exclude=README.md
 	@diff -rq ../../agentes/instrucoes $(SPECS_DIR)/agentes --exclude=README.md
+	@diff -rq ../../agentes/skills $(SPECS_DIR)/skills --exclude=README.md
 	@cmp -s ../../agentes/referencia/reserva-de-salas.md $(SPECS_DIR)/referencia/reserva-de-salas.md || { echo "drift: reserva-de-salas.md (make sync-specs)"; exit 1; }
 	@echo "embedded specs in sync"
 
@@ -59,6 +60,7 @@ sync-specs:
 	cp ../../specs/dominio/governanca/permissoes.yaml $(SPECS_DIR)/governanca/
 	cp ../../specs/dominio/artefatos/*.schema.json $(SPECS_DIR)/artefatos/
 	cp ../../agentes/referencia/reserva-de-salas.md $(SPECS_DIR)/referencia/
+	rm -rf $(SPECS_DIR)/skills && cp -r ../../agentes/skills $(SPECS_DIR)/skills && rm $(SPECS_DIR)/skills/README.md
 	for f in ../../agentes/instrucoes/*.md; do case "$$f" in */README.md) ;; *) cp "$$f" $(SPECS_DIR)/agentes/ ;; esac; done
 
 # What CI runs; needs only Docker. From the repo root: make -C project/backend ci

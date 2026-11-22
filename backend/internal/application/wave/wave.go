@@ -20,6 +20,7 @@ import (
 	"easycode/internal/domain/failure"
 	"easycode/internal/domain/identity"
 	"easycode/internal/domain/provider"
+	domainskill "easycode/internal/domain/skill"
 )
 
 // Cost is the exact cost of a wave or checkpoint.
@@ -58,7 +59,14 @@ type View struct {
 	LastCheckpoint       *int
 	QuestionOpen         string
 	Outputs              []ExpectedOutput
-	GitCommit            string // commit of the project repository written when the wave completed (D-17)
+	GitCommit            string               // commit of the project repository written when the wave completed (D-17)
+	Skills               []domainskill.Pinned // skill versions the wave loaded (US-43 CA-2)
+	PerProvider          []ProviderCost       // cost of the calls by provider (US-24 CA-3)
+}
+
+// ProviderCost is the total cost of the calls of a wave to one provider.
+type ProviderCost struct {
+	Provider, Total string
 }
 
 // SandboxExecution is a command run in the sandbox with its evidence (US-41).

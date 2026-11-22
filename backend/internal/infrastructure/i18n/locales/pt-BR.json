@@ -73,5 +73,11 @@
   "problem.separation-of-duties.title": "Papel atribuído há menos de 24 horas",
   "problem.separation-of-duties.detail": "Quem atribuiu a si mesmo o papel de aprovador espera 24 horas para aprovar gate do projeto; o administrador não atribui papel a si mesmo.",
   "pending.gate.title": "Gate {gate} (rodada {round}) aguardando decisão",
-  "pending.question.title": "Perguntas do agente {agent} na onda {wave}"
+  "pending.question.title": "Perguntas do agente {agent} na onda {wave}",
+  "problem.tool-not-allowed.title": "Ferramenta fora do papel do agente",
+  "problem.tool-not-allowed.detail": "A ferramenta {tool} não é permitida ao papel do agente (permissoes.yaml).",
+  "problem.blocked-skill.title": "Versão de skill indisponível",
+  "problem.blocked-skill.detail": "A versão da skill {skill} não está liberada e não pode ser associada.",
+  "problem.constraint-violated.title": "Dados inválidos",
+  "problem.constraint-violated.detail": "O pedido viola uma regra dos dados. Revise os valores enviados."
 }

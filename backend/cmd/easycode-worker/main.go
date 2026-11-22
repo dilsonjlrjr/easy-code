@@ -17,6 +17,7 @@ import (
 	"easycode/internal/application/command"
 	apphealth "easycode/internal/application/health"
 	"easycode/internal/application/providerkey"
+	appskill "easycode/internal/application/skill"
 	"easycode/internal/application/ssosync"
 	appwave "easycode/internal/application/wave"
 	appworkflow "easycode/internal/application/workflow"
@@ -105,6 +106,16 @@ func work(ctx context.Context, proc process.Process) error {
 	if err != nil {
 		return err
 	}
+	// US-43: the native catalog (agentes/skills) is published in the library; a changed skill gets a new
+	// version, which projects use only after the lead accepts it.
+	jobs.run(ctx, "publish_native_skills", false, func(ctx context.Context) ([]slog.Attr, error) {
+		packages, err := specs.NativeSkills()
+		if err != nil {
+			return nil, err
+		}
+		published, err := appskill.PublishNative(ctx, postgres.NewTxRunner(pool), postgres.NewSkills(pool), packages)
+		return []slog.Attr{slog.Int("skills", len(packages)), slog.Int("published", published)}, err
+	})
 	waveWake := make(chan struct{}, 1)
 	waveListener := postgres.NewListener(pool, proc.Logger, nil, postgres.ChannelWaves)
 	go func() {

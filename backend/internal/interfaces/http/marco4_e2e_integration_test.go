@@ -22,9 +22,11 @@ import (
 	apppending "easycode/internal/application/pending"
 	appproject "easycode/internal/application/project"
 	"easycode/internal/application/runtime"
+	appskill "easycode/internal/application/skill"
 	appwave "easycode/internal/application/wave"
 	appworkflow "easycode/internal/application/workflow"
 	"easycode/internal/domain/provider"
+	domainskill "easycode/internal/domain/skill"
 	"easycode/internal/infrastructure/git"
 	"easycode/internal/infrastructure/postgres"
 	"easycode/internal/infrastructure/postgres/postgrestest"
@@ -540,8 +542,17 @@ func TestMarco4ExtendedTeamWithTwoProviders(t *testing.T) {
 	base := newProject(t, live, work, "Reserva com os dois", "anthropic", "openai")
 	before := anthropicAPI.Calls() + openaiAPI.Calls()
 	work.runAll(t)
-	if w := live.json(t, "GET", base+"/waves/REQ-01", "", nil, 200); w["state"] != "completed" {
-		t.Fatalf("US-24 CA-3: the wave completes: %v", w)
+	mixedWave := live.json(t, "GET", base+"/waves/REQ-01", "", nil, 200)
+	if mixedWave["state"] != "completed" {
+		t.Fatalf("US-24 CA-3: the wave completes: %v", mixedWave)
+	}
+	perProvider := map[string]any{}
+	for _, item := range mixedWave["cost"].(map[string]any)["per_provider"].([]any) {
+		c := item.(map[string]any)
+		perProvider[c["provider"].(string)] = c["total"].(map[string]any)["value"]
+	}
+	if len(perProvider) != 2 || perProvider["anthropic"] == "0" || perProvider["openai"] == "0" {
+		t.Fatalf("US-24 CA-3: cost per provider: %v", mixedWave["cost"])
 	}
 	calls := live.json(t, "GET", base+"/waves/REQ-01/calls?type=model", "", nil, 200)["items"].([]any)
 	byProvider := map[string]int{}
@@ -671,5 +682,170 @@ func TestMarco4CancelWave(t *testing.T) {
 	work.drain(t)
 	if w := live.json(t, "GET", failed+"/waves/REQ-01", "", nil, 200); w["state"] != "canceled" || w["failure_cause"] != nil {
 		t.Fatalf("US-14 CA-4: %v", w)
+	}
+}
+
+// TestMarco4SkillsPerProject covers US-43: the library lists the native catalog with name, description,
+// stages, agents, version and size (CA-1); the lead associates a skill to an agent in a pinned version and
+// the wave of that agent gets its description and records the version, reading the full content only on
+// demand (CA-2, RN-1); a newer version keeps the project on the pinned one with a notice until the lead
+// accepts it (CA-3). The configuration refuses tools beyond the role, blocked versions and stale versions.
+func TestMarco4SkillsPerProject(t *testing.T) {
+	live := newLiveAPI(t, teamDeps(t), func(d *httpapi.Dependencies, db *postgrestest.Database) {
+		pool := db.PoolAs("easycode_api")
+		wf, _ := specs.StandardWorkflow(specs.StandardAgents)
+		projects := postgres.NewProjects(pool, wf.Definition.ID, len(wf.Definition.Stages))
+		d.Skills = appskill.NewService(postgres.NewSkills(pool))
+		d.Agents = appskill.NewAgents(postgres.NewTxRunner(pool), projects, specs.AgentProfiles{}, postgres.NewSkills(pool), postgres.NewSkills(pool), postgres.NewAuditTrail(pool))
+	})
+	db, ctx := live.db, context.Background()
+	workerPool := db.PoolAs("easycode_worker")
+	native, err := specs.NativeSkills()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n, err := appskill.PublishNative(ctx, postgres.NewTxRunner(workerPool), postgres.NewSkills(workerPool), native); err != nil || n != len(native) {
+		t.Fatalf("publish native catalog: %d %v", n, err)
+	}
+	if n, err := appskill.PublishNative(ctx, postgres.NewTxRunner(workerPool), postgres.NewSkills(workerPool), native); err != nil || n != 0 {
+		t.Fatal("publishing the same catalog again creates no version")
+	}
+
+	// CA-1: the library.
+	library := live.json(t, "GET", "/api/v1/skills?agent=requirements-agent&origin=native", "", nil, 200)["items"].([]any)
+	var stories map[string]any
+	for _, item := range library {
+		if s := item.(map[string]any); s["id"] == "historias-usuario" {
+			stories = s
+		}
+		if agents := fmt.Sprint(item.(map[string]any)["agents"]); !strings.Contains(agents, "requirements-agent") {
+			t.Fatalf("filter by agent: %v", item)
+		}
+	}
+	if stories == nil || stories["description"] == "" || fmt.Sprint(stories["stages"]) != "[requirements]" || stories["current_version"] != float64(1) ||
+		stories["estimated_tokens"].(float64) < 100 || stories["origin"] != "native" || stories["status"] != "unblocked" {
+		t.Fatalf("US-43 CA-1: %v", stories)
+	}
+	page := live.json(t, "GET", "/api/v1/skills?limit=5", "", nil, 200)
+	if len(page["items"].([]any)) != 5 || page["next_cursor"] == nil {
+		t.Fatalf("paged library: %v", page["next_cursor"])
+	}
+	live.json(t, "GET", "/api/v1/skills/historias-usuario", "", nil, 200)
+	live.json(t, "GET", "/api/v1/skills/does-not-exist", "", nil, 404)
+
+	opener := sealKeys(t, db, map[string]string{"anthropic": anthropicKey})
+	script := newTeamScript(t)
+	script.answers["requirements-agent"][0] = provider.Message{Calls: []provider.ToolCall{
+		call("s0", runtime.ToolReadFile, map[string]string{"path": "skills/historias-usuario/SKILL.md"})}}
+	api := providertest.NewAnthropic(anthropicKey, script.next)
+	t.Cleanup(api.Close)
+	work := newTeamWorker(t, db, localGateway{service: appgateway.NewService(opener, time.Minute, anthropic.New(api.URL, api.Client(), 10*time.Second))}, nil)
+	registerModels(t, live, "anthropic")
+	need, _ := specs.ReferenceNeed()
+	body, _ := json.Marshal(map[string]any{"name": "Reserva com skills", "business_need": need, "provider_submission_acknowledgment": true,
+		"budget": map[string]any{"stop_limit": map[string]string{"value": "200.00", "currency": "BRL"}}})
+	projectID := live.json(t, "POST", "/api/v1/projects", string(body), key(), 201)["id"].(string)
+	base := "/api/v1/projects/" + projectID
+	live.json(t, "PATCH", base+"/configuration", `{"model_pair":{"reasoning":{"provider":"anthropic","model":"reasoning-model"},"execution":{"provider":"anthropic","model":"execution-model"}}}`,
+		map[string]string{"If-Match": `"1"`}, 200)
+
+	// The agent page (PL-25) and the association by the lead.
+	rc := live.send("GET", base+"/agents/requirements-agent", "", nil)
+	if rc.Response.StatusCode() != 200 || string(rc.Response.Header.Peek("ETag")) != `"1"` {
+		t.Fatalf("getProjectAgent: %d %s", rc.Response.StatusCode(), rc.Response.Header.Peek("ETag"))
+	}
+	var agent map[string]any
+	_ = json.Unmarshal(rc.Response.Body(), &agent)
+	models, _ := agent["models_by_stage"].(map[string]any)
+	if agent["name"] == "" || !strings.HasPrefix(fmt.Sprint(agent["role"]), "Você é") || len(agent["limits"].([]any)) == 0 ||
+		fmt.Sprint(agent["delivery"]) != "[VISAO US RNF BACKLOG]" || models["requirements"] == nil {
+		t.Fatalf("ProjectAgent: %v", agent)
+	}
+	if n := len(live.json(t, "GET", base+"/agents", "", nil, 200)["items"].([]any)); n != 7 {
+		t.Fatalf("listProjectAgents: %d", n)
+	}
+	tools, _ := json.Marshal(agent["allowed_by_role"])
+	put := func(version string, tools string, skills string, want int) map[string]any {
+		return live.json(t, "PUT", base+"/agents/requirements-agent/configuration", `{"tools":`+tools+`,"skills":`+skills+`}`, map[string]string{"If-Match": version}, want)
+	}
+	wider := strings.Replace(string(tools), `"read_file":[`, `"read_file":["app/**",`, 1)
+	if refused := put(`"1"`, wider, `[]`, 409); !strings.Contains(fmt.Sprint(refused["type"]), "tool-not-allowed") {
+		t.Fatalf("US-25 CA-3: tool beyond the role: %v", refused)
+	}
+	put(`"1"`, string(tools), `[{"skill":"no-such-skill","version":1}]`, 400)
+	saved := put(`"1"`, string(tools), `[{"skill":"historias-usuario","version":1}]`, 200)
+	if saved["version"] != float64(2) || fmt.Sprint(saved["skills"]) != "[map[available_version:<nil> skill:historias-usuario version:1]]" {
+		t.Fatalf("US-43: saved configuration: %v", saved)
+	}
+	put(`"1"`, string(tools), `[]`, 412)
+	if n := count(t, db, "SELECT count(*) FROM easycode.audit_records WHERE action = 'agent_configuration.modify'"); n != 1 {
+		t.Fatalf("RNF-13: configuration audited (%d)", n)
+	}
+
+	// A blocked version of an organization skill is refused (US-44 CA-4, contract blocked-skill).
+	if _, err := db.Admin.Exec(ctx, `
+WITH s AS (INSERT INTO easycode.skills (organization_id, name, origin, created_by)
+           SELECT organization_id, 'padrao-da-casa', 'organization', id FROM easycode.users WHERE sub = 'dev' RETURNING id, created_by)
+INSERT INTO easycode.skill_versions (skill_id, version, submission_origin, description, stages, agents, size_tokens, content, content_hash, submitted_by)
+SELECT id, 1, 'upload', 'Padrão da casa', ARRAY['requirements'], ARRAY['requirements-agent'], 10, '{}'::bytea, repeat('a', 64), created_by FROM s`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Admin.Exec(ctx, "UPDATE easycode.skill_versions SET status = 'scanning' WHERE content_hash = repeat('a', 64)"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Admin.Exec(ctx, "UPDATE easycode.skill_versions SET status = 'blocked', block_reasons = ARRAY['malicious_content'] WHERE content_hash = repeat('a', 64)"); err != nil {
+		t.Fatal(err)
+	}
+	if refused := put(`"2"`, string(tools), `[{"skill":"padrao-da-casa","version":1}]`, 409); !strings.Contains(fmt.Sprint(refused["type"]), "blocked-skill") {
+		t.Fatalf("blocked-skill: %v", refused)
+	}
+
+	// CA-2, RN-1: the wave gets the description, records the version and reads the content on demand.
+	live.json(t, "POST", base+"/start", "", key(), 202)
+	work.drain(t)
+	work.runAll(t)
+	wave := live.json(t, "GET", base+"/waves/REQ-01", "", nil, 200)
+	if wave["state"] != "completed" || fmt.Sprint(wave["versions"].(map[string]any)["skills"]) != "[map[skill:historias-usuario version:1]]" ||
+		wave["versions"].(map[string]any)["agent_configuration"] != float64(2) {
+		t.Fatalf("US-43 CA-2: wave versions: %v", wave["versions"])
+	}
+	system := api.Bodies[0]["system"].([]any)[0].(map[string]any)["text"].(string)
+	if !strings.Contains(system, "historias-usuario v1 (skills/historias-usuario/SKILL.md)") || strings.Contains(system, "nenhuma skill") {
+		t.Fatal("US-43 CA-2: the skill description enters the context")
+	}
+	if !strings.Contains(fmt.Sprint(api.Bodies[1]["messages"]), "entrada_nao_confiavel") {
+		t.Fatal("RN-1: the full content is read on demand, as untrusted data")
+	}
+	if n := count(t, db, "SELECT count(*) FROM easycode.wave_skills WHERE load = 'complete'"); n != 1 {
+		t.Fatalf("RN-1: the full load is recorded (%d)", n)
+	}
+
+	// CA-3: a new version keeps the project pinned, with a notice, until the lead accepts it.
+	changed := native[0]
+	for i := range native {
+		if native[i].Name == "historias-usuario" {
+			changed = native[i]
+		}
+	}
+	files := map[string]string{}
+	for k, v := range changed.Files {
+		files[k] = v
+	}
+	files["SKILL.md"] += "\nRegra nova.\n"
+	changed.Files = files
+	if n, err := appskill.PublishNative(ctx, postgres.NewTxRunner(workerPool), postgres.NewSkills(workerPool), []domainskill.Package{changed}); err != nil || n != 1 {
+		t.Fatalf("new native version: %d %v", n, err)
+	}
+	pinned := live.json(t, "GET", base+"/agents/requirements-agent", "", nil, 200)["configuration"].(map[string]any)["skills"].([]any)[0].(map[string]any)
+	if pinned["version"] != float64(1) || pinned["available_version"] != float64(2) {
+		t.Fatalf("US-43 CA-3: notice of the new version: %v", pinned)
+	}
+	accepted := put(`"2"`, string(tools), `[{"skill":"historias-usuario","version":2}]`, 200)
+	if fmt.Sprint(accepted["skills"]) != "[map[available_version:<nil> skill:historias-usuario version:2]]" {
+		t.Fatalf("US-43 CA-3: accepted: %v", accepted)
+	}
+	removed := put(`"3"`, string(tools), `[]`, 200)
+	if len(removed["skills"].([]any)) != 0 {
+		t.Fatalf("skill removed from the agent: %v", removed)
 	}
 }

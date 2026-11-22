@@ -54,6 +54,8 @@ type Inputs struct {
 	// Opinions are the opinions recorded by the participant waves of the stage (lead of the validation).
 	Opinions []workflow.ReviewOpinion
 	Skills   string // skills of the agent in the project, by description (US-43 RN-1)
+	// SkillFiles are the files of those skills (skills/<name>/<file>), read on demand (US-43 RN-1).
+	SkillFiles map[string]string
 }
 
 // Totals are the accumulated tokens and costs of the wave (exact decimals, RNF-16).
