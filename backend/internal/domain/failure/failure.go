@@ -26,6 +26,10 @@ const (
 	CodeInternal           = "internal"
 	CodeNotFound           = "not-found"
 	CodeServiceUnavailable = "service-unavailable"
+	CodeValidation         = "validation"
+	CodeForbidden          = "forbidden"
+	CodeNotAuthenticated   = "not-authenticated"
+	CodeStateConflict      = "state-conflict"
 )
 
 // Error is a classified failure with a stable code and an optional cause.
@@ -33,6 +37,17 @@ type Error struct {
 	Kind  Kind
 	Code  string
 	Cause error
+	// Fields lists input problems by field (problem `errors`).
+	Fields []FieldError
+	// Extensions are extra problem members of the contract, such as `missing` or
+	// `current_state` (openapi Problem). Values must be safe to show to the caller.
+	Extensions map[string]any
+}
+
+// FieldError is one invalid input field. Message is a catalog key suffix, never user text.
+type FieldError struct {
+	Field   string
+	Message string
 }
 
 // New builds a classified failure.
@@ -48,6 +63,26 @@ func (e *Error) Error() string {
 }
 
 func (e *Error) Unwrap() error { return e.Cause }
+
+// WithField appends an invalid field and returns the error.
+func (e *Error) WithField(field, message string) *Error {
+	e.Fields = append(e.Fields, FieldError{Field: field, Message: message})
+	return e
+}
+
+// With sets a problem extension member and returns the error.
+func (e *Error) With(name string, value any) *Error {
+	if e.Extensions == nil {
+		e.Extensions = map[string]any{}
+	}
+	e.Extensions[name] = value
+	return e
+}
+
+// Invalid builds a validation failure (code "validation") from field errors.
+func Invalid(fields ...FieldError) *Error {
+	return &Error{Kind: KindInvalidInput, Code: CodeValidation, Fields: fields}
+}
 
 // From returns the classified failure in err's chain, or an internal failure wrapping err.
 func From(err error) *Error {

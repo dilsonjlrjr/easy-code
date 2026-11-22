@@ -12,7 +12,11 @@ import (
 type HandlerFunc func(rc *fasthttp.RequestCtx) error
 
 // Codes owned by the HTTP layer.
-const codeMethodNotAllowed = "method-not-allowed"
+const (
+	codeMethodNotAllowed     = "method-not-allowed"
+	codeRequiredPrecondition = "required-precondition"
+	codeFailedPrecondition   = "failed-precondition"
+)
 
 type route struct {
 	method   string

@@ -13,13 +13,21 @@ import (
 // APIPrefix is the versioned prefix of every REST route.
 const APIPrefix = "/api/v1"
 
-// Dependencies are the collaborators the HTTP layer needs, wired in cmd.
+// Dependencies are the collaborators the HTTP layer needs, wired in cmd. Product use cases
+// left nil keep their routes out (health-only tests).
 type Dependencies struct {
 	Logger     *slog.Logger
 	Translator Translator
 	Health     HealthUseCases
 	Tracer     trace.Tracer
 	Propagator propagation.TextMapPropagator
+
+	Sessions    SessionUseCases
+	Idempotency IdempotencyGuard
+	// PublicOrigin is the web origin that writes with the cookie must send in Origin ("" skips the check).
+	PublicOrigin string
+	// AttachmentLimitBytes is shown in getCurrentUser.
+	AttachmentLimitBytes int
 }
 
 // ServerSettings configures the fasthttp server.
@@ -34,6 +42,10 @@ func NewHandler(deps Dependencies) fasthttp.RequestHandler {
 	responder := NewResponder(deps.Translator, deps.Logger)
 	router := NewRouter(responder)
 	registerRoutes(router, NewHealthHandler(deps.Health, responder))
+	if deps.Sessions != nil {
+		product := &api{deps: deps, responder: responder, auth: authenticator{sessions: deps.Sessions, publicOrigin: deps.PublicOrigin}}
+		product.register(router)
+	}
 	return Chain(router.Serve,
 		RequestID(),
 		Tracing(deps.Tracer, deps.Propagator),

@@ -33,7 +33,23 @@ const (
 	EnvGatewaySocket        = "EASYCODE_GATEWAY_SOCKET"
 	EnvGatewayProviders     = "EASYCODE_GATEWAY_PROVIDERS"
 	EnvGatewaySessionIdle   = "EASYCODE_GATEWAY_SESSION_IDLE"
+	EnvGatewayPrivateKey    = "EASYCODE_GATEWAY_PRIVATE_KEY_FILE"
+	EnvAnthropicBaseURL     = "EASYCODE_ANTHROPIC_BASE_URL"
+	EnvAnthropicTestModel   = "EASYCODE_ANTHROPIC_TEST_MODEL"
+	EnvProviderCallTimeout  = "EASYCODE_PROVIDER_CALL_TIMEOUT"
+	EnvProfile              = "EASYCODE_PROFILE"
+	EnvDevUserSubject       = "EASYCODE_DEV_USER_SUB"
+	EnvDevUserName          = "EASYCODE_DEV_USER_NAME"
+	EnvDevSessionSecret     = "EASYCODE_DEV_SESSION_SECRET"
+	EnvPublicOrigin         = "EASYCODE_PUBLIC_ORIGIN"
+	EnvSealingPublicKey     = "EASYCODE_SEALING_PUBLIC_KEY_FILE"
+	EnvKeyTestTimeout       = "EASYCODE_PROVIDER_KEY_TEST_TIMEOUT"
+	EnvAttachmentLimit      = "EASYCODE_ATTACHMENT_LIMIT_BYTES"
+	EnvWorkerCommandPoll    = "EASYCODE_WORKER_COMMAND_POLL_INTERVAL"
 )
+
+// ProfileMarco1 is the development profile of Marco 1: fixed "dev" identity, no Keycloak (ARQ section 9).
+const ProfileMarco1 = "marco1"
 
 // LookupFunc reads one environment variable. os.LookupEnv satisfies it.
 type LookupFunc func(key string) (string, bool)
@@ -46,6 +62,34 @@ type Config struct {
 	Telemetry Telemetry
 	Worker    Worker
 	Gateway   Gateway
+	Identity  Identity
+	Providers Providers
+}
+
+// Identity configures who may use the api. Until Keycloak (MARCO-2) only the fixed development
+// identity of the marco1 profile exists.
+type Identity struct {
+	Profile string
+	// DevUserSubject and DevUserName describe the fixed "dev" user (marco1 only).
+	DevUserSubject string
+	DevUserName    string
+	// DevSessionSecret signs the development session cookie (marco1 only, at least 32 bytes).
+	DevSessionSecret string
+	// PublicOrigin is the web origin; writes with the session cookie must send it in Origin.
+	PublicOrigin string
+}
+
+// DevIdentity reports whether the fixed development identity is enabled.
+func (i Identity) DevIdentity() bool { return i.Profile == ProfileMarco1 }
+
+// Providers configures provider keys and limits seen by the api and the worker.
+type Providers struct {
+	// SealingPublicKeyFile holds the platform public key the api seals keys with (ADR-13).
+	SealingPublicKeyFile string
+	// KeyTestTimeout bounds the key test (US-15: 15 s).
+	KeyTestTimeout time.Duration
+	// AttachmentLimitBytes is the maximum attachment size (getCurrentUser.attachment_limit_bytes).
+	AttachmentLimitBytes int
 }
 
 // HTTP configures the api listener.
@@ -78,6 +122,8 @@ type Worker struct {
 	HeartbeatInterval time.Duration
 	// OutboxPollInterval is the fallback poll of the outbox publisher; a NOTIFY wakes it earlier.
 	OutboxPollInterval time.Duration
+	// CommandPollInterval is the fallback poll of the command queue; a NOTIFY wakes it earlier.
+	CommandPollInterval time.Duration
 }
 
 // Gateway configures easycode-gateway (interno.md section 3).
@@ -88,6 +134,14 @@ type Gateway struct {
 	Providers []string
 	// SessionIdle closes a wave session after this inactivity.
 	SessionIdle time.Duration
+	// PrivateKeyFile holds the platform private key that opens sealed provider keys (ADR-13).
+	PrivateKeyFile string
+	// AnthropicBaseURL is the Anthropic API endpoint (egress proxy or test server).
+	AnthropicBaseURL string
+	// AnthropicTestModel is the model id of the minimal key test call (configured, never fixed in code).
+	AnthropicTestModel string
+	// CallTimeout bounds one provider HTTP call.
+	CallTimeout time.Duration
 }
 
 // Load reads the configuration. It reports every invalid variable at once.
@@ -114,15 +168,33 @@ func Load(lookup LookupFunc) (Config, error) {
 			SampleRatio: r.ratio(EnvOTelSampleRatio, 1.0),
 		},
 		Worker: Worker{
-			HeartbeatInterval:  r.duration(EnvWorkerHeartbeat, 30*time.Second),
-			OutboxPollInterval: r.duration(EnvWorkerOutboxPoll, 5*time.Second),
+			HeartbeatInterval:   r.duration(EnvWorkerHeartbeat, 30*time.Second),
+			OutboxPollInterval:  r.duration(EnvWorkerOutboxPoll, 5*time.Second),
+			CommandPollInterval: r.duration(EnvWorkerCommandPoll, 2*time.Second),
 		},
 		Gateway: Gateway{
-			Socket:      r.text(EnvGatewaySocket, "/run/easycode-gateway/gateway.sock"),
-			Providers:   r.list(EnvGatewayProviders),
-			SessionIdle: r.duration(EnvGatewaySessionIdle, 15*time.Minute),
+			Socket:             r.text(EnvGatewaySocket, "/run/easycode-gateway/gateway.sock"),
+			Providers:          r.list(EnvGatewayProviders),
+			SessionIdle:        r.duration(EnvGatewaySessionIdle, 15*time.Minute),
+			PrivateKeyFile:     r.text(EnvGatewayPrivateKey, ""),
+			AnthropicBaseURL:   r.text(EnvAnthropicBaseURL, "https://api.anthropic.com"),
+			AnthropicTestModel: r.text(EnvAnthropicTestModel, ""),
+			CallTimeout:        r.duration(EnvProviderCallTimeout, 10*time.Minute),
+		},
+		Identity: Identity{
+			Profile:          r.text(EnvProfile, ""),
+			DevUserSubject:   r.text(EnvDevUserSubject, "dev"),
+			DevUserName:      r.text(EnvDevUserName, "Dev"),
+			DevSessionSecret: r.text(EnvDevSessionSecret, ""),
+			PublicOrigin:     r.text(EnvPublicOrigin, ""),
+		},
+		Providers: Providers{
+			SealingPublicKeyFile: r.text(EnvSealingPublicKey, ""),
+			KeyTestTimeout:       r.duration(EnvKeyTestTimeout, 15*time.Second),
+			AttachmentLimitBytes: r.integer(EnvAttachmentLimit, 10<<20),
 		},
 	}
+	r.checkIdentity(cfg.Identity)
 	cfg.Database.MigrationURL = r.text(EnvMigrationDatabaseURL, cfg.Database.URL)
 	return cfg, errors.Join(r.problems...)
 }
@@ -133,6 +205,18 @@ func (c Config) RequireDatabase() error {
 		return fmt.Errorf("%s is required", EnvDatabaseURL)
 	}
 	return nil
+}
+
+// checkIdentity refuses the development identity outside the marco1 profile (ADR-12).
+func (r *reader) checkIdentity(identity Identity) {
+	switch {
+	case identity.Profile != "" && identity.Profile != ProfileMarco1:
+		r.fail(EnvProfile, identity.Profile, errors.New("unknown profile (available: marco1)"))
+	case !identity.DevIdentity() && identity.DevSessionSecret != "":
+		r.problems = append(r.problems, fmt.Errorf("%s is only accepted with %s=%s", EnvDevSessionSecret, EnvProfile, ProfileMarco1))
+	case identity.DevIdentity() && len(identity.DevSessionSecret) < 32:
+		r.problems = append(r.problems, fmt.Errorf("%s must have at least 32 characters in the %s profile", EnvDevSessionSecret, ProfileMarco1))
+	}
 }
 
 type reader struct {

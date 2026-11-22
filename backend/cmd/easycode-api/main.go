@@ -10,12 +10,18 @@ import (
 	"os"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	apphealth "easycode/internal/application/health"
+	"easycode/internal/application/idempotency"
+	appsession "easycode/internal/application/session"
+	"easycode/internal/infrastructure/config"
 	"easycode/internal/infrastructure/i18n"
 	"easycode/internal/infrastructure/logging"
 	"easycode/internal/infrastructure/postgres"
 	"easycode/internal/infrastructure/process"
 	"easycode/internal/infrastructure/telemetry"
+	"easycode/internal/infrastructure/websession"
 	httpapi "easycode/internal/interfaces/http"
 	"easycode/migrations"
 )
@@ -73,8 +79,19 @@ func migrate(ctx context.Context, proc process.Process) error {
 		return err
 	}
 	defer pool.Close()
-	_, err = postgres.NewMigrator(pool, proc.Logger).Apply(ctx, files)
-	return err
+	if _, err = postgres.NewMigrator(pool, proc.Logger).Apply(ctx, files); err != nil {
+		return err
+	}
+	identity := proc.Config.Identity
+	if !identity.DevIdentity() {
+		return nil
+	}
+	// marco1 only: the fixed development identity (ADR-12). The migration role owns the tables.
+	if err := postgres.SeedDevIdentity(ctx, pool, identity.DevUserSubject, identity.DevUserName); err != nil {
+		return err
+	}
+	proc.Logger.Info("development identity seeded", slog.String("profile", identity.Profile))
+	return nil
 }
 
 func serve(ctx context.Context, proc process.Process) error {
@@ -98,17 +115,36 @@ func serve(ctx context.Context, proc process.Process) error {
 	if err != nil {
 		return err
 	}
-	handler := httpapi.NewHandler(httpapi.Dependencies{
-		Logger:     proc.Logger,
-		Translator: translator,
-		Health:     apphealth.NewService(version, cfg.Database.ProbeTimeout, postgres.NewDatabaseProbe(pool)),
-		Tracer:     tracing.Provider.Tracer(serviceName),
-		Propagator: tracing.Propagator,
-	})
+	deps := productDependencies(cfg, pool)
+	deps.Logger = proc.Logger
+	deps.Translator = translator
+	deps.Health = apphealth.NewService(version, cfg.Database.ProbeTimeout, postgres.NewDatabaseProbe(pool))
+	deps.Tracer = tracing.Provider.Tracer(serviceName)
+	deps.Propagator = tracing.Propagator
+	if cfg.Identity.DevIdentity() {
+		proc.Logger.Warn("development identity enabled: fixed dev user, not for production", slog.String("profile", cfg.Identity.Profile))
+	}
+	handler := httpapi.NewHandler(deps)
 	server := httpapi.NewServer(handler, httpapi.ServerSettings{
 		ReadTimeout: cfg.HTTP.ReadTimeout, WriteTimeout: cfg.HTTP.WriteTimeout, IdleTimeout: cfg.HTTP.IdleTimeout,
 	}, proc.Logger)
 	return listenUntilDone(ctx, proc, server.ListenAndServe, server.ShutdownWithContext)
+}
+
+// productDependencies wires the use cases of the product routes over PostgreSQL.
+func productDependencies(cfg config.Config, pool *pgxpool.Pool) httpapi.Dependencies {
+	tx := postgres.NewTxRunner(pool)
+	devSubject := ""
+	if cfg.Identity.DevIdentity() {
+		devSubject = cfg.Identity.DevUserSubject
+	}
+	sessions := appsession.NewService(postgres.NewUsers(pool), websession.NewCodec(cfg.Identity.DevSessionSecret), devSubject)
+	return httpapi.Dependencies{
+		Sessions:             sessions,
+		Idempotency:          idempotency.NewGuard(tx, postgres.NewIdempotencyKeys(pool)),
+		PublicOrigin:         cfg.Identity.PublicOrigin,
+		AttachmentLimitBytes: cfg.Providers.AttachmentLimitBytes,
+	}
 }
 
 func listenUntilDone(ctx context.Context, proc process.Process, listen func(string) error, shutdown func(context.Context) error) error {

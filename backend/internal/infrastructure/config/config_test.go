@@ -59,3 +59,23 @@ func TestLoadReportsInvalidValues(t *testing.T) {
 		t.Fatal("expected validation error")
 	}
 }
+
+func TestDevIdentityExistsOnlyInMarco1Profile(t *testing.T) {
+	secret := "0123456789abcdef0123456789abcdef"
+	if _, err := config.Load(lookupFrom(map[string]string{config.EnvDevSessionSecret: secret})); err == nil {
+		t.Fatal("dev session secret outside marco1 must be refused (ADR-12)")
+	}
+	if _, err := config.Load(lookupFrom(map[string]string{config.EnvProfile: config.ProfileMarco1})); err == nil {
+		t.Fatal("marco1 without a session secret must be refused")
+	}
+	if _, err := config.Load(lookupFrom(map[string]string{config.EnvProfile: "prod"})); err == nil {
+		t.Fatal("unknown profile must be refused")
+	}
+	cfg, err := config.Load(lookupFrom(map[string]string{config.EnvProfile: config.ProfileMarco1, config.EnvDevSessionSecret: secret}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Identity.DevIdentity() || cfg.Identity.DevUserSubject != "dev" {
+		t.Fatalf("unexpected identity: %+v", cfg.Identity)
+	}
+}
