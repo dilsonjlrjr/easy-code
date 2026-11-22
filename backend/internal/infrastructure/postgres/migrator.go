@@ -16,7 +16,10 @@ import (
 // migrationLockID serializes concurrent migration runs through a PostgreSQL advisory lock.
 const migrationLockID int64 = 0x45617379436f6465 // "EasyCode"
 
-const createMigrationsTable = `CREATE TABLE IF NOT EXISTS schema_migrations (
+// The table lives in public, always named with the schema: the pool search_path starts with
+// easycode, and an unqualified name made a second run create an empty easycode.schema_migrations
+// that hid the applied versions (the migrate service failed on every run after the first).
+const createMigrationsTable = `CREATE TABLE IF NOT EXISTS public.schema_migrations (
 	version     bigint      PRIMARY KEY,
 	name        text        NOT NULL,
 	checksum    text        NOT NULL,
@@ -123,7 +126,7 @@ type executor interface {
 
 func record(ctx context.Context, db executor, migration Migration, started time.Time) error {
 	_, err := db.Exec(WithOperation(ctx, "migration.record"),
-		"INSERT INTO schema_migrations (version, name, checksum, duration_ms) VALUES ($1, $2, $3, $4)",
+		"INSERT INTO public.schema_migrations (version, name, checksum, duration_ms) VALUES ($1, $2, $3, $4)",
 		migration.Version, migration.Name, migration.Checksum, time.Since(started).Milliseconds())
 	return err
 }
@@ -147,7 +150,7 @@ func (m *Migrator) unlock(conn *pgx.Conn) {
 }
 
 func appliedChecksums(ctx context.Context, conn *pgx.Conn) (map[int64]string, error) {
-	rows, err := conn.Query(WithOperation(ctx, "migration.list_applied"), "SELECT version, checksum FROM schema_migrations")
+	rows, err := conn.Query(WithOperation(ctx, "migration.list_applied"), "SELECT version, checksum FROM public.schema_migrations")
 	if err != nil {
 		return nil, fmt.Errorf("list applied migrations: %w", err)
 	}
