@@ -32,6 +32,8 @@ type Dependencies struct {
 	Providers ProviderUseCases
 	Pricing   PricingUseCases
 	Projects  ProjectUseCases
+	// Configuration is required with Projects.
+	Configuration ConfigurationUseCases
 }
 
 // ServerSettings configures the fasthttp server.

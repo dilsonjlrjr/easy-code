@@ -161,6 +161,7 @@ func productDependencies(cfg config.Config, pool *pgxpool.Pool, logger *slog.Log
 		AttachmentLimitBytes: cfg.Providers.AttachmentLimitBytes,
 		Pricing:              apppricing.NewService(tx, postgres.NewCatalog(pool), trail),
 		Projects:             appproject.NewService(tx, projects, postgres.NewOutbox(pool), trail, definition.ID, definition.Version),
+		Configuration:        appproject.NewConfigurationService(tx, projects, projects, postgres.NewCatalog(pool), trail, definition),
 	}
 	if cfg.Providers.SealingPublicKeyFile == "" {
 		logger.Warn("provider key routes disabled: no sealing public key", slog.String("variable", config.EnvSealingPublicKey))

@@ -27,5 +27,7 @@ func (a *api) register(router *Router) {
 		router.Handle(fasthttp.MethodGet, APIPrefix+"/projects", auth(a.listProjects))
 		router.Handle(fasthttp.MethodPost, APIPrefix+"/projects", auth(a.createProject))
 		router.Handle(fasthttp.MethodGet, APIPrefix+"/projects/{projectId}", auth(a.getProject))
+		router.Handle(fasthttp.MethodGet, APIPrefix+"/projects/{projectId}/configuration", auth(a.getProjectConfiguration))
+		router.Handle(fasthttp.MethodPatch, APIPrefix+"/projects/{projectId}/configuration", auth(a.modifyProjectConfiguration))
 	}
 }

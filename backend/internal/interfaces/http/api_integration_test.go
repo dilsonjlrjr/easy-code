@@ -18,6 +18,7 @@ import (
 	"easycode/internal/infrastructure/logging"
 	"easycode/internal/infrastructure/postgres"
 	"easycode/internal/infrastructure/postgres/postgrestest"
+	"easycode/internal/infrastructure/specs"
 	"easycode/internal/infrastructure/websession"
 	httpapi "easycode/internal/interfaces/http"
 )
@@ -43,14 +44,20 @@ func newLiveAPI(t *testing.T, options ...func(*httpapi.Dependencies, *postgreste
 	logs := &strings.Builder{}
 	tx := postgres.NewTxRunner(pool)
 	trail := postgres.NewAuditTrail(pool)
+	projects := postgres.NewProjects(pool, "workflow-basico", 3)
+	wf, err := specs.BasicWorkflow()
+	if err != nil {
+		t.Fatal(err)
+	}
 	deps := httpapi.Dependencies{
 		Logger: logging.New(logs, slog.LevelDebug, "test", "dev"), Translator: translator, Health: fakeHealth{},
 		Tracer: noop.NewTracerProvider().Tracer("test"), Propagator: propagation.TraceContext{},
-		Sessions:     session.NewService(postgres.NewUsers(pool), websession.NewCodec(strings.Repeat("s", 32)), "dev"),
-		Idempotency:  idempotency.NewGuard(tx, postgres.NewIdempotencyKeys(pool)),
-		PublicOrigin: "https://easycode.test",
-		Pricing:      apppricing.NewService(tx, postgres.NewCatalog(pool), trail),
-		Projects:     appproject.NewService(tx, postgres.NewProjects(pool, "workflow-basico", 3), postgres.NewOutbox(pool), trail, "workflow-basico", 1),
+		Sessions:      session.NewService(postgres.NewUsers(pool), websession.NewCodec(strings.Repeat("s", 32)), "dev"),
+		Idempotency:   idempotency.NewGuard(tx, postgres.NewIdempotencyKeys(pool)),
+		PublicOrigin:  "https://easycode.test",
+		Pricing:       apppricing.NewService(tx, postgres.NewCatalog(pool), trail),
+		Projects:      appproject.NewService(tx, projects, postgres.NewOutbox(pool), trail, "workflow-basico", 1),
+		Configuration: appproject.NewConfigurationService(tx, projects, projects, postgres.NewCatalog(pool), trail, wf.Definition),
 	}
 	for _, option := range options {
 		option(&deps, db)
@@ -137,4 +144,24 @@ func count(t *testing.T, db *postgrestest.Database, sql string) int {
 		t.Fatal(err)
 	}
 	return n
+}
+
+// US-16 over HTTP: ETag and If-Match on the configuration (428 without it, 412 when stale).
+func TestConfigurationNeedsIfMatch(t *testing.T) {
+	live := newLiveAPI(t)
+	created := decode(t, live.send(fasthttp.MethodPost, "/api/v1/projects", newProjectBody, map[string]string{"Idempotency-Key": "0193a5c0-44aa-7e01-b2c9-7f3d1e6a9b42"}))
+	path := "/api/v1/projects/" + created["id"].(string) + "/configuration"
+	got := live.send(fasthttp.MethodGet, path, "", nil)
+	if got.Response.StatusCode() != fasthttp.StatusOK || string(got.Response.Header.Peek("ETag")) != `"1"` {
+		t.Fatalf("get: %d %s", got.Response.StatusCode(), got.Response.Header.Peek("ETag"))
+	}
+	if rc := live.send(fasthttp.MethodPatch, path, `{"artifact_language":"en"}`, nil); rc.Response.StatusCode() != fasthttp.StatusPreconditionRequired {
+		t.Fatalf("no If-Match: %d", rc.Response.StatusCode())
+	}
+	if rc := live.send(fasthttp.MethodPatch, path, `{"artifact_language":"en"}`, map[string]string{"If-Match": `"1"`}); rc.Response.StatusCode() != fasthttp.StatusOK || string(rc.Response.Header.Peek("ETag")) != `"2"` {
+		t.Fatalf("patch: %d %s", rc.Response.StatusCode(), rc.Response.Body())
+	}
+	if rc := live.send(fasthttp.MethodPatch, path, `{"artifact_language":"pt-BR"}`, map[string]string{"If-Match": `"1"`}); rc.Response.StatusCode() != fasthttp.StatusPreconditionFailed {
+		t.Fatalf("stale: %d", rc.Response.StatusCode())
+	}
 }
