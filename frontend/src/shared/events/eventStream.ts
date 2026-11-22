@@ -41,6 +41,11 @@ export interface EventStreamOptions {
   url: string
   /** Last sequence already reflected in the state read by REST (`Project.last_sequence`, sse.md 5.1). */
   since?: number
+  /**
+   * `sequence` (default): one project's stream, ordered by the project sequence. `position`: the
+   * notices stream (`watchNotices`), whose SSE id is the global outbox position across projects.
+   */
+  order?: 'sequence' | 'position'
   /** Extra filters (`waveId`, `class`, `type`); with filters, sequence jumps are expected. */
   query?: Record<string, string | string[] | undefined>
   onEvent: (event: CloudEvent, eventClass: EventClass) => void
@@ -197,7 +202,8 @@ export function createEventStream(options: EventStreamOptions): EventStream {
       options.onEvent(event, 'telemetry')
       return
     }
-    const sequence = event.sequence ?? Number(frame.id)
+    const sequence =
+      options.order === 'position' ? Number(frame.id) : (event.sequence ?? Number(frame.id))
     if (lastSequence !== undefined && sequence <= lastSequence) return
     if (seenIds.has(event.id)) return
     remember(event.id)

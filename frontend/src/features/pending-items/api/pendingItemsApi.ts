@@ -1,16 +1,27 @@
 import { apiClient } from '@/shared/api/apiClient'
 import type { AgentId, Page, StageId } from '@/shared/api/contract'
-import type { HttpClient } from '@/shared/api/httpClient'
+import { joinUrl, type HttpClient } from '@/shared/api/httpClient'
+
+/** openapi `PendingItemType`. Phase 1 shows only gates and questions (US-48 RN-1, CA-19-10). */
+export type PendingItemType = 'gate' | 'question' | 'finding_escalated' | 'budget'
+
+export const PHASE_ONE_TYPES: readonly PendingItemType[] = ['gate', 'question']
 
 export interface PendingItem {
-  type: string
+  type: PendingItemType
   project: { id: string; name: string }
   stage?: StageId
   agent?: AgentId
   target: { type: 'gate_round' | 'question' | 'finding' | 'project'; id: string }
   opened_at: string
   title?: string
-  summary?: { questions?: number; you_decide?: boolean }
+  summary?: {
+    failed_checks?: number
+    blocks?: boolean
+    questions?: number
+    budget_percentage?: number
+    you_decide?: boolean
+  }
 }
 
 export interface PendingItemsPage extends Page<PendingItem> {
@@ -19,15 +30,34 @@ export interface PendingItemsPage extends Page<PendingItem> {
 
 export function createPendingItemsApi(client: HttpClient = apiClient) {
   return {
-    list: (cursor?: string) =>
-      client.get<PendingItemsPage>('/pending-items', { query: { cursor, limit: 50 } }),
+    list: (query: { type?: PendingItemType; cursor?: string; limit?: number } = {}) =>
+      client.get<PendingItemsPage>('/pending-items', {
+        query: { type: query.type, cursor: query.cursor, limit: query.limit ?? 50 },
+      }),
   }
 }
 
 export const pendingItemsApi = createPendingItemsApi()
 
+/** `watchNotices` (`GET /me/events`): what is waiting changes live (US-48 CA-2, ER-19-4). */
+export function noticesUrl(): string {
+  return joinUrl(apiClient.baseUrl, '/me/events')
+}
+
 /** `REQ-01/PERG-1` → the wave of a question target. */
 export function waveOfQuestion(targetId: string): string | undefined {
   const [wave, question] = targetId.split('/')
   return wave && question ? wave : undefined
+}
+
+/** `gate.requirements/2` → gate and round of a gate target. */
+export function gateRoundOf(targetId: string): { gateId: string; round: number } | undefined {
+  const [gateId, round] = targetId.split('/')
+  const number = Number(round)
+  return gateId && Number.isInteger(number) && number > 0 ? { gateId, round: number } : undefined
+}
+
+/** CA-19-1 / ER-19-3: oldest first, whatever the order of the pages that arrived. */
+export function oldestFirst(items: PendingItem[]): PendingItem[] {
+  return [...items].sort((left, right) => Date.parse(left.opened_at) - Date.parse(right.opened_at))
 }

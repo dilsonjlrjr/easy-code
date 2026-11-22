@@ -99,6 +99,31 @@ describe('createEventStream', () => {
     stream.stop()
   })
 
+  it('watchNotices orders by the outbox position, so events of other projects are not dropped (sse.md 3)', async () => {
+    const first = controllableResponse()
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValueOnce(first.response)
+    const received: string[] = []
+    const stream = createEventStream({
+      url: '/api/v1/me/events',
+      order: 'position',
+      fetchImplementation: fetchMock,
+      timers: manualTimers().timers,
+      onEvent: (event) => received.push(event.id),
+    })
+    const frame = (position: number, sequence: number, id: string) =>
+      `id: ${String(position)}\nevent: e\ndata: ${JSON.stringify({ id, type: 'e', sequence, data: {} })}\n\n`
+
+    stream.start()
+    await flush()
+    first.push(frame(100, 50, 'project-a'))
+    first.push(frame(101, 3, 'project-b'))
+    first.push(frame(101, 3, 'project-b'))
+    await flush()
+
+    expect(received).toEqual(['project-a', 'project-b'])
+    stream.stop()
+  })
+
   it('US-09 CA-3: after a drop it reconnects with Last-Event-ID and skips what it already applied', async () => {
     const first = controllableResponse()
     const second = controllableResponse()
