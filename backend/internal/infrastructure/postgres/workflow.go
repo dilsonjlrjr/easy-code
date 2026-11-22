@@ -109,12 +109,13 @@ SELECT $4::uuid, pr.organization_id, pr.id, 'project', $5, `+principalUserIDSQL+
 
 // Get implements appworkflow.Commands.
 func (w Workflow) Get(ctx context.Context, projectID, commandID string) (appworkflow.CommandView, error) {
-	view := appworkflow.CommandView{ID: commandID, TargetType: "project", TargetID: projectID}
+	view := appworkflow.CommandView{ID: commandID}
 	var refusal *string
 	err := conn(ctx, w.pool).QueryRow(WithOperation(ctx, "commands.get"), `
-SELECT c.type, c.target_type, c.status, u.sub, u.display_name, c.requested_at, c.processed_at, c.refusal_reason
+SELECT c.type, c.target_type, coalesce(wv.code, pr.public_id::text), c.status, u.sub, u.display_name, c.requested_at, c.processed_at, c.refusal_reason
   FROM easycode.commands c JOIN easycode.projects pr ON pr.id = c.project_id JOIN easycode.users u ON u.id = c.requested_by
- WHERE c.public_id = $1::uuid AND pr.public_id = $2::uuid`, commandID, projectID).Scan(&view.Type, &view.TargetType, &view.State,
+  LEFT JOIN easycode.waves wv ON wv.id = c.wave_id
+ WHERE c.public_id = $1::uuid AND pr.public_id = $2::uuid`, commandID, projectID).Scan(&view.Type, &view.TargetType, &view.TargetID, &view.State,
 		&view.RequestedBy.Subject, &view.RequestedBy.Name, &view.RequestedAt, &view.CompletedAt, &refusal)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return view, failure.New(failure.KindNotFound, failure.CodeNotFound, nil)
@@ -338,4 +339,23 @@ SELECT s.stage, s.state, s.reevaluation_pending,
 		})
 	}
 	return view, nil
+}
+
+// StageStates implements appworkflow.Orchestration.
+func (w Workflow) StageStates(ctx context.Context, projectID string) (map[string]string, error) {
+	rows, err := conn(ctx, w.pool).Query(WithOperation(ctx, "stages.states"), `
+SELECT s.stage, s.state FROM easycode.stages s JOIN easycode.projects pr ON pr.id = s.project_id WHERE pr.public_id = $1::uuid`, projectID)
+	if err != nil {
+		return nil, fmt.Errorf("stage states: %w", classify(err))
+	}
+	defer rows.Close()
+	states := map[string]string{}
+	for rows.Next() {
+		var stage, state string
+		if err := rows.Scan(&stage, &state); err != nil {
+			return nil, err
+		}
+		states[stage] = state
+	}
+	return states, rows.Err()
 }

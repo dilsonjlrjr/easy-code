@@ -36,6 +36,13 @@ type Dependencies struct {
 	Configuration ConfigurationUseCases
 	Workflow      WorkflowUseCases
 	Artifacts     ArtifactUseCases
+	Waves         WaveUseCases
+	Gates         GateUseCases
+	// Events, History and Access serve the SSE stream; Shutdown closes when the api stops.
+	Events   EventFeed
+	History  EventHistory
+	Access   ProjectAccess
+	Shutdown <-chan struct{}
 }
 
 // ServerSettings configures the fasthttp server.
@@ -70,9 +77,11 @@ func registerRoutes(router *Router, health *HealthHandler) {
 // NewServer builds the fasthttp server around handler.
 func NewServer(handler fasthttp.RequestHandler, settings ServerSettings, logger *slog.Logger) *fasthttp.Server {
 	return &fasthttp.Server{
-		Handler:               handler,
-		ReadTimeout:           settings.ReadTimeout,
-		WriteTimeout:          settings.WriteTimeout,
+		Handler:     handler,
+		ReadTimeout: settings.ReadTimeout,
+		// No write deadline: fasthttp sets it once per response, which would cut the SSE streams
+		// (sse.md); a dead client is detected by the heartbeat write instead.
+		WriteTimeout:          0,
 		IdleTimeout:           settings.IdleTimeout,
 		NoDefaultServerHeader: true,
 		Logger:                serverLogger{logger: logger},

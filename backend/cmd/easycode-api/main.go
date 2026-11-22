@@ -13,12 +13,15 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	appartifact "easycode/internal/application/artifact"
+	appevent "easycode/internal/application/event"
+	appgate "easycode/internal/application/gate"
 	apphealth "easycode/internal/application/health"
 	"easycode/internal/application/idempotency"
 	apppricing "easycode/internal/application/pricing"
 	appproject "easycode/internal/application/project"
 	"easycode/internal/application/providerkey"
 	appsession "easycode/internal/application/session"
+	appwave "easycode/internal/application/wave"
 	appworkflow "easycode/internal/application/workflow"
 	"easycode/internal/infrastructure/config"
 	"easycode/internal/infrastructure/i18n"
@@ -126,6 +129,14 @@ func serve(ctx context.Context, proc process.Process) error {
 	if err != nil {
 		return err
 	}
+	broker := appevent.NewBroker()
+	deps.Events = broker
+	go func() {
+		_ = postgres.NewEventListener(pool, proc.Logger, nil).Listen(ctx, broker.Dispatch)
+	}()
+	shutdown := make(chan struct{})
+	deps.Shutdown = shutdown
+	go func() { <-ctx.Done(); close(shutdown) }()
 	deps.Logger = proc.Logger
 	deps.Translator = translator
 	deps.Health = apphealth.NewService(version, cfg.Database.ProbeTimeout, postgres.NewDatabaseProbe(pool))
@@ -157,6 +168,8 @@ func productDependencies(cfg config.Config, pool *pgxpool.Pool, logger *slog.Log
 	definition := wf.Definition
 	projects := postgres.NewProjects(pool, definition.ID, len(definition.Stages))
 	workflows := postgres.NewWorkflow(pool, definition)
+	waveStore := postgres.NewWaves(pool, definition)
+	waves := appwave.NewService(tx, projects, waveStore, waveStore, trail)
 	deps := httpapi.Dependencies{
 		Sessions:             sessions,
 		Idempotency:          idempotency.NewGuard(tx, postgres.NewIdempotencyKeys(pool)),
@@ -167,6 +180,10 @@ func productDependencies(cfg config.Config, pool *pgxpool.Pool, logger *slog.Log
 		Configuration:        appproject.NewConfigurationService(tx, projects, projects, postgres.NewCatalog(pool), trail, definition),
 		Workflow:             appworkflow.NewService(tx, projects, workflows, workflows, workflows, trail),
 		Artifacts:            appartifact.NewQueries(projects, postgres.NewArtifacts(pool)),
+		Gates:                appgate.NewDecisions(tx, projects, postgres.NewGates(pool), postgres.NewOutbox(pool), trail),
+		History:              postgres.NewOutbox(pool),
+		Waves:                waves,
+		Access:               waves,
 	}
 	if cfg.Providers.SealingPublicKeyFile == "" {
 		logger.Warn("provider key routes disabled: no sealing public key", slog.String("variable", config.EnvSealingPublicKey))

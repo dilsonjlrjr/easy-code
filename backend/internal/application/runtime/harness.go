@@ -146,7 +146,9 @@ func (a *FileAgent) Next(ctx context.Context, wave WaveContext, cp Checkpoint) (
 	if len(answer.Calls) == 0 {
 		state.TextOnly++
 		if state.TextOnly > maxTextOnlyAnswers {
-			return StepResult{Type: StepFail, Failure: CauseLimitViolation, Call: &record}, nil
+			record.Summary = summarizeCall(answer)
+			failed, err := state.encode(cp.Number+1, AfterModelCall)
+			return StepResult{Type: StepFail, Failure: CauseLimitViolation, New: failed, Call: &record}, err
 		}
 		state.Messages = append(state.Messages, provider.Message{Role: "user",
 			Text: "Continue usando as ferramentas: grave os artefatos com write_file, pergunte com ask_user ou entregue com finish."})

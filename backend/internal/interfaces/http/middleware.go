@@ -94,7 +94,10 @@ func accessAttrs(rc *fasthttp.RequestCtx, started time.Time) []slog.Attr {
 		slog.String("route", RouteTemplate(rc)),
 		slog.Int("status", rc.Response.StatusCode()),
 		slog.Float64("duration_ms", float64(time.Since(started).Microseconds())/1000),
-		slog.Int("response_bytes", len(rc.Response.Body())),
+	}
+	// A streamed body (SSE) must not be read here: Body() would drain the stream.
+	if !rc.Response.IsBodyStream() {
+		attrs = append(attrs, slog.Int("response_bytes", len(rc.Response.Body())))
 	}
 	if id := userID(rc); id != "" {
 		attrs = append(attrs, slog.String("user_id", id))

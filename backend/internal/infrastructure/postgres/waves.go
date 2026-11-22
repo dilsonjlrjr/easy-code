@@ -1,0 +1,365 @@
+package postgres
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+
+	"easycode/internal/application/idempotency"
+	appproject "easycode/internal/application/project"
+	appwave "easycode/internal/application/wave"
+	appworkflow "easycode/internal/application/workflow"
+	"easycode/internal/domain/failure"
+	"easycode/internal/domain/identity"
+	"easycode/internal/domain/pricing"
+	domainworkflow "easycode/internal/domain/workflow"
+)
+
+// Waves reads waves for the api and applies the answer command in the worker.
+type Waves struct {
+	pool    *pgxpool.Pool
+	inForce domainworkflow.Definition
+}
+
+var (
+	_ appwave.Reader  = Waves{}
+	_ appwave.Answers = Waves{}
+	_ appwave.Resumer = Waves{}
+)
+
+// NewWaves builds the adapter.
+func NewWaves(pool *pgxpool.Pool, inForce domainworkflow.Definition) Waves {
+	return Waves{pool: pool, inForce: inForce}
+}
+
+const waveSummary = `w.code, w.stage, w.agent, w.state, w.purpose, w.attempt, coalesce(ac.version, 0), w.created_at, w.started_at,
+  CASE WHEN w.state IN ('completed','canceled') THEN w.finished_at
+       WHEN w.state = 'failed' THEN (SELECT max(e.occurred_at) FROM easycode.events e WHERE e.project_id = w.project_id AND e.waveid = w.code AND e.type = 'br.easycode.wave.failed.v1')
+  END,
+  w.useful_cost::text, w.lost_cost::text, w.currency, w.estimated_lost_cost`
+
+func scanSummary(row pgx.Row, s *appwave.Summary, extra ...any) error {
+	args := append([]any{&s.Code, &s.Stage, &s.Agent, &s.State, &s.Purpose, &s.Attempt, &s.ConfigVersion, &s.CreatedAt, &s.StartedAt, &s.EndedAt,
+		&s.Cost.Useful, &s.Cost.Lost, &s.Cost.Currency, &s.Cost.EstimatedLost}, extra...)
+	if err := row.Scan(args...); err != nil {
+		return err
+	}
+	s.Cost.Useful, s.Cost.Lost = pricing.NormalizeDecimal(s.Cost.Useful), pricing.NormalizeDecimal(s.Cost.Lost)
+	return nil
+}
+
+// List implements appwave.Reader.
+func (w Waves) List(ctx context.Context, projectID, stage, agent string, states []string, limit int) ([]appwave.Summary, error) {
+	rows, err := conn(ctx, w.pool).Query(WithOperation(ctx, "waves.list"), `
+SELECT `+waveSummary+` FROM easycode.waves w JOIN easycode.projects pr ON pr.id = w.project_id
+  LEFT JOIN easycode.agent_configurations ac ON ac.id = w.agent_configuration_id
+ WHERE pr.public_id = $1::uuid AND ($2 = '' OR w.stage = $2) AND ($3 = '' OR w.agent = $3)
+   AND (coalesce(cardinality($4::text[]), 0) = 0 OR w.state = ANY($4::text[]))
+ ORDER BY w.created_at DESC LIMIT $5`, projectID, stage, agent, states, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list waves: %w", classify(err))
+	}
+	defer rows.Close()
+	var list []appwave.Summary
+	for rows.Next() {
+		var s appwave.Summary
+		if err := scanSummary(rows, &s); err != nil {
+			return nil, err
+		}
+		list = append(list, s)
+	}
+	return list, rows.Err()
+}
+
+// Get implements appwave.Reader.
+func (w Waves) Get(ctx context.Context, projectID, code string) (appwave.View, error) {
+	q := conn(ctx, w.pool)
+	var v appwave.View
+	var waveID int64
+	var digest, cause, question, instruction *string
+	var step int
+	err := scanSummary(q.QueryRow(WithOperation(ctx, "waves.get"), `
+SELECT `+waveSummary+`, w.id, w.inputs_digest, w.failure_cause, w.input_tokens, w.output_tokens, w.read_cache_tokens, w.write_cache_tokens,
+       w.execution_duration_ms, (extract(epoch FROM coalesce(w.finished_at, now()) - coalesce(w.started_at, w.created_at)) * 1000)::bigint,
+       w.current_step, ac.instruction_version,
+       (SELECT q.code FROM easycode.wave_questions q WHERE q.wave_id = w.id AND q.answered_at IS NULL ORDER BY q.opened_at DESC LIMIT 1)
+  FROM easycode.waves w JOIN easycode.projects pr ON pr.id = w.project_id
+  LEFT JOIN easycode.agent_configurations ac ON ac.id = w.agent_configuration_id
+ WHERE pr.public_id = $1::uuid AND w.code = $2`, projectID, code), &v.Summary, &waveID, &digest, &cause,
+		&v.Tokens.Input, &v.Tokens.Output, &v.Tokens.CacheRead, &v.Tokens.CacheWrite, &v.ExecutionMs, &v.CycleMs, &step, &instruction, &question)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return v, failure.New(failure.KindNotFound, failure.CodeNotFound, nil)
+	}
+	if err != nil {
+		return v, fmt.Errorf("read wave: %w", classify(err))
+	}
+	v.InputsDigest, v.InstructionVersion, v.QuestionOpen = deref(digest), deref(instruction), deref(question)
+	if cause != nil {
+		v.FailureCause = *cause
+	}
+	if step > 0 || v.State != "queued" {
+		v.LastCheckpoint = &step
+	}
+	// A wave failed by the correction limit shows the schema errors (US-29 CA-2).
+	var evidence []byte
+	err = q.QueryRow(WithOperation(ctx, "waves.schema_failure"), `
+SELECT evidence FROM easycode.check_executions WHERE wave_id = $1 AND check_id = 'artifact.schema_valid' AND result = 'failed'
+ ORDER BY executed_at DESC LIMIT 1`, waveID).Scan(&evidence)
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+	case err != nil:
+		return v, fmt.Errorf("wave schema check: %w", classify(err))
+	default:
+		v.ArtifactErrors = evidence
+		if v.State == "failed" {
+			v.FailureCause = "invalid_artifact"
+		}
+	}
+	rows, err := q.Query(WithOperation(ctx, "waves.get_models"), `
+SELECT wm.role, m.provider, m.name FROM easycode.wave_models wm JOIN easycode.models m ON m.id = wm.model_id WHERE wm.wave_id = $1`, waveID)
+	if err != nil {
+		return v, fmt.Errorf("wave models: %w", classify(err))
+	}
+	for rows.Next() {
+		var role string
+		var ref appproject.ModelRef
+		if err := rows.Scan(&role, &ref.Provider, &ref.Model); err != nil {
+			rows.Close()
+			return v, err
+		}
+		if role == "reasoning" {
+			v.Reasoning = ref
+		} else {
+			v.Execution = ref
+		}
+	}
+	rows.Close()
+	_ = q.QueryRow(WithOperation(ctx, "waves.price_table"),
+		"SELECT coalesce(max(price_id)::text, '') FROM easycode.model_calls WHERE wave_id = $1", waveID).Scan(&v.PriceTable)
+	v.Outputs, err = w.outputs(ctx, waveID, v)
+	return v, err
+}
+
+func (w Waves) outputs(ctx context.Context, waveID int64, v appwave.View) ([]appwave.ExpectedOutput, error) {
+	stage, ok := w.inForce.Stage(v.Stage)
+	if !ok {
+		return nil, nil
+	}
+	rows, err := conn(ctx, w.pool).Query(WithOperation(ctx, "waves.outputs"), `
+SELECT ar.type, ar.code, v.version FROM easycode.artifact_versions v JOIN easycode.artifacts ar ON ar.id = v.artifact_id
+ WHERE v.wave_id = $1 ORDER BY ar.type, ar.code`, waveID)
+	if err != nil {
+		return nil, fmt.Errorf("wave outputs: %w", classify(err))
+	}
+	defer rows.Close()
+	written := map[string][]appwave.ExpectedOutput{}
+	for rows.Next() {
+		var o appwave.ExpectedOutput
+		if err := rows.Scan(&o.Type, &o.Artifact, &o.Version); err != nil {
+			return nil, err
+		}
+		o.Status = "written"
+		written[o.Type] = append(written[o.Type], o)
+	}
+	var out []appwave.ExpectedOutput
+	seen := map[string]bool{}
+	for _, output := range stage.Outputs {
+		if output.Type == "" || seen[output.Type] {
+			continue
+		}
+		seen[output.Type] = true
+		if list, ok := written[output.Type]; ok {
+			out = append(out, list...)
+			continue
+		}
+		out = append(out, appwave.ExpectedOutput{Type: output.Type, Status: "pending"})
+	}
+	return out, rows.Err()
+}
+
+func deref(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
+}
+
+// Questions implements appwave.Reader.
+func (w Waves) Questions(ctx context.Context, projectID, code string) ([]appwave.QuestionView, error) {
+	rows, err := conn(ctx, w.pool).Query(WithOperation(ctx, "wave_questions.list"), `
+SELECT q.code, q.opened_at, q.answered_at, u.sub, u.display_name, i.number, i.text, coalesce(i.suggestion, ''),
+       coalesce(i.origin_source, ''), coalesce(i.origin_excerpt, ''), coalesce(i.answer, '')
+  FROM easycode.wave_questions q JOIN easycode.waves w ON w.id = q.wave_id JOIN easycode.projects pr ON pr.id = w.project_id
+  JOIN easycode.question_items i ON i.question_id = q.id LEFT JOIN easycode.users u ON u.id = q.answered_by
+ WHERE pr.public_id = $1::uuid AND w.code = $2 ORDER BY q.opened_at, i.number`, projectID, code)
+	if err != nil {
+		return nil, fmt.Errorf("list questions: %w", classify(err))
+	}
+	defer rows.Close()
+	var list []appwave.QuestionView
+	for rows.Next() {
+		var codeQ string
+		var opened time.Time
+		var answered *time.Time
+		var sub, name *string
+		var item appwave.QuestionItem
+		if err := rows.Scan(&codeQ, &opened, &answered, &sub, &name, &item.Number, &item.Text, &item.Suggestion, &item.Source, &item.Excerpt, &item.Answer); err != nil {
+			return nil, err
+		}
+		if len(list) == 0 || list[len(list)-1].Code != codeQ {
+			view := appwave.QuestionView{Code: codeQ, OpenedAt: opened, AnsweredAt: answered}
+			if sub != nil {
+				view.AnsweredBy = &appproject.UserRef{Subject: *sub, Name: deref(name)}
+			}
+			list = append(list, view)
+		}
+		list[len(list)-1].Items = append(list[len(list)-1].Items, item)
+	}
+	if len(list) == 0 {
+		if _, err := w.Get(ctx, projectID, code); err != nil {
+			return nil, err
+		}
+	}
+	return list, rows.Err()
+}
+
+// Checkpoints implements appwave.Reader.
+func (w Waves) Checkpoints(ctx context.Context, projectID, code string) ([]appwave.CheckpointView, error) {
+	if _, err := w.Get(ctx, projectID, code); err != nil {
+		return nil, err
+	}
+	rows, err := conn(ctx, w.pool).Query(WithOperation(ctx, "wave_checkpoints.list"), `
+SELECT c.step, c.attempt, c.after, c.written_at, c.input_tokens, c.output_tokens, c.read_cache_tokens, c.write_cache_tokens,
+       c.useful_cost::text, c.lost_cost::text, w.currency
+  FROM easycode.wave_checkpoints c JOIN easycode.waves w ON w.id = c.wave_id JOIN easycode.projects pr ON pr.id = w.project_id
+ WHERE pr.public_id = $1::uuid AND w.code = $2 ORDER BY c.attempt, c.step`, projectID, code)
+	if err != nil {
+		return nil, fmt.Errorf("list checkpoints: %w", classify(err))
+	}
+	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (appwave.CheckpointView, error) {
+		var c appwave.CheckpointView
+		err := row.Scan(&c.Number, &c.Attempt, &c.After, &c.WrittenAt, &c.Tokens.Input, &c.Tokens.Output, &c.Tokens.CacheRead, &c.Tokens.CacheWrite,
+			&c.Cost.Useful, &c.Cost.Lost, &c.Cost.Currency)
+		c.Cost.Useful, c.Cost.Lost = pricing.NormalizeDecimal(c.Cost.Useful), pricing.NormalizeDecimal(c.Cost.Lost)
+		return c, err
+	})
+}
+
+// Calls implements appwave.Reader: model calls and tool executions in time order.
+func (w Waves) Calls(ctx context.Context, projectID, code, kind string) ([]appwave.CallView, error) {
+	if _, err := w.Get(ctx, projectID, code); err != nil {
+		return nil, err
+	}
+	rows, err := conn(ctx, w.pool).Query(WithOperation(ctx, "waves.calls"), `
+SELECT * FROM (
+  SELECT 'model' AS kind, c.started_at, coalesce((extract(epoch FROM c.finished_at - c.started_at) * 1000)::bigint, 0), coalesce(c.result, 'aborted'),
+         c.lost, c.estimated_cost, c.attempt, m.provider, m.name, c.role, c.input_tokens, c.output_tokens, c.read_cache_tokens, c.write_cache_tokens,
+         c.cost::text, c.currency, c.price_id::text, '' AS tool, coalesce(c.summary, ''), '' AS refusal, coalesce(c.error_summary, '')
+    FROM easycode.model_calls c JOIN easycode.waves w ON w.id = c.wave_id JOIN easycode.projects pr ON pr.id = w.project_id
+    JOIN easycode.models m ON m.id = c.model_id
+   WHERE pr.public_id = $1::uuid AND w.code = $2
+  UNION ALL
+  SELECT 'tool', t.started_at, coalesce(t.duration_ms, 0), CASE WHEN t.permission = 'refused' THEN 'refused' WHEN t.status = 'success' THEN 'success' ELSE 'error' END,
+         false, false, t.attempt, '', '', '', 0, 0, 0, 0, '0', '', '', t.tool, coalesce(t.summary, ''), coalesce(t.refusal_reason, ''), ''
+    FROM easycode.tool_executions t JOIN easycode.waves w ON w.id = t.wave_id JOIN easycode.projects pr ON pr.id = w.project_id
+   WHERE pr.public_id = $1::uuid AND w.code = $2) x
+ WHERE $3 = '' OR x.kind = $3
+ ORDER BY 2`, projectID, code, kind)
+	if err != nil {
+		return nil, fmt.Errorf("list calls: %w", classify(err))
+	}
+	calls, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (appwave.CallView, error) {
+		var c appwave.CallView
+		err := row.Scan(&c.Type, &c.Start, &c.DurationMs, &c.Result, &c.Lost, &c.Estimated, &c.Attempt, &c.Provider, &c.Model, &c.Role,
+			&c.Tokens.Input, &c.Tokens.Output, &c.Tokens.CacheRead, &c.Tokens.CacheWrite, &c.Cost, &c.Currency, &c.PriceVersion, &c.Tool, &c.Summary, &c.Refusal, &c.Error)
+		c.Cost = pricing.NormalizeDecimal(c.Cost)
+		return c, err
+	})
+	for i := range calls {
+		calls[i].Number = i + 1
+	}
+	return calls, err
+}
+
+// Record implements appwave.Answers (api role).
+func (w Waves) Record(ctx context.Context, p identity.Principal, projectID, waveCode, questionCode string, answers []string) error {
+	q := conn(ctx, w.pool)
+	var questionID int64
+	err := q.QueryRow(WithOperation(ctx, "wave_questions.answer"), `
+UPDATE easycode.wave_questions wq SET answered_by = `+principalUserIDSQL+`, answered_at = now(), origin = 'web'
+  FROM easycode.waves w, easycode.projects pr
+ WHERE w.id = wq.wave_id AND pr.id = w.project_id AND pr.public_id = $3::uuid AND w.code = $4 AND wq.code = $5 AND wq.answered_at IS NULL
+RETURNING wq.id`, p.OrganizationID, p.Subject, projectID, waveCode, questionCode).Scan(&questionID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return failure.New(failure.KindConflict, failure.CodeStateConflict, nil)
+	}
+	if err != nil {
+		return fmt.Errorf("answer question: %w", classify(err))
+	}
+	for i, answer := range answers {
+		if _, err := q.Exec(WithOperation(ctx, "question_items.answer"),
+			"UPDATE easycode.question_items SET answer = $3 WHERE question_id = $1 AND number = $2", questionID, i+1, answer); err != nil {
+			return fmt.Errorf("answer item: %w", classify(err))
+		}
+	}
+	return nil
+}
+
+// EnqueueAnswer implements appwave.Answers.
+func (w Waves) EnqueueAnswer(ctx context.Context, p identity.Principal, projectID, waveCode, questionCode, key, bodyHash string) (appworkflow.CommandView, error) {
+	id, err := uuid.NewV7()
+	if err != nil {
+		return appworkflow.CommandView{}, err
+	}
+	payload, _ := json.Marshal(map[string]string{"wave": waveCode, "question": questionCode})
+	if bodyHash == "" {
+		bodyHash = idempotency.HashBody(payload)
+	}
+	q := conn(ctx, w.pool)
+	_, err = q.Exec(WithOperation(ctx, "commands.insert_answer"), `
+INSERT INTO easycode.commands (public_id, organization_id, project_id, target_type, wave_id, type, payload, requested_by, origin, idempotency_key, body_hash)
+SELECT $4::uuid, pr.organization_id, pr.id, 'wave', wv.id, 'answer', $6::jsonb, `+principalUserIDSQL+`, 'web', $7::uuid, $8
+  FROM easycode.projects pr JOIN easycode.waves wv ON wv.project_id = pr.id AND wv.code = $5 WHERE pr.public_id = $3::uuid`,
+		p.OrganizationID, p.Subject, projectID, id.String(), waveCode, string(payload), key, bodyHash)
+	if err != nil {
+		return appworkflow.CommandView{}, fmt.Errorf("queue answer: %w", classify(err))
+	}
+	if _, err := q.Exec(WithOperation(ctx, "commands.notify"), "SELECT pg_notify($1, $2)", ChannelCommands, projectID); err != nil {
+		return appworkflow.CommandView{}, err
+	}
+	return Workflow{pool: w.pool}.Get(ctx, projectID, id.String())
+}
+
+// Resume implements appwave.Resumer (worker role).
+func (w Waves) Resume(ctx context.Context, projectID, waveCode string) (appwave.Ref, error) {
+	var ref appwave.Ref
+	var state string
+	q := conn(ctx, w.pool)
+	err := q.QueryRow(WithOperation(ctx, "waves.lock_for_answer"), `
+SELECT w.code, w.stage, w.agent, w.purpose, w.state FROM easycode.waves w JOIN easycode.projects pr ON pr.id = w.project_id
+ WHERE pr.public_id = $1::uuid AND w.code = $2 FOR UPDATE OF w`, projectID, waveCode).Scan(&ref.Code, &ref.Stage, &ref.Agent, &ref.Purpose, &state)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ref, failure.New(failure.KindNotFound, failure.CodeNotFound, nil)
+	}
+	if err != nil {
+		return ref, fmt.Errorf("lock wave: %w", classify(err))
+	}
+	if state != "awaiting_user" {
+		return ref, failure.New(failure.KindConflict, failure.CodeStateConflict, nil)
+	}
+	if _, err := q.Exec(WithOperation(ctx, "waves.answered"), `
+UPDATE easycode.waves w SET state = 'running' FROM easycode.projects pr WHERE pr.id = w.project_id AND pr.public_id = $1::uuid AND w.code = $2`,
+		projectID, waveCode); err != nil {
+		return ref, fmt.Errorf("resume wave: %w", classify(err))
+	}
+	if _, err := q.Exec(WithOperation(ctx, "waves.notify"), "SELECT pg_notify($1, $2)", ChannelWaves, projectID); err != nil {
+		return ref, err
+	}
+	return ref, nil
+}

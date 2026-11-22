@@ -134,3 +134,31 @@ SELECT e.envelope FROM easycode.events e
 	}
 	return envelopes, nil
 }
+
+// FirstSequenceSince returns the smallest project sequence of the events after since (the
+// replay window, sse.md section 6); ok is false when there is none.
+func (o Outbox) FirstSequenceSince(ctx context.Context, projectID string, since time.Time) (int64, bool, error) {
+	var first *int64
+	err := conn(ctx, o.pool).QueryRow(WithOperation(ctx, "outbox.first_in_window"), `
+SELECT min(e.sequence) FROM easycode.events e JOIN easycode.projects p ON p.id = e.project_id
+ WHERE p.public_id = $1::uuid AND e.occurred_at >= $2`, projectID, since).Scan(&first)
+	if err != nil {
+		return 0, false, fmt.Errorf("replay window: %w", classify(err))
+	}
+	if first == nil {
+		return 0, false, nil
+	}
+	return *first, true, nil
+}
+
+// LastSequence returns the last project sequence (0 without events).
+func (o Outbox) LastSequence(ctx context.Context, projectID string) (int64, error) {
+	var last int64
+	err := conn(ctx, o.pool).QueryRow(WithOperation(ctx, "outbox.last_sequence"), `
+SELECT coalesce(max(e.sequence), 0) FROM easycode.events e JOIN easycode.projects p ON p.id = e.project_id WHERE p.public_id = $1::uuid`,
+		projectID).Scan(&last)
+	if err != nil {
+		return 0, fmt.Errorf("last sequence: %w", classify(err))
+	}
+	return last, nil
+}

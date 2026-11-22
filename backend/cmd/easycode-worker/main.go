@@ -86,14 +86,34 @@ func work(ctx context.Context, proc process.Process) error {
 		default:
 		}
 	}
-	outboxListener := postgres.NewListener(pool, proc.Logger, func(context.Context) { signal() }, postgres.ChannelOutbox)
-	go func() { _ = outboxListener.Run(ctx, func(string, string) { signal() }) }()
+	reconcileWake := make(chan struct{}, 1)
+	both := func() {
+		signal()
+		select {
+		case reconcileWake <- struct{}{}:
+		default:
+		}
+	}
+	outboxListener := postgres.NewListener(pool, proc.Logger, func(context.Context) { both() }, postgres.ChannelOutbox)
+	go func() { _ = outboxListener.Run(ctx, func(string, string) { both() }) }()
 	go runOutboxPublisher(ctx, jobs, postgres.NewOutboxPublisher(pool), wake, cfg.Worker.OutboxPollInterval)
 
-	dispatcher, err := newDispatcher(cfg, pool, tracing.Propagator)
+	dispatcher, parts, err := newDispatcher(cfg, pool, tracing.Propagator, proc.Logger)
 	if err != nil {
 		return err
 	}
+	waveWake := make(chan struct{}, 1)
+	waveListener := postgres.NewListener(pool, proc.Logger, nil, postgres.ChannelWaves)
+	go func() {
+		_ = waveListener.Run(ctx, func(string, string) {
+			select {
+			case waveWake <- struct{}{}:
+			default:
+			}
+		})
+	}()
+	go parts.executor.Run(ctx, waveWake)
+	go runReconcile(ctx, jobs, parts.progress, reconcileWake, cfg.Worker.CommandPollInterval)
 	commandWake := make(chan struct{}, 1)
 	commandSignal := func() {
 		select {
@@ -192,7 +212,7 @@ func runOutboxPublisher(ctx context.Context, jobs jobRunner, publisher outboxPub
 }
 
 // newDispatcher registers the handler of each command type the worker applies.
-func newDispatcher(cfg config.Config, pool *pgxpool.Pool, propagator propagation.TextMapPropagator) (*command.Dispatcher, error) {
+func newDispatcher(cfg config.Config, pool *pgxpool.Pool, propagator propagation.TextMapPropagator, logger *slog.Logger) (*command.Dispatcher, runtimeParts, error) {
 	tx := postgres.NewTxRunner(pool)
 	dispatcher := command.NewDispatcher(tx, postgres.NewCommands(pool))
 	tester := providerkey.NewTester(postgres.NewProviderKeys(pool), gatewayapi.NewClient(cfg.Gateway.Socket, propagator))
@@ -201,12 +221,17 @@ func newDispatcher(cfg config.Config, pool *pgxpool.Pool, propagator propagation
 	})
 	wf, err := specs.BasicWorkflow()
 	if err != nil {
-		return nil, err
+		return nil, runtimeParts{}, err
 	}
 	workflows := postgres.NewWorkflow(pool, wf.Definition)
 	orchestrator := appworkflow.NewOrchestrator(workflows, workflows, postgres.NewOutbox(pool), defaultAgent, wf.Definition, wf.JSON, wf.Hash)
 	dispatcher.Register("start", orchestrator.Start)
-	return dispatcher, nil
+	parts, err := newRuntime(cfg, pool, propagator, orchestrator, workflows, wf, logger)
+	if err != nil {
+		return nil, runtimeParts{}, err
+	}
+	dispatcher.Register("answer", parts.answers.Handle)
+	return dispatcher, parts, nil
 }
 
 // defaultAgent is the platform default configuration of an agent (permissoes.yaml and instructions).

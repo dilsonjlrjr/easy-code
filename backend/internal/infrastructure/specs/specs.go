@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path"
+	"strings"
 
 	"easycode/internal/domain/workflow"
 )
@@ -102,4 +103,18 @@ func DefaultAgent(agent string) (AgentDefaults, error) {
 		}, nil
 	}
 	return AgentDefaults{}, fmt.Errorf("agent %s not in permissoes.yaml", agent)
+}
+
+// ReferenceNeed is the business need of the reference project (agentes/referencia/reserva-de-salas.md):
+// the text after the "---" line, the input of the end-to-end regression (US-17 CA-4).
+func ReferenceNeed() (string, error) {
+	raw, err := files.ReadFile("data/referencia/reserva-de-salas.md")
+	if err != nil {
+		return "", err
+	}
+	_, need, ok := strings.Cut(string(raw), "\n---\n")
+	if !ok {
+		return "", fmt.Errorf("reserva-de-salas.md without the --- line")
+	}
+	return strings.TrimSpace(need), nil
 }

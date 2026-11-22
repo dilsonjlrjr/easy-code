@@ -292,6 +292,8 @@ func (e *Executor) loop(ctx context.Context, c Claimed, agent Agent, wave WaveCo
 			if cause == "" {
 				cause = CauseUnrecoverable
 			}
+			// A failure without a new step (limit reached before any call) only closes the call row.
+			write.Checkpointed = result.New.After != ""
 			if err := e.saveStep(ctx, c, write, nil); err != nil {
 				return err
 			}

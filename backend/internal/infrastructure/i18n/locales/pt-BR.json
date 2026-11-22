@@ -53,5 +53,13 @@
   "field.currency": "Moeda diferente da moeda da organização.",
   "field.unique": "Valores repetidos.",
   "field.too_many": "Itens demais.",
-  "field.past": "A data não pode estar no passado."
+  "field.past": "A data não pode estar no passado.",
+  "problem.invalid-csrf.title": "Token anti-CSRF inválido",
+  "problem.invalid-csrf.detail": "A decisão precisa do token anti-CSRF da sessão.",
+  "problem.reauthentication-required.title": "Reautenticação necessária",
+  "problem.reauthentication-required.detail": "Entre de novo para confirmar esta decisão crítica.",
+  "problem.pending-human-check.title": "Checagem humana pendente",
+  "problem.pending-human-check.detail": "Confirme todas as checagens humanas do gate.",
+  "problem.artifact-invalid.title": "Artefato fora do esquema",
+  "problem.artifact-invalid.detail": "O artefato não passou na validação do esquema do seu tipo."
 }

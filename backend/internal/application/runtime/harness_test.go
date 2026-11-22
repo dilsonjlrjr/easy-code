@@ -83,3 +83,21 @@ func TestFileAgentAsksAndResumesWithTheAnswers(t *testing.T) {
 		t.Fatalf("answer: %v", err)
 	}
 }
+
+// An agent that only answers in text is stopped (limit_violation) with a checkpoint of its last call.
+func TestFileAgentStopsTextOnlyAnswers(t *testing.T) {
+	model := &cannedModel{answers: []provider.Message{{Text: "a"}, {Text: "b"}, {Text: "c"}, {Text: "d"}}}
+	agent := runtime.NewFileAgent(model, 1000)
+	cp, _, _ := agent.Start(context.Background(), wave())
+	var result runtime.StepResult
+	for i := 0; i < 4; i++ {
+		var err error
+		if result, err = agent.Next(context.Background(), wave(), cp); err != nil {
+			t.Fatal(err)
+		}
+		cp = result.New
+	}
+	if result.Type != runtime.StepFail || result.Failure != runtime.CauseLimitViolation || result.New.After != runtime.AfterModelCall {
+		t.Fatalf("want limit_violation with a model_call checkpoint, got %+v", result)
+	}
+}

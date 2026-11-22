@@ -53,5 +53,13 @@
   "field.currency": "Currency differs from the organization currency.",
   "field.unique": "Repeated values.",
   "field.too_many": "Too many items.",
-  "field.past": "The date cannot be in the past."
+  "field.past": "The date cannot be in the past.",
+  "problem.invalid-csrf.title": "Invalid anti-CSRF token",
+  "problem.invalid-csrf.detail": "The decision needs the anti-CSRF token of the session.",
+  "problem.reauthentication-required.title": "Reauthentication required",
+  "problem.reauthentication-required.detail": "Sign in again to confirm this critical decision.",
+  "problem.pending-human-check.title": "Human check pending",
+  "problem.pending-human-check.detail": "Confirm every human check of the gate.",
+  "problem.artifact-invalid.title": "Artifact out of schema",
+  "problem.artifact-invalid.detail": "The artifact failed the schema validation of its type."
 }

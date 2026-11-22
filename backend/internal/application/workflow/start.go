@@ -167,6 +167,8 @@ type Orchestration interface {
 	ResolvePair(ctx context.Context, projectID, stage string) (ResolvedPair, error)
 	// QueueWave creates the next wave of the stage in queued with its agent configuration and models.
 	QueueWave(ctx context.Context, wave NewWave) (QueuedWave, error)
+	// StageStates returns the state of each stage of the project.
+	StageStates(ctx context.Context, projectID string) (map[string]string, error)
 }
 
 // AgentDefaults gives the default configuration of an agent.

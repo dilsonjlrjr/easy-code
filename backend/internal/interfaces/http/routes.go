@@ -41,4 +41,24 @@ func (a *api) register(router *Router) {
 		router.Handle(fasthttp.MethodGet, APIPrefix+"/projects/{projectId}/artifacts/{artifactId}/versions", auth(a.listArtifactVersions))
 		router.Handle(fasthttp.MethodGet, APIPrefix+"/projects/{projectId}/artifacts/{artifactId}/versions/{version}", auth(a.getArtifactVersion))
 	}
+	if a.deps.Waves != nil {
+		p := APIPrefix + "/projects/{projectId}/waves"
+		router.Handle(fasthttp.MethodGet, p, auth(a.listWaves))
+		router.Handle(fasthttp.MethodGet, p+"/{waveId}", auth(a.getWave))
+		router.Handle(fasthttp.MethodGet, p+"/{waveId}/questions", auth(a.listWaveQuestions))
+		router.Handle(fasthttp.MethodPost, p+"/{waveId}/questions/{questionId}/answer", auth(a.answerQuestion))
+		router.Handle(fasthttp.MethodGet, p+"/{waveId}/checkpoints", auth(a.listCheckpoints))
+		router.Handle(fasthttp.MethodGet, p+"/{waveId}/calls", auth(a.listWaveCalls))
+	}
+	if a.deps.Gates != nil {
+		p := APIPrefix + "/projects/{projectId}/gates/{gateId}/rounds"
+		router.Handle(fasthttp.MethodGet, p, auth(a.listGateRounds))
+		router.Handle(fasthttp.MethodGet, p+"/{round}", auth(a.getGateRound))
+		router.Handle(fasthttp.MethodPost, p+"/{round}/approval", auth(a.approveGate))
+		router.Handle(fasthttp.MethodPost, p+"/{round}/rejection", auth(a.rejectGate))
+	}
+	if a.deps.Events != nil {
+		router.Handle(fasthttp.MethodGet, APIPrefix+"/projects/{projectId}/events", auth(a.watchProjectEvents))
+		router.Handle(fasthttp.MethodGet, APIPrefix+"/projects/{projectId}/events/history", auth(a.listProjectEvents))
+	}
 }
