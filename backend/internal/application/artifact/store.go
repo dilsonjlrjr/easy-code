@@ -63,6 +63,13 @@ type Repository interface {
 	Latest(ctx context.Context, projectID, code string) (*Latest, error)
 	// Save creates or updates the artifact index and writes the version.
 	Save(ctx context.Context, version NewVersion) error
+	// SetState moves the artifact (machine artifact) and keeps the header "estado" of its current
+	// version in step (a follow-up field, mutable even after the commit).
+	SetState(ctx context.Context, projectID, code, state, headerState string) error
+	// InReview lists the current versions in review of a stage.
+	InReview(ctx context.Context, projectID, stage string) ([]Stored, error)
+	// CurrentHeader returns the header of the current version.
+	CurrentHeader(ctx context.Context, projectID, code string) (map[string]any, error)
 }
 
 // Input is one artifact file written by an agent in a wave.
@@ -234,4 +241,44 @@ func number(value any) (int, bool) {
 
 func invalid(errors ...domainartifact.SchemaError) error {
 	return failure.New(failure.KindInvalidInput, domainartifact.CodeInvalid, nil).With("schema_errors", errors)
+}
+
+// Header states of the common header (cabecalho-comum: estado).
+var headerStates = map[string]string{
+	domainartifact.StateDraft: "rascunho", domainartifact.StateInReview: "em_revisao",
+	domainartifact.StateApproved: "aprovado", domainartifact.StateReplaced: "substituido",
+}
+
+// SetState applies an artifact transition decided by the orchestrator (gate approved or rejected).
+func (s *Store) SetState(ctx context.Context, projectID, code, state string) error {
+	return s.repo.SetState(ctx, projectID, code, state, headerStates[state])
+}
+
+// InReview lists the versions in review of a stage (outputs of the gate round).
+func (s *Store) InReview(ctx context.Context, projectID, stage string) ([]Stored, error) {
+	return s.repo.InReview(ctx, projectID, stage)
+}
+
+// SubmitForReview moves a stored version to in_review when its wave completes (draft →
+// in_review, guard: valid header, history entry of the version; US-17 CA-1).
+func (s *Store) SubmitForReview(ctx context.Context, projectID, waveCode, agent string, stored Stored, correlation string) error {
+	if err := s.SetState(ctx, projectID, stored.Code, domainartifact.StateInReview); err != nil {
+		return err
+	}
+	data, err := json.Marshal(map[string]any{
+		"artifact": stored.Code, "type": stored.Type, "version": stored.Version, "stage": domainartifact.OwnerStage(stored.Type),
+		"transition": map[string]any{"machine": "artifact", "from_state": domainartifact.StateDraft, "to_state": domainartifact.StateInReview},
+		"actor":      map[string]any{"type": "agent", "id": agent}, "wave": waveCode,
+	})
+	if err != nil {
+		return err
+	}
+	_, err = s.outbox.Append(ctx, domainevent.Draft{Type: "br.easycode.artifact.submitted_for_review.v1", Subject: "artifacts/" + stored.Code,
+		ProjectID: projectID, WaveID: waveCode, CorrelationID: correlation, Data: data})
+	return err
+}
+
+// Header returns the header of the current version (checks of the gate round).
+func (s *Store) Header(ctx context.Context, projectID, code string) (map[string]any, error) {
+	return s.repo.CurrentHeader(ctx, projectID, code)
 }

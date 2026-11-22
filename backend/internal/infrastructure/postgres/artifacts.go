@@ -1,7 +1,9 @@
 package postgres
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -180,4 +182,60 @@ SELECT v.version, v.created_at, v.wave_code, v.author, v.description,
 		return nil, failure.New(failure.KindNotFound, failure.CodeNotFound, nil)
 	}
 	return versions, nil
+}
+
+// SetState implements appartifact.Repository.
+func (a Artifacts) SetState(ctx context.Context, projectID, code, state, headerState string) error {
+	q := conn(ctx, a.pool)
+	var artifactID int64
+	var version int
+	err := q.QueryRow(WithOperation(ctx, "artifacts.set_state"), `
+UPDATE easycode.artifacts ar SET state = $3, updated_at = now() FROM easycode.projects pr
+ WHERE pr.id = ar.project_id AND pr.public_id = $1::uuid AND ar.code = $2 AND ar.state <> $3
+RETURNING ar.id, ar.current_version`, projectID, code, state).Scan(&artifactID, &version)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil // already in the state
+	}
+	if err != nil {
+		return fmt.Errorf("artifact %s to %s: %w", code, state, classify(err))
+	}
+	if headerState == "" {
+		return nil
+	}
+	_, err = q.Exec(WithOperation(ctx, "artifact_versions.header_state"),
+		"UPDATE easycode.artifact_versions SET header = jsonb_set(header, '{estado}', to_jsonb($3::text)) WHERE artifact_id = $1 AND version = $2",
+		artifactID, version, headerState)
+	if err != nil {
+		return fmt.Errorf("artifact header state: %w", classify(err))
+	}
+	return nil
+}
+
+// InReview implements appartifact.Repository.
+func (a Artifacts) InReview(ctx context.Context, projectID, stage string) ([]appartifact.Stored, error) {
+	rows, err := conn(ctx, a.pool).Query(WithOperation(ctx, "artifacts.in_review"), `
+SELECT ar.code, ar.type, ar.current_version FROM easycode.artifacts ar JOIN easycode.projects pr ON pr.id = ar.project_id
+ WHERE pr.public_id = $1::uuid AND ar.owner_stage = $2 AND ar.state = 'in_review' ORDER BY ar.type, ar.code`, projectID, stage)
+	if err != nil {
+		return nil, fmt.Errorf("artifacts in review: %w", classify(err))
+	}
+	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (appartifact.Stored, error) {
+		var s appartifact.Stored
+		return s, row.Scan(&s.Code, &s.Type, &s.Version)
+	})
+}
+
+// CurrentHeader implements appartifact.Repository.
+func (a Artifacts) CurrentHeader(ctx context.Context, projectID, code string) (map[string]any, error) {
+	view, err := a.Version(ctx, projectID, code, 0)
+	if err != nil {
+		return nil, err
+	}
+	decoder := json.NewDecoder(bytes.NewReader(view.Header))
+	decoder.UseNumber()
+	var header map[string]any
+	if err := decoder.Decode(&header); err != nil {
+		return nil, fmt.Errorf("decode header: %w", err)
+	}
+	return header, nil
 }

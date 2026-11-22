@@ -46,6 +46,10 @@ const (
 	EnvKeyTestTimeout       = "EASYCODE_PROVIDER_KEY_TEST_TIMEOUT"
 	EnvAttachmentLimit      = "EASYCODE_ATTACHMENT_LIMIT_BYTES"
 	EnvWorkerCommandPoll    = "EASYCODE_WORKER_COMMAND_POLL_INTERVAL"
+	EnvWorkerLease          = "EASYCODE_WORKER_WAVE_LEASE"
+	EnvWorkerCorrections    = "EASYCODE_WORKER_MAX_ARTIFACT_CORRECTIONS"
+	EnvWorkerMaxTokens      = "EASYCODE_WORKER_MAX_OUTPUT_TOKENS"
+	EnvWorkerID             = "EASYCODE_WORKER_ID"
 )
 
 // ProfileMarco1 is the development profile of Marco 1: fixed "dev" identity, no Keycloak (ARQ section 9).
@@ -124,6 +128,14 @@ type Worker struct {
 	OutboxPollInterval time.Duration
 	// CommandPollInterval is the fallback poll of the command queue; a NOTIFY wakes it earlier.
 	CommandPollInterval time.Duration
+	// WaveLease is the lease of a running wave; a dead worker's wave resumes after it (RNF-12).
+	WaveLease time.Duration
+	// MaxArtifactCorrections is how many rejected deliveries a wave gets before failing (US-29 CA-2).
+	MaxArtifactCorrections int
+	// MaxOutputTokens bounds each model answer.
+	MaxOutputTokens int
+	// ID names this worker in leases and checkpoints ("" = host name).
+	ID string
 }
 
 // Gateway configures easycode-gateway (interno.md section 3).
@@ -168,9 +180,13 @@ func Load(lookup LookupFunc) (Config, error) {
 			SampleRatio: r.ratio(EnvOTelSampleRatio, 1.0),
 		},
 		Worker: Worker{
-			HeartbeatInterval:   r.duration(EnvWorkerHeartbeat, 30*time.Second),
-			OutboxPollInterval:  r.duration(EnvWorkerOutboxPoll, 5*time.Second),
-			CommandPollInterval: r.duration(EnvWorkerCommandPoll, 2*time.Second),
+			HeartbeatInterval:      r.duration(EnvWorkerHeartbeat, 30*time.Second),
+			OutboxPollInterval:     r.duration(EnvWorkerOutboxPoll, 5*time.Second),
+			CommandPollInterval:    r.duration(EnvWorkerCommandPoll, 2*time.Second),
+			WaveLease:              r.duration(EnvWorkerLease, 30*time.Second),
+			MaxArtifactCorrections: r.integer(EnvWorkerCorrections, 3),
+			MaxOutputTokens:        r.integer(EnvWorkerMaxTokens, 16000),
+			ID:                     r.text(EnvWorkerID, ""),
 		},
 		Gateway: Gateway{
 			Socket:             r.text(EnvGatewaySocket, "/run/easycode-gateway/gateway.sock"),
