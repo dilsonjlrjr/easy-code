@@ -38,9 +38,9 @@ func registerModels(t *testing.T, f projectFixture) {
 	}
 }
 
-func pair(reasoning, execution string) *appproject.Pair {
+func pair(execution string) *appproject.Pair {
 	return &appproject.Pair{
-		Reasoning: appproject.ModelRef{Provider: "anthropic", Model: reasoning},
+		Reasoning: appproject.ModelRef{Provider: "anthropic", Model: "reasoning-model"},
 		Execution: appproject.ModelRef{Provider: "anthropic", Model: execution},
 	}
 }
@@ -63,13 +63,13 @@ func TestModelPairConfiguration(t *testing.T) {
 	if config.ModelPair != nil || config.Version != 1 || len(config.GateApproval) != 3 || config.GateApproval["gate.requirements"].Mode != "human" {
 		t.Fatalf("initial configuration: %+v", config)
 	}
-	_, err = service.Modify(ctx, f.dev, view.ID, 1, appproject.Change{ModelPair: pair("reasoning-model", "no-tools-model")})
+	_, err = service.Modify(ctx, f.dev, view.ID, 1, appproject.Change{ModelPair: pair("no-tools-model")})
 	if classified := failure.From(err); classified.Code != pricing.CodeModelWithoutCapability || classified.Extensions["missing_capacity"] != "tool_use" {
 		t.Fatalf("CA-2: want model-without-capability tool_use, got %v", err)
 	}
 	config, err = service.Modify(ctx, f.dev, view.ID, 1, appproject.Change{
-		ModelPair:   pair("reasoning-model", "execution-model"),
-		PairByStage: map[string]*appproject.Pair{"requirements": pair("reasoning-model", "reasoning-model")},
+		ModelPair:   pair("execution-model"),
+		PairByStage: map[string]*appproject.Pair{"requirements": pair("reasoning-model")},
 	})
 	if err != nil {
 		t.Fatal(err)

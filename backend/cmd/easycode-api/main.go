@@ -18,6 +18,7 @@ import (
 	appproject "easycode/internal/application/project"
 	"easycode/internal/application/providerkey"
 	appsession "easycode/internal/application/session"
+	appworkflow "easycode/internal/application/workflow"
 	"easycode/internal/infrastructure/config"
 	"easycode/internal/infrastructure/i18n"
 	"easycode/internal/infrastructure/logging"
@@ -154,6 +155,7 @@ func productDependencies(cfg config.Config, pool *pgxpool.Pool, logger *slog.Log
 	}
 	definition := wf.Definition
 	projects := postgres.NewProjects(pool, definition.ID, len(definition.Stages))
+	workflows := postgres.NewWorkflow(pool, definition)
 	deps := httpapi.Dependencies{
 		Sessions:             sessions,
 		Idempotency:          idempotency.NewGuard(tx, postgres.NewIdempotencyKeys(pool)),
@@ -162,6 +164,7 @@ func productDependencies(cfg config.Config, pool *pgxpool.Pool, logger *slog.Log
 		Pricing:              apppricing.NewService(tx, postgres.NewCatalog(pool), trail),
 		Projects:             appproject.NewService(tx, projects, postgres.NewOutbox(pool), trail, definition.ID, definition.Version),
 		Configuration:        appproject.NewConfigurationService(tx, projects, projects, postgres.NewCatalog(pool), trail, definition),
+		Workflow:             appworkflow.NewService(tx, projects, workflows, workflows, workflows, trail),
 	}
 	if cfg.Providers.SealingPublicKeyFile == "" {
 		logger.Warn("provider key routes disabled: no sealing public key", slog.String("variable", config.EnvSealingPublicKey))

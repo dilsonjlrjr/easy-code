@@ -17,10 +17,12 @@ import (
 	"easycode/internal/application/command"
 	apphealth "easycode/internal/application/health"
 	"easycode/internal/application/providerkey"
+	appworkflow "easycode/internal/application/workflow"
 	"easycode/internal/infrastructure/config"
 	"easycode/internal/infrastructure/logging"
 	"easycode/internal/infrastructure/postgres"
 	"easycode/internal/infrastructure/process"
+	"easycode/internal/infrastructure/specs"
 	"easycode/internal/infrastructure/telemetry"
 	gatewayapi "easycode/internal/interfaces/gateway"
 )
@@ -88,7 +90,10 @@ func work(ctx context.Context, proc process.Process) error {
 	go func() { _ = outboxListener.Run(ctx, func(string, string) { signal() }) }()
 	go runOutboxPublisher(ctx, jobs, postgres.NewOutboxPublisher(pool), wake, cfg.Worker.OutboxPollInterval)
 
-	dispatcher := newDispatcher(cfg, pool, tracing.Propagator)
+	dispatcher, err := newDispatcher(cfg, pool, tracing.Propagator)
+	if err != nil {
+		return err
+	}
 	commandWake := make(chan struct{}, 1)
 	commandSignal := func() {
 		select {
@@ -187,14 +192,33 @@ func runOutboxPublisher(ctx context.Context, jobs jobRunner, publisher outboxPub
 }
 
 // newDispatcher registers the handler of each command type the worker applies.
-func newDispatcher(cfg config.Config, pool *pgxpool.Pool, propagator propagation.TextMapPropagator) *command.Dispatcher {
+func newDispatcher(cfg config.Config, pool *pgxpool.Pool, propagator propagation.TextMapPropagator) (*command.Dispatcher, error) {
 	tx := postgres.NewTxRunner(pool)
 	dispatcher := command.NewDispatcher(tx, postgres.NewCommands(pool))
 	tester := providerkey.NewTester(postgres.NewProviderKeys(pool), gatewayapi.NewClient(cfg.Gateway.Socket, propagator))
 	dispatcher.Register("test_provider_key", func(ctx context.Context, cmd command.Command) error {
 		return tester.Test(ctx, cmd.ProviderKeyID)
 	})
-	return dispatcher
+	wf, err := specs.BasicWorkflow()
+	if err != nil {
+		return nil, err
+	}
+	workflows := postgres.NewWorkflow(pool, wf.Definition)
+	orchestrator := appworkflow.NewOrchestrator(workflows, workflows, postgres.NewOutbox(pool), defaultAgent, wf.Definition, wf.JSON, wf.Hash)
+	dispatcher.Register("start", orchestrator.Start)
+	return dispatcher, nil
+}
+
+// defaultAgent is the platform default configuration of an agent (permissoes.yaml and instructions).
+func defaultAgent(agent string) (appworkflow.AgentConfiguration, error) {
+	defaults, err := specs.DefaultAgent(agent)
+	if err != nil {
+		return appworkflow.AgentConfiguration{}, err
+	}
+	return appworkflow.AgentConfiguration{
+		Agent: agent, InstructionVersion: defaults.InstructionVersion, InstructionHash: defaults.InstructionHash,
+		Tools: defaults.Tools, Limits: defaults.Limits,
+	}, nil
 }
 
 // commandDrainer applies pending commands.

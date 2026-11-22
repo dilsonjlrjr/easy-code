@@ -34,6 +34,7 @@ type Dependencies struct {
 	Projects  ProjectUseCases
 	// Configuration is required with Projects.
 	Configuration ConfigurationUseCases
+	Workflow      WorkflowUseCases
 }
 
 // ServerSettings configures the fasthttp server.
