@@ -22,7 +22,7 @@ function configuredApi(): FakeApi {
     .withModel({ model: 'execution-model', display_name: 'Modelo de execução Y' }, price)
 }
 
-test('US-03 CA-1/CA-3, US-05 CA-1/CA-5: create the project, acknowledge the provider and start the Requirements wave', async ({
+test('US-03 CA-1/CA-3, US-05 CA-1/CA-5, US-54 CA-1: create the project, acknowledge the provider and start the Requirements wave', async ({
   page,
 }) => {
   const api = configuredApi()
@@ -41,6 +41,9 @@ test('US-03 CA-1/CA-3, US-05 CA-1/CA-5: create the project, acknowledge the prov
 
   await chooseOption(page, page, 'Modelo de raciocínio', /Modelo de raciocínio X/)
   await chooseOption(page, page, 'Modelo de execução', /Modelo de execução Y/)
+  // US-54 CA-1: optional technical constraints go with the project as version 1.
+  await page.getByRole('button', { name: 'Adicionar restrição' }).click()
+  await page.getByLabel('Descrição').fill('Banco PostgreSQL da empresa')
   await expectNoSeriousA11yViolations(page)
   await page.getByRole('button', { name: 'Continuar' }).click()
 
@@ -64,7 +67,10 @@ test('US-03 CA-1/CA-3, US-05 CA-1/CA-5: create the project, acknowledge the prov
   const created = api.requests.find(
     (request) => request.method === 'POST' && request.path === '/projects',
   )
-  expect(created?.body).toMatchObject({ provider_submission_acknowledgment: true })
+  expect(created?.body).toMatchObject({
+    provider_submission_acknowledgment: true,
+    constraints: { items: [{ category: 'other', description: 'Banco PostgreSQL da empresa' }] },
+  })
   const patch = api.requests.find((request) => request.method === 'PATCH')
   expect(patch?.headers['if-match']).toBe('"1"')
   expect(patch?.headers['content-type']).toContain('application/merge-patch+json')

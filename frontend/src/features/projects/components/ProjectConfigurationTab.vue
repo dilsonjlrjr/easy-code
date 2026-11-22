@@ -7,7 +7,14 @@ import { useAnnouncer } from '@/shared/composables/useAnnouncer'
 import { useLoader } from '@/shared/composables/useLoader'
 import LoadingState from '@/shared/ui/LoadingState.vue'
 import ProblemAlert from '@/shared/ui/ProblemAlert.vue'
-import type { ProjectConfiguration, StageSummary } from '../api/projectsApi'
+import { useFormat } from '@/shared/format/useFormat'
+import {
+  constraintsAreValid,
+  constraintsPayload,
+  type ConstraintDraft,
+  type ProjectConfiguration,
+  type StageSummary,
+} from '../api/projectsApi'
 import {
   missingCapabilities,
   modelRefKey,
@@ -16,6 +23,7 @@ import {
   type ModelOption,
 } from '../composables/useModelOptions'
 import { currentProjectApi, useCurrentProjectStore } from '../stores/currentProjectStore'
+import ConstraintsEditor from './ConstraintsEditor.vue'
 import StartRefusal from './StartRefusal.vue'
 
 const { t } = useI18n()
@@ -30,6 +38,10 @@ const pairForm = reactive({
   execution: undefined as string | undefined,
 })
 const stageForms = reactive<Record<string, { reasoning?: string; execution?: string }>>({})
+const format = useFormat()
+/** US-54: the technical constraints, edited as a whole list (each save is a new version). */
+const constraintsForm = ref<ConstraintDraft[]>([])
+const editingConstraints = ref(false)
 const saving = ref<string>()
 const failure = ref<{ scope: string; error: unknown }>()
 const concurrentChange = ref(false)
@@ -57,6 +69,7 @@ function apply(next: ProjectConfiguration, nextEtag: string): void {
   etag.value = nextEtag
   pairForm.reasoning = modelRefKey(next.model_pair?.reasoning)
   pairForm.execution = modelRefKey(next.model_pair?.execution)
+  constraintsForm.value = (next.constraints?.items ?? []).map((item) => ({ ...item }))
   for (const stage of stages.value) {
     const pair = next.pair_by_stage?.[stage.id]
     stageForms[stage.id] = {
@@ -112,15 +125,30 @@ async function save(
       concurrentChange.value = true
       const typed = { ...pairForm }
       const typedStages = JSON.parse(JSON.stringify(stageForms)) as typeof stageForms
+      const typedConstraints = constraintsForm.value.map((item) => ({ ...item }))
       await loader.run()
       Object.assign(pairForm, typed)
       Object.assign(stageForms, typedStages)
+      constraintsForm.value = typedConstraints
     } else {
       failure.value = { scope, error }
     }
   } finally {
     saving.value = undefined
   }
+}
+
+async function saveConstraints(): Promise<void> {
+  if (!constraintsAreValid(constraintsForm.value)) return
+  await save('constraints', { constraints: constraintsPayload(constraintsForm.value) })
+  if (!failure.value && !concurrentChange.value) editingConstraints.value = false
+}
+
+function cancelConstraints(): void {
+  constraintsForm.value = (configuration.value?.constraints?.items ?? []).map((item) => ({
+    ...item,
+  }))
+  editingConstraints.value = false
 }
 
 function saveProjectPair(): void {
@@ -302,11 +330,74 @@ function stageName(stage: StageSummary): string {
           </v-card>
         </li>
       </ul>
+
+      <!-- US-54 / ESP-29: technical constraints, input of the Architecture stage. -->
+      <section aria-labelledby="constraints-heading" class="mt-8" data-testid="constraints">
+        <h3 id="constraints-heading" class="text-subtitle-1 font-weight-medium mb-1">
+          {{ $t('projects.constraints.title') }}
+        </h3>
+        <p class="text-body-2 text-medium-emphasis mb-2">{{ $t('projects.constraints.help') }}</p>
+        <p v-if="configuration.constraints" class="text-body-2 mb-2">
+          {{
+            $t('projects.constraints.version', {
+              version: configuration.constraints.version,
+              who: configuration.constraints.defined_by?.name ?? '',
+              when: format.dateTime(configuration.constraints.defined_at),
+            })
+          }}
+        </p>
+        <template v-if="!editingConstraints">
+          <p v-if="!configuration.constraints?.items.length" class="text-body-2 mb-2">
+            {{ $t('projects.constraints.none') }}
+          </p>
+          <dl v-else class="constraints-list mb-2">
+            <template v-for="item in configuration.constraints.items" :key="item.id">
+              <dt class="font-weight-medium">
+                <span class="monospace">{{ item.id }}</span> ·
+                {{ $t(`projects.constraints.categories.${item.category}`) }}
+              </dt>
+              <dd class="constraint-text mb-2">{{ item.description }}</dd>
+            </template>
+          </dl>
+          <!-- CA-4 / CA-6: only the lead changes them, and not after the project ends. -->
+          <v-btn v-if="canEdit" variant="tonal" @click="editingConstraints = true">
+            {{ $t('projects.constraints.edit') }}
+          </v-btn>
+          <p v-else class="text-body-2 text-medium-emphasis">
+            {{ $t('projects.constraints.readOnly') }}
+          </p>
+        </template>
+        <v-form v-else @submit.prevent="saveConstraints">
+          <ConstraintsEditor v-model="constraintsForm" :disabled="saving === 'constraints'" />
+          <p class="text-body-2 mt-2">{{ $t('projects.constraints.newVersionNotice') }}</p>
+          <StartRefusal
+            v-if="failure?.scope === 'constraints'"
+            :error="failure.error"
+            class="my-2"
+          />
+          <div class="d-flex flex-wrap ga-2 mt-2">
+            <v-btn
+              type="submit"
+              color="primary"
+              variant="flat"
+              :loading="saving === 'constraints'"
+              :disabled="!constraintsAreValid(constraintsForm)"
+            >
+              {{ $t('projects.constraints.save') }}
+            </v-btn>
+            <v-btn variant="text" @click="cancelConstraints">{{ $t('common.cancel') }}</v-btn>
+          </div>
+        </v-form>
+      </section>
     </template>
   </section>
 </template>
 
 <style scoped>
+.constraint-text {
+  white-space: pre-wrap;
+}
+
 .stage-pairs {
   display: grid;
   gap: 1rem;

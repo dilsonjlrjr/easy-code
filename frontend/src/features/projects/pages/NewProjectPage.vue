@@ -10,7 +10,8 @@ import { useSessionStore } from '@/shared/session/sessionStore'
 import AppBreadcrumbs from '@/shared/ui/AppBreadcrumbs.vue'
 import LoadingState from '@/shared/ui/LoadingState.vue'
 import ProblemAlert from '@/shared/ui/ProblemAlert.vue'
-import { projectsApi } from '../api/projectsApi'
+import { constraintsAreValid, projectsApi, type ConstraintDraft } from '../api/projectsApi'
+import ConstraintsEditor from '../components/ConstraintsEditor.vue'
 import { parseModelKey, useModelOptions } from '../composables/useModelOptions'
 import { NewProjectFlow, type FlowStep } from '../stores/newProjectFlow'
 import { useProjectNoticesStore } from '../stores/projectNotices'
@@ -42,6 +43,7 @@ const form = reactive({
   execution: undefined as string | undefined,
   artifactLanguage: 'pt-BR',
   acknowledged: false,
+  constraints: [] as ConstraintDraft[],
 })
 const showErrors = ref(false)
 const nameConflict = ref(false)
@@ -90,7 +92,11 @@ const pairProviders = computed(() => {
     .join(', ')
 })
 const canSubmit = computed(
-  () => form.acknowledged && stepOneErrors.value.length === 0 && !submitting.value,
+  () =>
+    form.acknowledged &&
+    stepOneErrors.value.length === 0 &&
+    constraintsAreValid(form.constraints) &&
+    !submitting.value,
 )
 
 function modelTitle(key: string | undefined): string {
@@ -143,6 +149,7 @@ async function submit(): Promise<void> {
     attachments: [...form.attachments],
     modelPair: modelPair.value,
     artifactLanguage: form.artifactLanguage,
+    constraints: form.constraints,
   })
   submitting.value = false
   currentFlowStep.value = undefined
@@ -348,6 +355,12 @@ const breadcrumbs = computed(() => [
         "
         :label="$t('projects.configuration.artifactLanguage')"
       />
+      <!-- ESP-05 3.2 / US-54 CA-1: optional technical constraints, version 1 of the project. -->
+      <h3 class="text-subtitle-1 font-weight-medium mt-4">
+        {{ $t('projects.constraints.title') }}
+      </h3>
+      <p class="text-body-2 text-medium-emphasis mb-2">{{ $t('projects.constraints.help') }}</p>
+      <ConstraintsEditor v-model="form.constraints" />
     </section>
 
     <!-- Step 3: review and start -->
@@ -364,6 +377,8 @@ const breadcrumbs = computed(() => [
         <dd>{{ modelTitle(form.execution) }}</dd>
         <dt>{{ $t('projects.configuration.artifactLanguage') }}</dt>
         <dd>{{ $t(`language.names.${form.artifactLanguage}`) }}</dd>
+        <dt>{{ $t('projects.constraints.title') }}</dt>
+        <dd>{{ $t('projects.constraints.count', { count: form.constraints.length }) }}</dd>
       </dl>
       <h3 class="text-subtitle-1 font-weight-medium">{{ $t('projects.new.workflow') }}</h3>
       <ol class="ml-6 mb-2">

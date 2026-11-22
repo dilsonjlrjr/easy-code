@@ -80,3 +80,55 @@ test('US-16 CA-2: a model without the capability of the stage is refused with th
     'o modelo não tem uso de ferramentas',
   )
 })
+
+test('US-54 CA-3: the lead changes the technical constraints and a new version is shown', async ({
+  page,
+}) => {
+  const api = apiWithProject()
+  api.project(PROJECT_ID).configuration.constraints = {
+    version: 1,
+    items: [{ id: 'RESTR-01', category: 'database', description: 'PostgreSQL 16 obrigatório' }],
+    defined_by: { id: 'dev', name: 'Dev' },
+    defined_at: '2026-11-21T10:00:00-03:00',
+  }
+  await api.install(page)
+  await page.goto(`/projects/${PROJECT_ID}/configuration`)
+
+  const section = page.getByTestId('constraints')
+  await expect(section).toContainText('RESTR-01 · Banco de dados')
+  await expect(section).toContainText('Versão 1, gravada por Dev')
+  await section.getByRole('button', { name: 'Alterar restrições' }).click()
+  await section.getByRole('button', { name: 'Adicionar restrição' }).click()
+  await section.getByLabel('Descrição').nth(1).fill('Integração com o Active Directory')
+  await expectNoSeriousA11yViolations(page)
+  await section.getByRole('button', { name: 'Salvar restrições' }).click()
+
+  await expect(section).toContainText('Versão 2, gravada por Dev')
+  await expect(section).toContainText('RESTR-02 · Outra')
+  const patch = api.requests.find(
+    (request) => request.method === 'PATCH' && request.path.endsWith('/configuration'),
+  )
+  expect(patch?.body).toEqual({
+    constraints: {
+      items: [
+        { id: 'RESTR-01', category: 'database', description: 'PostgreSQL 16 obrigatório' },
+        { category: 'other', description: 'Integração com o Active Directory' },
+      ],
+    },
+  })
+})
+
+test('US-54 CA-4 / CA-6: without the lead role, or with the project ended, the constraints are read only', async ({
+  page,
+}) => {
+  const api = apiWithProject()
+  const state = api.project(PROJECT_ID)
+  state.project = { ...state.project, my_roles: ['approver'] }
+  await api.install(page)
+  await page.goto(`/projects/${PROJECT_ID}/configuration`)
+
+  const section = page.getByTestId('constraints')
+  await expect(section).toContainText('Nenhuma restrição técnica')
+  await expect(section).toContainText('Só o responsável do projeto altera as restrições')
+  await expect(section.getByRole('button', { name: 'Alterar restrições' })).toHaveCount(0)
+})

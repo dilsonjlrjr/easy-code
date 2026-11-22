@@ -2,7 +2,12 @@ import type { ModelPair } from '@/shared/api/contract'
 import { newIdempotencyKey } from '@/shared/api/idempotencyKey'
 import { ApiError } from '@/shared/api/problemDetails'
 import { waitForCommand, type WaitForCommandOptions } from '@/shared/commands/waitForCommand'
-import type { Project, ProjectsApi } from '../api/projectsApi'
+import {
+  constraintsPayload,
+  type ConstraintDraft,
+  type Project,
+  type ProjectsApi,
+} from '../api/projectsApi'
 
 export interface NewProjectDraft {
   name: string
@@ -10,6 +15,8 @@ export interface NewProjectDraft {
   attachments: File[]
   modelPair: ModelPair | null
   artifactLanguage: string
+  /** Optional technical constraints, saved as version 1 with the project (US-54 CA-1). */
+  constraints?: ConstraintDraft[]
 }
 
 export type FlowStep = 'create' | 'attachments' | 'configuration' | 'start'
@@ -64,6 +71,9 @@ export class NewProjectFlow {
           name: draft.name.trim(),
           business_need: draft.businessNeed,
           provider_submission_acknowledgment: true,
+          ...(draft.constraints?.length
+            ? { constraints: constraintsPayload(draft.constraints) }
+            : {}),
         },
         this.createKey,
       )
