@@ -1,0 +1,19 @@
+# Opt-in override for a real OpenAI key (US-24). The default stack stays offline (gateway with
+# network_mode: none and the fake provider under the names "anthropic" and "openai").
+# Usage: docker compose -f compose.yaml -f compose.openai.yaml up --build
+# Both real providers: docker compose -f compose.yaml -f compose.anthropic.yaml -f compose.openai.yaml up --build
+#   with EASYCODE_GATEWAY_PROVIDERS=anthropic,openai.
+#
+# The gateway, the only process that opens provider keys (S-03, ADR-13), gets an outbound network
+# and the real adapter. The egress proxy with an allowlist (ADR-16) is not in the stack yet: this
+# override is for a development host only; keep the default for anything shared.
+services:
+  gateway:
+    network_mode: !reset null
+    networks: [ai-output]
+    environment:
+      EASYCODE_GATEWAY_PROVIDERS: ${EASYCODE_GATEWAY_PROVIDERS:-anthropic=fake,openai}
+      EASYCODE_OPENAI_BASE_URL: ${EASYCODE_OPENAI_BASE_URL:-https://api.openai.com}
+
+networks:
+  ai-output: {}

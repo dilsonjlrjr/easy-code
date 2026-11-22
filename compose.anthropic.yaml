@@ -1,5 +1,6 @@
 # Opt-in override for the MARCO-1 demo with a real Anthropic key. The default stack stays offline
-# (gateway with network_mode: none and the fake provider under the name "anthropic").
+# (gateway with network_mode: none and the fake provider under the names "anthropic" and "openai").
+# With compose.openai.yaml too, set EASYCODE_GATEWAY_PROVIDERS=anthropic,openai.
 # Usage: docker compose -f compose.yaml -f compose.anthropic.yaml up --build
 #
 # The gateway, the only process that opens provider keys (S-03, ADR-13), gets an outbound network
@@ -10,7 +11,7 @@ services:
     network_mode: !reset null
     networks: [ai-output]
     environment:
-      EASYCODE_GATEWAY_PROVIDERS: anthropic
+      EASYCODE_GATEWAY_PROVIDERS: ${EASYCODE_GATEWAY_PROVIDERS:-anthropic,openai=fake}
       EASYCODE_ANTHROPIC_BASE_URL: ${EASYCODE_ANTHROPIC_BASE_URL:-https://api.anthropic.com}
 
 networks:

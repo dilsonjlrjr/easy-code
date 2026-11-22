@@ -37,6 +37,7 @@ const (
 	EnvGatewayPrivateKey    = "EASYCODE_GATEWAY_PRIVATE_KEY_FILE"
 	EnvAnthropicBaseURL     = "EASYCODE_ANTHROPIC_BASE_URL"
 	EnvAnthropicTestModel   = "EASYCODE_ANTHROPIC_TEST_MODEL"
+	EnvOpenAIBaseURL        = "EASYCODE_OPENAI_BASE_URL"
 	EnvProviderCallTimeout  = "EASYCODE_PROVIDER_CALL_TIMEOUT"
 	EnvPublicOrigin         = "EASYCODE_PUBLIC_ORIGIN"
 	EnvOIDCIssuer           = "EASYCODE_OIDC_ISSUER"
@@ -215,6 +216,8 @@ type Gateway struct {
 	AnthropicBaseURL string
 	// AnthropicTestModel is the model id of the minimal key test call (configured, never fixed in code).
 	AnthropicTestModel string
+	// OpenAIBaseURL is the OpenAI API endpoint (egress proxy or test server; US-24).
+	OpenAIBaseURL string
 	// CallTimeout bounds one provider HTTP call.
 	CallTimeout time.Duration
 }
@@ -259,6 +262,7 @@ func Load(lookup LookupFunc) (Config, error) {
 			PrivateKeyFile:     r.text(EnvGatewayPrivateKey, ""),
 			AnthropicBaseURL:   r.text(EnvAnthropicBaseURL, "https://api.anthropic.com"),
 			AnthropicTestModel: r.text(EnvAnthropicTestModel, ""),
+			OpenAIBaseURL:      r.text(EnvOpenAIBaseURL, "https://api.openai.com"),
 			CallTimeout:        r.duration(EnvProviderCallTimeout, 10*time.Minute),
 		},
 		Identity: Identity{

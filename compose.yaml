@@ -11,9 +11,9 @@
 #   member.dev and disabled.dev (account disabled), all with password "dev-only-password". Project
 #   roles are given in the platform (US-02), not in Keycloak;
 # - easycode-gateway has no network (the egress proxy of ADR-16 is not in the stack yet), so it serves
-#   the deterministic fake under the name "anthropic" (EASYCODE_GATEWAY_PROVIDERS=anthropic=fake): any key
-#   but "invalid" passes the test. Set EASYCODE_GATEWAY_PROVIDERS=anthropic and give the gateway a route
-#   to api.anthropic.com (override file) to use the real adapter;
+#   the deterministic fake under the names "anthropic" and "openai" (EASYCODE_GATEWAY_PROVIDERS=
+#   anthropic=fake,openai=fake): any key but "invalid" passes the test. The override files
+#   compose.anthropic.yaml and compose.openai.yaml give the gateway a route out and the real adapter;
 # - gateway-keys creates the platform key pair once (ADR-13): the private key only in the gateway
 #   volume, the public key in the volume the api reads.
 # - easycode-sandbox (ADR-05/06) mounts the host Docker socket and runs each agent command in a hardened
@@ -211,7 +211,7 @@ services:
         BINARY: easycode-gateway
     environment:
       EASYCODE_LOG_LEVEL: ${EASYCODE_LOG_LEVEL:-debug}
-      EASYCODE_GATEWAY_PROVIDERS: ${EASYCODE_GATEWAY_PROVIDERS:-anthropic=fake}
+      EASYCODE_GATEWAY_PROVIDERS: ${EASYCODE_GATEWAY_PROVIDERS:-anthropic=fake,openai=fake}
       EASYCODE_GATEWAY_PRIVATE_KEY_FILE: /run/easycode-gateway-key/private.pem
     network_mode: none
     volumes:
