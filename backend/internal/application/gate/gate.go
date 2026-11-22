@@ -8,6 +8,8 @@ package gate
 import (
 	"context"
 	"encoding/json"
+	"sort"
+	"strings"
 
 	"easycode/internal/application/artifact"
 	"easycode/internal/application/event"
@@ -18,18 +20,28 @@ import (
 	domainworkflow "easycode/internal/domain/workflow"
 )
 
-// Automatic checks of the Phase 1 gates (checagens.yaml). gate.requirements runs artifact.schema_valid
+// Automatic checks of the gates (checagens.yaml). gate.requirements runs artifact.schema_valid
 // (MARCO-1); MARCO-3 adds the traceability of the tasks to gate.architecture and the build and test
-// evidence of the sandbox to gate.implementation. The other checks of gates.yaml come with US-31.
+// evidence of the sandbox to gate.implementation; MARCO-4 adds the model references of gate.data, the
+// screen ↔ story links of gate.design (US-21) and the opinions and verdict of gate.validation (US-20).
+// The other checks of gates.yaml come with US-31.
 const (
-	CheckSchemaValid    = "artifact.schema_valid"
-	CheckTasksCoverUS   = "traceability.t_points_to_us"
-	CheckBuildGreen     = "code.build_green"
-	CheckTestsGreen     = "tests.executed_green"
-	categoryBuild       = "build"
-	categoryTests       = "tests"
-	stageArchitecture   = "architecture"
-	stageImplementation = "implementation"
+	CheckSchemaValid        = "artifact.schema_valid"
+	CheckTasksCoverUS       = "traceability.t_points_to_us"
+	CheckBuildGreen         = "code.build_green"
+	CheckTestsGreen         = "tests.executed_green"
+	CheckModelReferences    = "persist.model_references"
+	CheckInterfaceUSScreen  = "traceability.interface_us_in_screen"
+	CheckCriteriaConsistent = "telas.criteria_consistent"
+	CheckOpinionsRecorded   = "validacao.review_opinions_recorded"
+	CheckVerdictUnblocked   = "validacao.verdict_unblocked"
+	categoryBuild           = "build"
+	categoryTests           = "tests"
+	stageArchitecture       = "architecture"
+	stageData               = "data"
+	stageDesign             = "design"
+	stageValidation         = "validation"
+	stageImplementation     = "implementation"
 )
 
 // Execution is the last sandbox execution of a category in the stage (evidence of US-41).
@@ -71,6 +83,9 @@ type Store interface {
 	// LastExecution returns the last execution of the category in the last completed wave of the
 	// stage, or nil when the wave ran none.
 	LastExecution(ctx context.Context, projectID, stage, category string) (*Execution, error)
+	// ReviewOpinions returns, by agent, the opinion recorded by the last completed wave of each agent
+	// in the stage (participants of the validation, "registro de ondas").
+	ReviewOpinions(ctx context.Context, projectID, stage string) (map[string]domainworkflow.ReviewOpinion, error)
 }
 
 // HeaderValidator validates a stored header against the schema of its type.
@@ -83,13 +98,14 @@ type Artifacts interface {
 	InReview(ctx context.Context, projectID, stage string) ([]artifact.Stored, error)
 	SetState(ctx context.Context, projectID, code, state string) error
 	Header(ctx context.Context, projectID, code string) (map[string]any, error)
+	Headers(ctx context.Context, projectID, artifactType string) (map[string]map[string]any, error)
 }
 
 // StageFlow is the part of the orchestrator the gate drives.
 type StageFlow interface {
 	SetStageState(ctx context.Context, projectID, stage, state string) error
 	UnblockReady(ctx context.Context, projectID, correlation string) error
-	QueueRework(ctx context.Context, projectID, stage, correlation string) (string, error)
+	QueueRework(ctx context.Context, projectID, stage, correlation string) ([]string, error)
 }
 
 // Progress is the worker side of the gate.
@@ -217,6 +233,20 @@ func (p *Progress) evaluate(ctx context.Context, projectID string, stage domainw
 			return err
 		}
 		outcomes = append(outcomes, tasks)
+	case stageData:
+		outcomes = append(outcomes, modelReferences(outputs, headers))
+	case stageDesign:
+		links, err := p.screensLinkStories(ctx, projectID, outputs, headers)
+		if err != nil {
+			return err
+		}
+		outcomes = append(outcomes, links, criteriaConsistent(outputs, headers))
+	case stageValidation:
+		recorded, err := p.opinionsRecorded(ctx, projectID, stage, outputs, headers)
+		if err != nil {
+			return err
+		}
+		outcomes = append(outcomes, recorded, verdictUnblocked(outputs, headers))
 	case stageImplementation:
 		for _, c := range []struct{ check, category string }{{CheckBuildGreen, categoryBuild}, {CheckTestsGreen, categoryTests}} {
 			outcome, err := p.executionGreen(ctx, projectID, stage.ID, c.check, c.category)
@@ -306,6 +336,179 @@ func (p *Progress) tasksCoverStories(ctx context.Context, projectID string, outp
 		}
 	}
 	return outcome, nil
+}
+
+func list(header map[string]any, field string) []any {
+	items, _ := header[field].([]any)
+	return items
+}
+
+func text(value any) string {
+	s, _ := value.(string)
+	return s
+}
+
+// modelReferences is persist.model_references (RAS-14): every index of PERSIST points to a table of DIC
+// and to columns of it.
+func modelReferences(outputs []artifact.Stored, headers map[string]map[string]any) checkOutcome {
+	outcome := checkOutcome{check: CheckModelReferences}
+	tables := map[string]map[string]bool{}
+	for _, output := range outputs {
+		if output.Type != "DIC" {
+			continue
+		}
+		for _, item := range list(headers[output.Code], "tabelas") {
+			table, _ := item.(map[string]any)
+			columns := map[string]bool{}
+			for _, c := range list(table, "colunas") {
+				column, _ := c.(map[string]any)
+				columns[text(column["nome"])] = true
+			}
+			tables[text(table["nome"])] = columns
+		}
+	}
+	for _, output := range outputs {
+		if output.Type != "PERSIST" {
+			continue
+		}
+		for _, item := range list(headers[output.Code], "indices") {
+			index, _ := item.(map[string]any)
+			name, table := text(index["nome"]), text(index["tabela"])
+			columns, known := tables[table]
+			if !known {
+				outcome.evidence = append(outcome.evidence, map[string]any{"reference": output.Code, "path": "/indices", "message": "index " + name + " on unknown table " + table})
+				continue
+			}
+			for _, c := range list(index, "colunas") {
+				if column := text(c); !columns[column] {
+					outcome.evidence = append(outcome.evidence, map[string]any{"reference": output.Code, "path": "/indices", "message": "index " + name + " on unknown column " + table + "." + column})
+				}
+			}
+		}
+	}
+	return outcome
+}
+
+// screensLinkStories is traceability.interface_us_in_screen (RAS-17, US-21 CA-1, CA-2, CA-3): every US
+// with tem_interface true (and not wont) is in at least one screen; a US without interface is not
+// required; a screen whose stories do not exist in the project is pointed out as orphan.
+func (p *Progress) screensLinkStories(ctx context.Context, projectID string, outputs []artifact.Stored, headers map[string]map[string]any) (checkOutcome, error) {
+	outcome := checkOutcome{check: CheckInterfaceUSScreen}
+	stories, err := p.artifacts.Headers(ctx, projectID, "US")
+	if err != nil {
+		return outcome, err
+	}
+	covered := map[string]bool{}
+	for _, output := range outputs {
+		if output.Type != "TELAS" {
+			continue
+		}
+		for _, item := range list(headers[output.Code], "telas") {
+			screen, _ := item.(map[string]any)
+			id := text(screen["id"])
+			known := 0
+			for _, us := range list(screen, "us") {
+				code := text(us)
+				if _, ok := stories[code]; ok {
+					covered[code] = true
+					known++
+				} else {
+					outcome.evidence = append(outcome.evidence, map[string]any{"reference": output.Code + "/" + id, "path": "/telas", "message": "screen cites unknown US " + code})
+				}
+			}
+			if known == 0 {
+				outcome.evidence = append(outcome.evidence, map[string]any{"reference": output.Code + "/" + id, "path": "/telas", "message": "orphan screen: no US of the project"})
+			}
+		}
+	}
+	for code, story := range stories {
+		if story["tem_interface"] == true && text(story["prioridade"]) != "wont" && !covered[code] {
+			outcome.evidence = append(outcome.evidence, map[string]any{"reference": code, "path": "/tem_interface", "message": "US with interface in no screen"})
+		}
+	}
+	sortEvidence(outcome.evidence)
+	return outcome, nil
+}
+
+// criteriaConsistent is telas.criteria_consistent (RAS-18): the US of every criterion of a screen is a
+// US of the same screen.
+func criteriaConsistent(outputs []artifact.Stored, headers map[string]map[string]any) checkOutcome {
+	outcome := checkOutcome{check: CheckCriteriaConsistent}
+	for _, output := range outputs {
+		if output.Type != "TELAS" {
+			continue
+		}
+		for _, item := range list(headers[output.Code], "telas") {
+			screen, _ := item.(map[string]any)
+			own := map[string]bool{}
+			for _, us := range list(screen, "us") {
+				own[text(us)] = true
+			}
+			for _, c := range list(screen, "criterios") {
+				criterion := text(c)
+				if us, _, _ := strings.Cut(criterion, "/"); !own[us] {
+					outcome.evidence = append(outcome.evidence, map[string]any{"reference": output.Code + "/" + text(screen["id"]), "path": "/telas",
+						"message": "criterion " + criterion + " of a US outside the screen"})
+				}
+			}
+		}
+	}
+	return outcome
+}
+
+// opinionsRecorded is validacao.review_opinions_recorded: one opinion of each participant (arquiteto,
+// dba, designer), each recorded in a completed wave of the matching agent and copied unchanged.
+func (p *Progress) opinionsRecorded(ctx context.Context, projectID string, stage domainworkflow.Stage, outputs []artifact.Stored, headers map[string]map[string]any) (checkOutcome, error) {
+	outcome := checkOutcome{check: CheckOpinionsRecorded}
+	recorded, err := p.store.ReviewOpinions(ctx, projectID, stage.ID)
+	if err != nil {
+		return outcome, err
+	}
+	for _, output := range outputs {
+		if output.Type != "VALIDACAO" {
+			continue
+		}
+		given := map[string]map[string]any{}
+		for _, item := range list(headers[output.Code], "pareceres") {
+			entry, _ := item.(map[string]any)
+			name := text(entry["participante"])
+			if _, dup := given[name]; dup {
+				outcome.evidence = append(outcome.evidence, map[string]any{"reference": output.Code, "path": "/pareceres", "message": "repeated opinion of " + name})
+			}
+			given[name] = entry
+		}
+		for _, reviewer := range stage.Reviewers() {
+			name := domainworkflow.ReviewerName(reviewer.Agent)
+			opinion, ok := recorded[reviewer.Agent]
+			entry, written := given[name]
+			switch {
+			case !ok:
+				outcome.evidence = append(outcome.evidence, map[string]any{"reference": output.Code, "path": "/pareceres", "message": "no completed wave of " + reviewer.Agent + " with its opinion"})
+			case !written || text(entry["parecer"]) != opinion.Opinion:
+				outcome.evidence = append(outcome.evidence, map[string]any{"reference": output.Code, "path": "/pareceres", "message": "opinion of " + name + " differs from wave " + opinion.Wave})
+			}
+		}
+		if _, ok := given[domainworkflow.ReviewerName(stage.Agent)]; !ok {
+			outcome.evidence = append(outcome.evidence, map[string]any{"reference": output.Code, "path": "/pareceres", "message": "no opinion of the lead"})
+		}
+	}
+	return outcome, nil
+}
+
+// verdictUnblocked is validacao.verdict_unblocked: the VALIDACAO of the round has veredito liberado
+// (a rejection by the DBA forces devolvido in the schema, US-20 RN-2).
+func verdictUnblocked(outputs []artifact.Stored, headers map[string]map[string]any) checkOutcome {
+	outcome := checkOutcome{check: CheckVerdictUnblocked}
+	for _, output := range outputs {
+		if output.Type == "VALIDACAO" && text(headers[output.Code]["veredito"]) != "liberado" {
+			outcome.evidence = append(outcome.evidence, map[string]any{"reference": output.Code, "path": "/veredito", "message": "validation returned"})
+		}
+	}
+	return outcome
+}
+
+func sortEvidence(items []map[string]any) {
+	sort.SliceStable(items, func(i, j int) bool { return text(items[i]["reference"]) < text(items[j]["reference"]) })
 }
 
 // executionGreen is code.build_green and tests.executed_green: the last command of the category in the
@@ -400,12 +603,12 @@ func (p *Progress) rejected(ctx context.Context, d Decided, correlation string) 
 			return err
 		}
 	}
-	wave, err := p.flow.QueueRework(ctx, d.ProjectID, d.Stage, correlation)
+	waves, err := p.flow.QueueRework(ctx, d.ProjectID, d.Stage, correlation)
 	if err != nil {
 		return err
 	}
 	return p.emit(ctx, d.ProjectID, correlation, "br.easycode.stage.returned.v1", "stages/"+d.Stage, map[string]any{
-		"stage": d.Stage, "gate": stage.Gate, "round": d.Round, "rework_waves": []string{wave}, "actor": orchestrator,
+		"stage": d.Stage, "gate": stage.Gate, "round": d.Round, "rework_waves": waves, "actor": orchestrator,
 		"transition": transition("stage", domainworkflow.StageAwaitingGate, "returned"),
 	})
 }

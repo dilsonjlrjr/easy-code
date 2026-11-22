@@ -239,3 +239,31 @@ func (a Artifacts) CurrentHeader(ctx context.Context, projectID, code string) (m
 	}
 	return header, nil
 }
+
+// CurrentHeaders implements appartifact.Repository.
+func (a Artifacts) CurrentHeaders(ctx context.Context, projectID, artifactType string) (map[string]map[string]any, error) {
+	rows, err := conn(ctx, a.pool).Query(WithOperation(ctx, "artifacts.current_headers"), `
+SELECT ar.code, v.header FROM easycode.artifacts ar JOIN easycode.projects pr ON pr.id = ar.project_id
+  JOIN easycode.artifact_versions v ON v.artifact_id = ar.id AND v.version = ar.current_version
+ WHERE pr.public_id = $1::uuid AND ar.type = $2 AND ar.state <> 'replaced'`, projectID, artifactType)
+	if err != nil {
+		return nil, fmt.Errorf("current headers: %w", classify(err))
+	}
+	defer rows.Close()
+	out := map[string]map[string]any{}
+	for rows.Next() {
+		var code string
+		var raw []byte
+		if err := rows.Scan(&code, &raw); err != nil {
+			return nil, err
+		}
+		decoder := json.NewDecoder(bytes.NewReader(raw))
+		decoder.UseNumber()
+		var header map[string]any
+		if err := decoder.Decode(&header); err != nil {
+			return nil, fmt.Errorf("decode header: %w", err)
+		}
+		out[code] = header
+	}
+	return out, rows.Err()
+}

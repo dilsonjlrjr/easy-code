@@ -1,0 +1,238 @@
+# Workflow padrão do Easy Code (PROJETO.md, seção 6.1) como dados.
+# Esquema: workflow.schema.json. Texto de apoio: README.md.
+# Os ids de gate (gate.*) são definidos na E3-4 (governanca/).
+# Vale na Fase 2 (as 9 etapas). A Fase 1 usa workflow-basico.yaml: requisitos, arquitetura e implementacao (PD-01).
+id: workflow-padrao
+name: Workflow padrão de engenharia
+version: 2   # v2 (2026-11-21): short_name, project_inputs, RNF obrigatório (PD-09, PL-13, PC-02)
+mode: fixed   # Fases 1 e 2; a Fase 4 usa `configurable` (etapas puláveis)
+fase: 2
+
+stages:
+  - id: requirements
+    name: Discovery e Requisitos
+    short_name: Requisitos
+    agent: requirements-agent
+    depends_on: []
+    inputs: []
+    project_inputs: [business_need]   # texto e anexos informados na criação do projeto
+    outputs:
+      - { type: VISAO, path: docs/requisitos/VISAO.md, required: true }
+      - { type: US, path: docs/requisitos/US-NN-<slug>.md, required: true }
+      - { type: RNF, path: docs/requisitos/RNF-NN-<slug>.md, required: true }   # PC-02: o gate confere o mínimo de 4 categorias
+      - { type: BACKLOG, path: docs/requisitos/BACKLOG.md, required: true }
+    gate: gate.requirements
+    default_approval: human
+    default_mode: human
+
+  - id: architecture
+    name: Arquitetura da Solução
+    short_name: Arquitetura
+    agent: architect-agent
+    agent_mode: DESENHO
+    depends_on: [requirements]
+    inputs:
+      - { type: VISAO, origin: requirements }
+      - { type: US, origin: requirements }
+      - { type: RNF, origin: requirements }
+      - { type: BACKLOG, origin: requirements }
+    project_inputs: [constraints]   # restrições técnicas do projeto (US-54, PL-13); ADR imposta cita a restrição
+    outputs:
+      - { type: ARQ, path: docs/arquitetura/ARQ.md, required: true, description: "Inclui o C4 (Mermaid) no corpo" }
+      - { type: ARQ, path: docs/arquitetura/api/openapi.yaml, required: false, attachment: true, description: "Contrato de API, quando o sistema expõe API; textos de apoio (streams, contratos internos) em docs/arquitetura/api/" }
+      - { type: ARQ, path: docs/arquitetura/estrutura.md, required: true, attachment: true }
+      - { type: ADR, path: docs/arquitetura/adr/ADR-NN.md, required: true }
+      - { type: T, path: docs/arquitetura/tarefas/T-NN.md, required: true }
+    gate: gate.architecture
+    default_approval: human
+    default_mode: human
+
+  - id: data
+    name: Modelagem de Dados
+    short_name: Dados
+    agent: dba-agent
+    depends_on: [architecture]
+    inputs:
+      - { type: US, origin: requirements }
+      - { type: RNF, origin: requirements }
+      - { type: ARQ, origin: architecture }
+      - { type: ADR, origin: architecture }
+    outputs:
+      - { type: DIC, path: docs/dados/DIC.md, required: true }
+      - { type: PERSIST, path: docs/dados/PERSIST.md, required: true }
+      - { type: DIC, path: docs/dados/esquema.sql, required: true, attachment: true, description: "DDL de referência (primeira migração)" }
+      - { type: DIC, path: docs/dados/modelo-dados.dbml, required: false, attachment: true, description: "Modelo em DBML, quando o DBA o usa como fonte" }
+    gate: gate.data
+    default_approval: human
+    default_mode: human
+
+  - id: design
+    name: Design de Produto
+    short_name: Design
+    agent: designer-agent
+    depends_on: [architecture]
+    inputs:
+      - { type: VISAO, origin: requirements }
+      - { type: US, origin: requirements }
+      - { type: RNF, origin: requirements }
+      - { type: ARQ, origin: architecture }
+      - { type: ADR, origin: architecture }   # front-end e padrões de interface definidos nas ADR
+    outputs:
+      # TELAS (id fixo, template TELAS.md) é o artefato tipado do Design; os demais arquivos são anexos dele.
+      - { type: TELAS, path: docs/design/TELAS.md, required: true, description: "Mapa tela x história" }
+      - { type: TELAS, path: docs/design/fluxo.md, required: true, attachment: true, description: "Fluxos de navegação" }
+      - { type: TELAS, path: docs/design/wireframes.md, required: true, attachment: true }
+      - { type: TELAS, path: docs/design/prototipo/, required: true, attachment: true, description: "Protótipo navegável" }
+      - { type: TELAS, path: docs/design/estilo.md, required: true, attachment: true, description: "Design system / guia de estilo" }
+    gate: gate.design
+    default_approval: human
+    default_mode: human
+
+  - id: validation
+    name: Validação técnica
+    short_name: Validação
+    participants:
+      - { agent: architect-agent, role: lead, agent_mode: VALIDACAO }
+      # `inputs` do participante: recorte das entradas da etapa que ele lê no parecer (o líder lê todas).
+      - { agent: dba-agent, role: participant, inputs: [ARQ, ADR, T, DIC, PERSIST, TELAS] }   # TELAS: contrato × telas × modelo
+      - { agent: designer-agent, role: participant, inputs: [ARQ, ADR, T, TELAS] }
+    depends_on: [data, design]
+    inputs:
+      - { type: ARQ, origin: architecture }
+      - { type: ADR, origin: architecture }
+      - { type: T, origin: architecture }
+      - { type: DIC, origin: data }
+      - { type: PERSIST, origin: data }
+      - { type: TELAS, origin: design }
+      - { type: AMEACAS, origin: security-threats }
+      - { type: CT, origin: qa-plan }
+    outputs:
+      - { type: VALIDACAO, path: docs/validacao/VALIDACAO-NN.md, required: true }
+    gate: gate.validation
+    default_approval: human_or_automatic
+    default_mode: automatic
+
+  - id: implementation
+    name: Implementação
+    short_name: Implementação
+    agent: developer-agent
+    agent_mode: MANUAL   # AUTOMATICO quando o projeto liga o modo automático (as T rodam em sequência)
+    # Retrabalho por ACH (QA, Segurança) é ciclo interno: não reabre esta etapa nem gate.implementation (README, "Regras de retorno").
+    depends_on: [validation]
+    inputs:
+      - { type: US, origin: requirements }
+      - { type: RNF, origin: requirements }
+      - { type: ARQ, origin: architecture }
+      - { type: ADR, origin: architecture }
+      - { type: T, origin: architecture }
+      - { type: DIC, origin: data }
+      - { type: PERSIST, origin: data }
+      - { type: TELAS, origin: design }
+      - { type: VALIDACAO, origin: validation }
+      - { type: CT, origin: qa-plan }
+    outputs:
+      - { path: app/, required: true, description: "Código-fonte, testes automatizados, migrations, README e evidências de execução" }
+    gate: gate.implementation
+    default_approval: human_or_automatic
+    default_mode: human
+
+  - id: qa
+    name: Quality Assurance
+    short_name: QA
+    agent: qa-agent
+    agent_mode: EXECUCAO
+    depends_on: [implementation]
+    inputs:
+      - { type: US, origin: requirements }
+      - { type: CT, origin: qa-plan }
+      - { type: T, origin: architecture }
+    outputs:
+      - { type: REL-QA, path: docs/qa/REL-QA-NN.md, required: true }
+    gate: gate.qa
+    default_approval: human
+    default_mode: human
+
+  - id: security
+    name: Security Review
+    short_name: Segurança
+    agent: security-agent
+    agent_mode: AUDITORIA
+    depends_on: [qa]
+    inputs:
+      - { type: AMEACAS, origin: security-threats }
+      - { type: ARQ, origin: architecture }
+      - { type: ADR, origin: architecture }
+      - { type: REL-QA, origin: qa }
+    outputs:
+      - { type: REL-SEG, path: docs/seguranca/REL-SEG-NN.md, required: true }
+    gate: gate.security
+    default_approval: human
+    default_mode: human
+
+  - id: release
+    name: Release
+    short_name: Release
+    agent: orchestrator
+    approver: human
+    depends_on: [security]
+    inputs:
+      - { type: VALIDACAO, origin: validation }
+      - { type: REL-QA, origin: qa }
+      - { type: REL-SEG, origin: security }
+    outputs:
+      - { type: RELEASE, path: docs/release/RELEASE-NN.md, required: true }
+    gate: gate.release
+    default_approval: human
+    default_mode: human
+    always_human: true
+
+parallel_activities:
+  # QA em modo PLANO: cenários de teste a partir dos critérios de aceite, depois de requisitos aprovados.
+  # Pré-requisito da implementação: as saídas são aprovadas no gate.validation.
+  - id: qa-plan
+    name: QA - plano de testes e cenários
+    short_name: Plano de testes
+    agent: qa-agent
+    agent_mode: PLANO
+    depends_on: [requirements]
+    parallel_with: [architecture, data, design]
+    inputs:
+      - { type: US, origin: requirements }
+      - { type: RNF, origin: requirements }
+    outputs:
+      - { type: CT, path: docs/qa/plano.md, required: true, attachment: true }
+      - { type: CT, path: docs/qa/cenarios/CT-NN.md, required: true }
+    approved_in_gate: gate.validation
+    required_for: validation
+    prerequisite_of: [implementation]
+
+  # Segurança em modo AMEAÇAS: modelo de ameaças sobre a arquitetura aprovada; entra na validação.
+  - id: security-threats
+    name: Segurança - modelo de ameaças
+    short_name: Modelo de ameaças
+    agent: security-agent
+    agent_mode: AMEACAS
+    depends_on: [architecture]
+    parallel_with: [data, design]
+    inputs:
+      - { type: ARQ, origin: architecture }
+      - { type: ADR, origin: architecture }
+      - { type: RNF, origin: requirements }
+    outputs:
+      - { type: AMEACAS, path: docs/seguranca/ameacas.md, required: true }
+    approved_in_gate: gate.validation
+    required_for: validation
+    prerequisite_of: [implementation]
+
+returns:
+  cycle_limit: 3   # além de 3 só com rodada extra autorizada por humano (escalonamentos[].decisao: novo_retrabalho)
+  internal_cycle: [implementation]   # etapas destino cujo retrabalho não reabre etapa nem gate (checagens automáticas + revalidação do emissor)
+  default_destination_by_category:
+    defect: implementation
+    ambiguous_requirement: requirements
+    vulnerability: implementation
+    architecture_deviation: architecture
+    data_inconsistency: data
+    design_inconsistency: design
+    technical_debt: implementation
+    contract_gap: architecture

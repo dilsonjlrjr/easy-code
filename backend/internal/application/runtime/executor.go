@@ -20,6 +20,7 @@ import (
 	"easycode/internal/domain/permission"
 	"easycode/internal/domain/provider"
 	"easycode/internal/domain/sandbox"
+	"easycode/internal/domain/workflow"
 )
 
 // ArtifactStore validates and records the outputs (US-29) and submits them for review.
@@ -34,12 +35,21 @@ type StageProgress interface {
 	WaveCompleted(ctx context.Context, projectID, stage, correlation string) error
 }
 
-// Agent is a runnable agent: its harness, its least-privilege policy and the agent mode of its stage.
+// Agent is a runnable agent: its harness, its least-privilege policy and its agent mode per stage.
 type Agent struct {
 	Steps         Steps
 	WritablePaths []string           // used when Policy is nil (write-only agents)
 	Policy        *permission.Policy // tools, paths and command categories (RNF-07)
-	Mode          string
+	Mode          string             // mode when Modes has no entry for the stage
+	Modes         map[string]string  // stage → agent mode (DESENHO in architecture, VALIDACAO in validation…)
+}
+
+// ModeIn is the agent mode in a stage.
+func (a Agent) ModeIn(stage string) string {
+	if mode, ok := a.Modes[stage]; ok {
+		return mode
+	}
+	return a.Mode
 }
 
 // Repository is the git repository of the project (US-42): the base the agents read and the commit of
@@ -64,8 +74,11 @@ type Settings struct {
 	MaxCorrections int           // rejected deliveries before the wave fails (US-29 CA-2)
 	RetryBackoff   time.Duration // first backoff of a transient provider error
 	Poll           time.Duration
-	Image          string         // logical sandbox image of the projects (stack of the Phase 1)
-	ProjectLimits  sandbox.Limits // project limits of RNF-03, combined with the agent ceiling (effective_limits)
+	// Control is how often a running step checks that its lease still holds, so a cancel aborts the
+	// call or command in flight within RNF-10 (5 s p95); zero means one second.
+	Control       time.Duration
+	Image         string         // logical sandbox image of the projects (stack of the Phase 1)
+	ProjectLimits sandbox.Limits // project limits of RNF-03, combined with the agent ceiling (effective_limits)
 }
 
 // Executor runs the waves of the registered agents (ADR-04 Phase 1: PostgreSQL lease and fencing).
@@ -113,7 +126,9 @@ func (e *Executor) agentNames() []string {
 func (e *Executor) Run(ctx context.Context, wake <-chan struct{}) {
 	for ctx.Err() == nil {
 		ran, err := e.RunOnce(ctx)
-		if err != nil && ctx.Err() == nil {
+		if errors.Is(err, ErrLeaseLost) {
+			e.logger.InfoContext(ctx, "wave stopped: lease lost (canceled or taken over)")
+		} else if err != nil && ctx.Err() == nil {
 			e.logger.ErrorContext(ctx, "wave execution failed", slog.String("error", err.Error()))
 		}
 		if ran {
@@ -240,7 +255,11 @@ func (e *Executor) execute(ctx context.Context, c Claimed) error {
 		ProjectID: c.ProjectID, WaveID: c.PublicID, Code: c.Code, Stage: c.Stage, Agent: c.Agent, Attempt: c.Attempt,
 		Instruction: text, BusinessNeed: inputs.BusinessNeed, Constraints: inputs.Constraints, Language: inputs.Language,
 		WritablePaths: agent.WritablePaths, Outputs: e.outputs(c.Stage), Models: inputs.Models, Feedback: inputs.Feedback,
-		Policy: agent.Policy, Approved: inputs.Approved, Mode: agent.Mode, Task: inputs.Task, Image: e.settings.Image,
+		Policy: agent.Policy, Approved: inputs.Approved, Mode: agent.ModeIn(c.Stage), Task: inputs.Task, Image: e.settings.Image,
+		Opinions: inputs.Opinions, Skills: inputs.Skills,
+	}
+	if wave.Reviewing() {
+		wave.Outputs = nil // the delivery of a participant wave is its opinion
 	}
 	if agent.Policy != nil {
 		wave.Limits = agent.Policy.Ceiling.Min(e.settings.ProjectLimits)
@@ -285,7 +304,7 @@ func (e *Executor) loop(ctx context.Context, c Claimed, agent Agent, wave WaveCo
 	for {
 		started := e.now()
 		stepCtx, stop := context.WithCancel(ctx)
-		renewed := e.renew(stepCtx, c.Lease)
+		renewed := e.renew(stepCtx, c.Lease, stop)
 		result, stepErr := agent.Steps.Next(stepCtx, wave, cp)
 		stop()
 		if lost := <-renewed; lost {
@@ -343,12 +362,20 @@ func (e *Executor) loop(ctx context.Context, c Claimed, agent Agent, wave WaveCo
 	}
 }
 
-// renew keeps the lease alive while a step runs; it reports true when the lease was lost.
-func (e *Executor) renew(ctx context.Context, lease Lease) <-chan bool {
+// renew keeps the lease alive while a step runs and checks that it still holds; when the lease is lost
+// (wave canceled, US-14, or taken over) it aborts the step in flight (model call or sandbox command,
+// RNF-10) and reports true.
+func (e *Executor) renew(ctx context.Context, lease Lease, abort context.CancelFunc) <-chan bool {
 	lost := make(chan bool, 1)
+	control := e.settings.Control
+	if control <= 0 {
+		control = time.Second
+	}
 	go func() {
 		ticker := time.NewTicker(e.settings.Lease / 3)
 		defer ticker.Stop()
+		check := time.NewTicker(control)
+		defer check.Stop()
 		for {
 			select {
 			case <-ctx.Done():
@@ -356,6 +383,13 @@ func (e *Executor) renew(ctx context.Context, lease Lease) <-chan bool {
 				return
 			case <-ticker.C:
 				if err := e.ledger.Renew(context.WithoutCancel(ctx), lease, e.settings.Lease); errors.Is(err, ErrLeaseLost) {
+					abort()
+					lost <- true
+					return
+				}
+			case <-check.C:
+				if held, err := e.ledger.Held(context.WithoutCancel(ctx), lease); err == nil && !held {
+					abort()
 					lost <- true
 					return
 				}
@@ -569,6 +603,12 @@ func (e *Executor) deliver(ctx context.Context, c Claimed, agent Agent, wave Wav
 		if err := e.ledger.RecordWaveCheck(ctx, c.Lease, "artifact.schema_valid", true, nil); err != nil {
 			return err
 		}
+		if result.Opinion != nil {
+			evidence, _ := json.Marshal(result.Opinion)
+			if err := e.ledger.RecordWaveCheck(ctx, c.Lease, CheckReviewOpinion, true, evidence); err != nil {
+				return err
+			}
+		}
 		if sha != "" {
 			if err := e.ledger.RecordCommit(ctx, c.Lease, sha, versions); err != nil {
 				return err
@@ -594,6 +634,10 @@ func (e *Executor) deliver(ctx context.Context, c Claimed, agent Agent, wave Wav
 	})
 }
 
+// CheckReviewOpinion is the wave record of the opinion of a participant (evidence: the opinion), read
+// by the lead's wave and by validacao.review_opinions_recorded ("registro de ondas").
+const CheckReviewOpinion = "validacao.review_opinion"
+
 func (e *Executor) validate(wave WaveContext, outputs []Output) []schemaProblem {
 	var problems []schemaProblem
 	present := map[string]bool{}
@@ -617,10 +661,43 @@ func (e *Executor) validate(wave WaveContext, outputs []Output) []schemaProblem 
 		}
 		seen[code] = output.Path
 		present[artifactType] = true
+		if artifactType == "VALIDACAO" {
+			problems = append(problems, consolidated(output.Path, document.Header, wave.Opinions)...)
+		}
 	}
 	for _, required := range wave.Outputs {
 		if !present[required] {
 			problems = append(problems, schemaProblem{Artifact: required, Message: "required output missing: " + required})
+		}
+	}
+	return problems
+}
+
+// consolidated checks that VALIDACAO.pareceres carries the opinion each participant gave in its wave,
+// unchanged (template VALIDACAO: one wave per participant, consolidated by the orchestrator).
+func consolidated(path string, header map[string]any, opinions []workflow.ReviewOpinion) []schemaProblem {
+	var problems []schemaProblem
+	written := map[string]map[string]any{}
+	list, _ := header["pareceres"].([]any)
+	for _, item := range list {
+		if entry, ok := item.(map[string]any); ok {
+			name, _ := entry["participante"].(string)
+			written[name] = entry
+		}
+	}
+	for _, opinion := range opinions {
+		entry, ok := written[opinion.Participant]
+		given, _ := entry["parecer"].(string)
+		var reservations []string
+		raw, _ := entry["ressalvas"].([]any)
+		for _, r := range raw {
+			text, _ := r.(string)
+			reservations = append(reservations, text)
+		}
+		if !ok || given != opinion.Opinion || strings.Join(reservations, "\n") != strings.Join(opinion.Reservations, "\n") {
+			encoded, _ := json.Marshal(opinion)
+			problems = append(problems, schemaProblem{Artifact: path, Path: "/pareceres",
+				Message: "parecer de " + opinion.Participant + " difere do registrado na onda " + opinion.Wave + ": " + string(encoded)})
 		}
 	}
 	return problems
@@ -651,7 +728,8 @@ func (e *Executor) artifactOutputs(stage string, outputs []Output) []Output {
 
 // commitMessage cites the wave and, in the implementation, the task (US-19 CA-1).
 func commitMessage(c Claimed, wave WaveContext) string {
-	subject := c.Code + ": " + map[string]string{"requirements": "requisitos", "architecture": "arquitetura", "implementation": "implementação"}[c.Stage]
+	subject := c.Code + ": " + map[string]string{"requirements": "requisitos", "architecture": "arquitetura", "data": "modelagem de dados",
+		"design": "design", "validation": "validação técnica", "implementation": "implementação"}[c.Stage]
 	if wave.Task != "" {
 		subject = wave.Task + ": implementação da tarefa (" + c.Code + ")"
 	}

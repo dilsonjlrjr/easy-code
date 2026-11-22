@@ -168,7 +168,7 @@ func productDependencies(cfg config.Config, pool *pgxpool.Pool, logger *slog.Log
 	sessions := appsession.NewService(postgres.NewUsers(pool), postgres.NewWebSessions(pool), oidc.NewProvider(realm),
 		websession.NewTokenSealer(id.SessionSecret), websession.NewFlowCodec(id.SessionSecret))
 	trail := postgres.NewAuditTrail(pool)
-	wf, err := specs.BasicWorkflow()
+	wf, err := specs.StandardWorkflow(specs.StandardAgents)
 	if err != nil {
 		return httpapi.Dependencies{}, err
 	}

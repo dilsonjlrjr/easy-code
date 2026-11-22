@@ -70,6 +70,9 @@ type Repository interface {
 	InReview(ctx context.Context, projectID, stage string) ([]Stored, error)
 	// CurrentHeader returns the header of the current version.
 	CurrentHeader(ctx context.Context, projectID, code string) (map[string]any, error)
+	// CurrentHeaders returns code → header of the current version of every artifact of the type that is
+	// not superseded (traceability checks of the gate).
+	CurrentHeaders(ctx context.Context, projectID, artifactType string) (map[string]map[string]any, error)
 }
 
 // Input is one artifact file written by an agent in a wave.
@@ -276,6 +279,11 @@ func (s *Store) SubmitForReview(ctx context.Context, projectID, waveCode, agent 
 	_, err = s.outbox.Append(ctx, domainevent.Draft{Type: "br.easycode.artifact.submitted_for_review.v1", Subject: "artifacts/" + stored.Code,
 		ProjectID: projectID, WaveID: waveCode, CorrelationID: correlation, Data: data})
 	return err
+}
+
+// Headers returns the current headers of the artifacts of a type (traceability checks of the gate round).
+func (s *Store) Headers(ctx context.Context, projectID, artifactType string) (map[string]map[string]any, error) {
+	return s.repo.CurrentHeaders(ctx, projectID, artifactType)
 }
 
 // Header returns the header of the current version (checks of the gate round).

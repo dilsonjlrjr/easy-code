@@ -11,6 +11,7 @@ import (
 	"easycode/internal/domain/permission"
 	"easycode/internal/domain/provider"
 	"easycode/internal/domain/sandbox"
+	"easycode/internal/domain/workflow"
 	"easycode/internal/infrastructure/specs"
 )
 
@@ -296,5 +297,58 @@ func TestThreeFailuresInARowStopTheWave(t *testing.T) {
 	last := results[len(results)-1]
 	if last.Type != runtime.StepFail || last.TaskFailed == nil || last.TaskFailed.Consecutive != 3 {
 		t.Fatalf("want fail after 3 red runs, got %+v", last)
+	}
+}
+
+// capturingModel answers like cannedModel and keeps the requests.
+type capturingModel struct {
+	cannedModel
+	requests []provider.Request
+}
+
+func (m *capturingModel) Call(ctx context.Context, w runtime.WaveContext, step int, role string, req provider.Request) (provider.Response, runtime.CallRecord, error) {
+	m.requests = append(m.requests, req)
+	return m.cannedModel.Call(ctx, w, step, role, req)
+}
+
+// US-20 RN-2, CA-4: a participant of the Validação técnica delivers only its opinion with finish; a
+// rejection without reservation is refused, and the opinion carries participant and wave.
+func TestReviewWaveDeliversTheOpinion(t *testing.T) {
+	model := &capturingModel{cannedModel: cannedModel{answers: []provider.Message{
+		{Calls: []provider.ToolCall{{ID: "a", Name: runtime.ToolFinish, Args: args(map[string]any{"parecer": "reprovado", "ressalvas": []string{}})}}},
+		{Calls: []provider.ToolCall{{ID: "b", Name: runtime.ToolFinish, Args: args(map[string]any{"parecer": "reprovado", "ressalvas": []string{"FK sem índice em reservas.sala_id"}})}}},
+	}}}
+	w := runtime.WaveContext{Code: "VAL-01", Agent: "dba-agent", Stage: "validation", Instruction: "DBA", Mode: "PARECER", Policy: policy(t, "dba-agent")}
+	results := steps(t, runtime.NewFileAgent(model, 1000), w, 6)
+	last := results[len(results)-1]
+	if results[1].Tool == nil || results[1].Tool.Success {
+		t.Fatalf("rejection without reservation is refused: %+v", results[1].Tool)
+	}
+	if last.Type != runtime.StepComplete || last.Opinion == nil || last.Opinion.Participant != "dba" || last.Opinion.Opinion != "reprovado" ||
+		last.Opinion.Wave != "VAL-01" || len(last.Opinion.Reservations) != 1 {
+		t.Fatalf("opinion: %+v", last)
+	}
+	var finish provider.ToolDefinition
+	for _, tool := range model.requests[0].Tools {
+		if tool.Name == runtime.ToolFinish {
+			finish = tool
+		}
+	}
+	if !strings.Contains(string(finish.Schema), "parecer") || !strings.Contains(model.requests[0].Messages[0].Text, "parecer") {
+		t.Fatalf("finish of a participant asks for the opinion: %s", finish.Schema)
+	}
+}
+
+// The lead of the validation receives the participants' opinions to consolidate them.
+func TestLeadReceivesTheOpinions(t *testing.T) {
+	model := &capturingModel{cannedModel: cannedModel{answers: []provider.Message{{Text: "ok"}}}}
+	w := runtime.WaveContext{Code: "VAL-03", Agent: "architect-agent", Stage: "validation", Instruction: "Modo {MODO}", Mode: "VALIDACAO", Policy: policy(t, "architect-agent"),
+		Opinions: []workflow.ReviewOpinion{{Participant: "dba", Opinion: "aprovado", Reservations: []string{}, Wave: "VAL-01"}}}
+	cp, _, err := runtime.NewFileAgent(model, 1000).Start(context.Background(), w)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(cp.State), `\"onda\":\"VAL-01\"`) || !strings.Contains(string(cp.State), "Modo VALIDACAO") {
+		t.Fatalf("lead context: %s", cp.State)
 	}
 }

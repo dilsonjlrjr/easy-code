@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"easycode/internal/domain/provider"
+	"easycode/internal/domain/workflow"
 )
 
 // ErrLeaseLost means another worker owns the wave now (fencing): stop without writing.
@@ -50,6 +51,9 @@ type Inputs struct {
 	Feedback           string            // reason of the last rejected gate round of the stage (rework)
 	Task               string            // T of an implementation wave (PL-20)
 	Approved           map[string]string // path → author of every approved artifact (US-30 CA-2)
+	// Opinions are the opinions recorded by the participant waves of the stage (lead of the validation).
+	Opinions []workflow.ReviewOpinion
+	Skills   string // skills of the agent in the project, by description (US-43 RN-1)
 }
 
 // Totals are the accumulated tokens and costs of the wave (exact decimals, RNF-16).
@@ -85,6 +89,9 @@ type Ledger interface {
 	// Claim takes the oldest runnable wave of the agents and its lease, in the caller's transaction.
 	Claim(ctx context.Context, worker string, agents []string, lease time.Duration) (*Claimed, error)
 	Renew(ctx context.Context, lease Lease, duration time.Duration) error
+	// Held reports whether the lease is still valid (read only): false once the wave was canceled or
+	// taken over, so the step in flight is aborted (RNF-10).
+	Held(ctx context.Context, lease Lease) (bool, error)
 	Inputs(ctx context.Context, claimed Claimed) (Inputs, error)
 	LastCheckpoint(ctx context.Context, lease Lease, attempt int) (*Checkpoint, error)
 	// LatestAnswer returns the last answered question of the wave, or nil.

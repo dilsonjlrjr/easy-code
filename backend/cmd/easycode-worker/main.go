@@ -18,6 +18,7 @@ import (
 	apphealth "easycode/internal/application/health"
 	"easycode/internal/application/providerkey"
 	"easycode/internal/application/ssosync"
+	appwave "easycode/internal/application/wave"
 	appworkflow "easycode/internal/application/workflow"
 	"easycode/internal/infrastructure/config"
 	"easycode/internal/infrastructure/logging"
@@ -222,7 +223,7 @@ func newDispatcher(cfg config.Config, pool *pgxpool.Pool, propagator propagation
 	dispatcher.Register("test_provider_key", func(ctx context.Context, cmd command.Command) error {
 		return tester.Test(ctx, cmd.ProviderKeyID)
 	})
-	wf, err := specs.BasicWorkflow()
+	wf, err := specs.StandardWorkflow(harnessAgents)
 	if err != nil {
 		return nil, runtimeParts{}, err
 	}
@@ -234,6 +235,7 @@ func newDispatcher(cfg config.Config, pool *pgxpool.Pool, propagator propagation
 		return nil, runtimeParts{}, err
 	}
 	dispatcher.Register("answer", parts.answers.Handle)
+	dispatcher.Register("cancel", appwave.NewCancelHandler(postgres.NewWaves(pool, wf.Definition), postgres.NewOutbox(pool)).Handle)
 	return dispatcher, parts, nil
 }
 

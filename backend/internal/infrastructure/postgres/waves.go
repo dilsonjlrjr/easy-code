@@ -28,9 +28,10 @@ type Waves struct {
 }
 
 var (
-	_ appwave.Reader  = Waves{}
-	_ appwave.Answers = Waves{}
-	_ appwave.Resumer = Waves{}
+	_ appwave.Reader   = Waves{}
+	_ appwave.Answers  = Waves{}
+	_ appwave.Resumer  = Waves{}
+	_ appwave.Canceler = Waves{}
 )
 
 // NewWaves builds the adapter.
@@ -320,27 +321,85 @@ RETURNING wq.id`, p.OrganizationID, p.Subject, projectID, waveCode, questionCode
 
 // EnqueueAnswer implements appwave.Answers.
 func (w Waves) EnqueueAnswer(ctx context.Context, p identity.Principal, projectID, waveCode, questionCode, key, bodyHash string) (appworkflow.CommandView, error) {
+	payload, _ := json.Marshal(map[string]string{"wave": waveCode, "question": questionCode})
+	return w.enqueueWaveCommand(ctx, p, projectID, waveCode, "answer", payload, key, bodyHash)
+}
+
+// EnqueueCancel implements appwave.Answers (US-14).
+func (w Waves) EnqueueCancel(ctx context.Context, p identity.Principal, projectID, waveCode, key, bodyHash string) (appworkflow.CommandView, error) {
+	payload, _ := json.Marshal(map[string]string{"wave": waveCode})
+	return w.enqueueWaveCommand(ctx, p, projectID, waveCode, "cancel", payload, key, bodyHash)
+}
+
+func (w Waves) enqueueWaveCommand(ctx context.Context, p identity.Principal, projectID, waveCode, commandType string, payload []byte, key, bodyHash string) (appworkflow.CommandView, error) {
 	id, err := uuid.NewV7()
 	if err != nil {
 		return appworkflow.CommandView{}, err
 	}
-	payload, _ := json.Marshal(map[string]string{"wave": waveCode, "question": questionCode})
 	if bodyHash == "" {
 		bodyHash = idempotency.HashBody(payload)
 	}
 	q := conn(ctx, w.pool)
-	_, err = q.Exec(WithOperation(ctx, "commands.insert_answer"), `
-INSERT INTO easycode.commands (public_id, organization_id, project_id, target_type, wave_id, type, payload, requested_by, origin, idempotency_key, body_hash)
-SELECT $4::uuid, pr.organization_id, pr.id, 'wave', wv.id, 'answer', $6::jsonb, `+principalUserIDSQL+`, 'web', $7::uuid, $8
+	tag, err := q.Exec(WithOperation(ctx, "commands.insert_"+commandType), `
+INSERT INTO easycode.commands (public_id, organization_id, project_id, target_type, wave_id, type, payload, requested_by, origin, idempotency_key, body_hash, confirmed)
+SELECT $4::uuid, pr.organization_id, pr.id, 'wave', wv.id, $9, $6::jsonb, `+principalUserIDSQL+`, 'web', $7::uuid, $8, $10
   FROM easycode.projects pr JOIN easycode.waves wv ON wv.project_id = pr.id AND wv.code = $5 WHERE pr.public_id = $3::uuid`,
-		p.OrganizationID, p.Subject, projectID, id.String(), waveCode, string(payload), key, bodyHash)
+		p.OrganizationID, p.Subject, projectID, id.String(), waveCode, string(payload), key, bodyHash, commandType, commandType == "cancel")
 	if err != nil {
-		return appworkflow.CommandView{}, fmt.Errorf("queue answer: %w", classify(err))
+		return appworkflow.CommandView{}, fmt.Errorf("queue %s: %w", commandType, classify(err))
+	}
+	if tag.RowsAffected() == 0 {
+		return appworkflow.CommandView{}, failure.New(failure.KindNotFound, failure.CodeNotFound, nil)
 	}
 	if _, err := q.Exec(WithOperation(ctx, "commands.notify"), "SELECT pg_notify($1, $2)", ChannelCommands, projectID); err != nil {
 		return appworkflow.CommandView{}, err
 	}
 	return Workflow{pool: w.pool}.Get(ctx, projectID, id.String())
+}
+
+// Cancel implements appwave.Canceler (worker role, US-14): under the wave lock it rechecks the guard,
+// closes the call in flight as aborted and lost with its estimated cost (RNF-16), and moves the wave to
+// canceled without lease, so the fenced writes of the worker that runs it fail and it stops (RNF-10).
+func (w Waves) Cancel(ctx context.Context, projectID, waveCode string) (appwave.Canceled, error) {
+	var out appwave.Canceled
+	var id int64
+	var task *string
+	q := conn(ctx, w.pool)
+	err := q.QueryRow(WithOperation(ctx, "waves.lock_for_cancel"), `
+SELECT w.id, w.code, w.stage, w.agent, w.purpose, w.state, w.task, w.currency FROM easycode.waves w JOIN easycode.projects pr ON pr.id = w.project_id
+ WHERE pr.public_id = $1::uuid AND w.code = $2 FOR UPDATE OF w`, projectID, waveCode).
+		Scan(&id, &out.Code, &out.Stage, &out.Agent, &out.Purpose, &out.From, &task, &out.Currency)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return out, failure.New(failure.KindNotFound, failure.CodeNotFound, nil)
+	}
+	if err != nil {
+		return out, fmt.Errorf("lock wave: %w", classify(err))
+	}
+	if !appwave.CanCancel(out.From) {
+		return out, failure.New(failure.KindConflict, failure.CodeStateConflict, nil)
+	}
+	out.Task = deref(task)
+	var lost string
+	var aborted int
+	err = q.QueryRow(WithOperation(ctx, "model_calls.abort_for_cancel"), `
+WITH aborted AS (
+  UPDATE easycode.model_calls SET result = 'aborted', lost = true, estimated_cost = true, finished_at = now(), error_summary = 'wave canceled'
+   WHERE wave_id = $1 AND result IS NULL RETURNING cost)
+SELECT coalesce(sum(cost), 0)::text, count(*) FROM aborted`, id).Scan(&lost, &aborted)
+	if err != nil {
+		return out, fmt.Errorf("abort calls of canceled wave: %w", classify(err))
+	}
+	if _, err := q.Exec(WithOperation(ctx, "waves.cancel"), `
+UPDATE easycode.waves SET state = 'canceled', finished_at = now(), lease_owner = NULL, lease_until = NULL, failure_cause = NULL,
+       cost_estimate = coalesce(cost_estimate, 0), estimate_basis = coalesce(estimate_basis, '{"method":"none"}'),
+       pause_cause = NULL, pause_mode = NULL, lost_cost = lost_cost + $2::numeric, estimated_lost_cost = estimated_lost_cost OR $3
+ WHERE id = $1`, id, lost, aborted > 0); err != nil {
+		return out, fmt.Errorf("cancel wave: %w", classify(err))
+	}
+	if aborted > 0 {
+		out.LostCost = pricing.NormalizeDecimal(lost)
+	}
+	return out, nil
 }
 
 // Resume implements appwave.Resumer (worker role).

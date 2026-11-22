@@ -14,6 +14,7 @@ import (
 	"easycode/internal/application/runtime"
 	"easycode/internal/domain/failure"
 	"easycode/internal/domain/pricing"
+	"easycode/internal/domain/workflow"
 )
 
 // Ledger is the persistence of the wave executor (worker role).
@@ -111,6 +112,19 @@ func leaseLost(err error) error {
 
 const fence = ` WHERE id = $1 AND lease_owner = $2 AND lease_epoch = $3`
 
+// Held implements runtime.Ledger: the lease is still this worker's and the wave still runs (a cancel
+// frees the lease, US-14).
+func (l Ledger) Held(ctx context.Context, lease runtime.Lease) (bool, error) {
+	var held bool
+	err := conn(ctx, l.pool).QueryRow(WithOperation(ctx, "waves.lease_held"), `
+SELECT EXISTS (SELECT 1 FROM easycode.waves WHERE id = $1 AND lease_owner = $2 AND lease_epoch = $3 AND state IN ('running', 'pausing'))`,
+		lease.WaveID, lease.Owner, lease.Epoch).Scan(&held)
+	if err != nil {
+		return false, fmt.Errorf("check lease: %w", classify(err))
+	}
+	return held, nil
+}
+
 // Renew implements runtime.Ledger.
 func (l Ledger) Renew(ctx context.Context, lease runtime.Lease, duration time.Duration) error {
 	row := l.fenced(ctx, "waves.renew", `UPDATE easycode.waves SET lease_until = now() + make_interval(secs => $4), heartbeat_at = now()`+fence+` RETURNING id`,
@@ -166,6 +180,9 @@ SELECT v.path, v.author FROM easycode.waves w JOIN easycode.artifacts a ON a.pro
 	if err := approved.Err(); err != nil {
 		return in, err
 	}
+	if in.Opinions, err = l.opinions(ctx, c.WaveID); err != nil {
+		return in, err
+	}
 	rows, err := q.Query(WithOperation(ctx, "waves.models"), `
 SELECT wm.role, m.id, m.provider, m.name FROM easycode.wave_models wm JOIN easycode.models m ON m.id = wm.model_id WHERE wm.wave_id = $1`, c.WaveID)
 	if err != nil {
@@ -182,6 +199,33 @@ SELECT wm.role, m.id, m.provider, m.name FROM easycode.wave_models wm JOIN easyc
 		in.Models[role] = ref
 	}
 	return in, rows.Err()
+}
+
+// opinions are the review opinions recorded by the earlier completed waves of other agents in the
+// stage of the wave (the participants of the validation), the last one per agent.
+func (l Ledger) opinions(ctx context.Context, waveID int64) ([]workflow.ReviewOpinion, error) {
+	rows, err := conn(ctx, l.pool).Query(WithOperation(ctx, "waves.review_opinions"), `
+SELECT DISTINCT ON (o.agent) ce.evidence FROM easycode.waves w
+  JOIN easycode.waves o ON o.project_id = w.project_id AND o.stage = w.stage AND o.agent <> w.agent AND o.state = 'completed' AND o.id < w.id
+  JOIN easycode.check_executions ce ON ce.wave_id = o.id AND ce.check_id = $2
+ WHERE w.id = $1
+ ORDER BY o.agent, o.id DESC`, waveID, runtime.CheckReviewOpinion)
+	if err != nil {
+		return nil, fmt.Errorf("review opinions: %w", classify(err))
+	}
+	defer rows.Close()
+	var out []workflow.ReviewOpinion
+	for rows.Next() {
+		var raw []byte
+		var opinion workflow.ReviewOpinion
+		if err := rows.Scan(&raw); err != nil {
+			return nil, err
+		}
+		if json.Unmarshal(raw, &opinion) == nil {
+			out = append(out, opinion)
+		}
+	}
+	return out, rows.Err()
 }
 
 // LastCheckpoint implements runtime.Ledger.

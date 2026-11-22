@@ -55,6 +55,7 @@ func (a *api) register(router *Router) {
 		router.Handle(fasthttp.MethodGet, p+"/{waveId}", auth(a.getWave))
 		router.Handle(fasthttp.MethodGet, p+"/{waveId}/questions", auth(a.listWaveQuestions))
 		router.Handle(fasthttp.MethodPost, p+"/{waveId}/questions/{questionId}/answer", auth(a.answerQuestion))
+		router.Handle(fasthttp.MethodPost, p+"/{waveId}/cancellation", auth(a.cancelWave))
 		router.Handle(fasthttp.MethodGet, p+"/{waveId}/checkpoints", auth(a.listCheckpoints))
 		router.Handle(fasthttp.MethodGet, p+"/{waveId}/calls", auth(a.listWaveCalls))
 		router.Handle(fasthttp.MethodGet, p+"/{waveId}/sandbox-executions", auth(a.listSandboxExecutions))

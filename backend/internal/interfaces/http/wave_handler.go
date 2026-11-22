@@ -23,6 +23,7 @@ type WaveUseCases interface {
 	Checkpoints(ctx context.Context, principal identity.Principal, projectID, code string) ([]appwave.CheckpointView, error)
 	Calls(ctx context.Context, principal identity.Principal, projectID, code, kind string) ([]appwave.CallView, error)
 	Answer(ctx context.Context, principal identity.Principal, projectID, waveCode, questionCode string, answers map[int]string, key, bodyHash string) (appworkflow.CommandView, error)
+	Cancel(ctx context.Context, principal identity.Principal, projectID, waveCode string, confirm bool, key, bodyHash string) (appworkflow.CommandView, error)
 	SandboxExecutions(ctx context.Context, principal identity.Principal, projectID, code string, limit int, after string) ([]appwave.SandboxExecution, error)
 	ExecutionOutput(ctx context.Context, principal identity.Principal, projectID, code, executionID string) (appwave.ExecutionOutput, error)
 }
@@ -130,6 +131,9 @@ func waveOf(v appwave.View) waveJSON {
 		out.Result = optional(v.State)
 	case "awaiting_user":
 		out.AvailableActions = []string{"answer"}
+	}
+	if appwave.CanCancel(v.State) {
+		out.AvailableActions = append(out.AvailableActions, "cancel") // US-14 CA-3: not when completed or canceled
 	}
 	for _, o := range v.Outputs {
 		item := expectedOutputJSON{Type: o.Type, Artifact: optional(o.Artifact), Version: optional(o.Version), Status: o.Status}
@@ -248,6 +252,34 @@ func (a *api) answerQuestion(rc *fasthttp.RequestCtx, principal identity.Princip
 	question := PathParam(rc, "questionId")
 	return a.idempotent(rc, principal, "answerQuestion", func(ctx context.Context) (created, error) {
 		queued, err := a.deps.Waves.Answer(ctx, principal, projectID, code, question, answers, req.Key, req.BodyHash)
+		if err != nil {
+			return created{}, err
+		}
+		return created{status: fasthttp.StatusAccepted, body: a.commandOf(rc, queued), location: commandLocation(projectID, queued.ID)}, nil
+	})
+}
+
+// cancelWave is POST /projects/{projectId}/waves/{waveId}/cancellation (US-14).
+func (a *api) cancelWave(rc *fasthttp.RequestCtx, principal identity.Principal) error {
+	projectID, code, err := wavePath(rc)
+	if err != nil {
+		return err
+	}
+	var body struct {
+		Confirm *bool `json:"confirm"`
+	}
+	if err := decodeJSON(rc, &body); err != nil {
+		return err
+	}
+	if body.Confirm == nil || !*body.Confirm {
+		return failure.Invalid(failure.FieldError{Field: "confirm", Message: "required"})
+	}
+	req, err := idempotencyRequest(rc, principal, "cancelWave")
+	if err != nil {
+		return err
+	}
+	return a.idempotent(rc, principal, "cancelWave", func(ctx context.Context) (created, error) {
+		queued, err := a.deps.Waves.Cancel(ctx, principal, projectID, code, true, req.Key, req.BodyHash)
 		if err != nil {
 			return created{}, err
 		}

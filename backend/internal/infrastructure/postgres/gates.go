@@ -15,6 +15,7 @@ import (
 	appproject "easycode/internal/application/project"
 	"easycode/internal/domain/failure"
 	"easycode/internal/domain/identity"
+	domainworkflow "easycode/internal/domain/workflow"
 )
 
 // Gates stores gate rounds, their checks and decisions.
@@ -267,4 +268,31 @@ SELECT lw.code, t.public_id::text, t.exit_code, coalesce(t.end_reason, ''), t.te
 		return nil, fmt.Errorf("last execution: %w", classify(err))
 	}
 	return &e, nil
+}
+
+// ReviewOpinions implements appgate.Store: the opinion of the last completed wave of each agent in the
+// stage (check_executions of the wave, validacao.review_opinion).
+func (g Gates) ReviewOpinions(ctx context.Context, projectID, stage string) (map[string]domainworkflow.ReviewOpinion, error) {
+	rows, err := conn(ctx, g.pool).Query(WithOperation(ctx, "waves.stage_review_opinions"), `
+SELECT DISTINCT ON (w.agent) w.agent, ce.evidence FROM easycode.waves w JOIN easycode.projects pr ON pr.id = w.project_id
+  JOIN easycode.check_executions ce ON ce.wave_id = w.id AND ce.check_id = 'validacao.review_opinion'
+ WHERE pr.public_id = $1::uuid AND w.stage = $2 AND w.state = 'completed'
+ ORDER BY w.agent, w.id DESC`, projectID, stage)
+	if err != nil {
+		return nil, fmt.Errorf("stage review opinions: %w", classify(err))
+	}
+	defer rows.Close()
+	out := map[string]domainworkflow.ReviewOpinion{}
+	for rows.Next() {
+		var agent string
+		var raw []byte
+		if err := rows.Scan(&agent, &raw); err != nil {
+			return nil, err
+		}
+		var opinion domainworkflow.ReviewOpinion
+		if json.Unmarshal(raw, &opinion) == nil {
+			out[agent] = opinion
+		}
+	}
+	return out, rows.Err()
 }

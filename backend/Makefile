@@ -47,6 +47,7 @@ SPECS_DIR := internal/infrastructure/specs/data
 
 check-specs:
 	@cmp -s ../../specs/dominio/workflow/workflow-basico.yaml $(SPECS_DIR)/workflow/workflow-basico.yaml || { echo "drift: workflow-basico.yaml (make sync-specs)"; exit 1; }
+	@cmp -s ../../specs/dominio/workflow/workflow-padrao.yaml $(SPECS_DIR)/workflow/workflow-padrao.yaml || { echo "drift: workflow-padrao.yaml (make sync-specs)"; exit 1; }
 	@cmp -s ../../specs/dominio/governanca/permissoes.yaml $(SPECS_DIR)/governanca/permissoes.yaml || { echo "drift: permissoes.yaml (make sync-specs)"; exit 1; }
 	@diff -rq ../../specs/dominio/artefatos $(SPECS_DIR)/artefatos --exclude=README.md
 	@diff -rq ../../agentes/instrucoes $(SPECS_DIR)/agentes --exclude=README.md
@@ -54,7 +55,7 @@ check-specs:
 	@echo "embedded specs in sync"
 
 sync-specs:
-	cp ../../specs/dominio/workflow/workflow-basico.yaml $(SPECS_DIR)/workflow/
+	cp ../../specs/dominio/workflow/workflow-basico.yaml ../../specs/dominio/workflow/workflow-padrao.yaml $(SPECS_DIR)/workflow/
 	cp ../../specs/dominio/governanca/permissoes.yaml $(SPECS_DIR)/governanca/
 	cp ../../specs/dominio/artefatos/*.schema.json $(SPECS_DIR)/artefatos/
 	cp ../../agentes/referencia/reserva-de-salas.md $(SPECS_DIR)/referencia/

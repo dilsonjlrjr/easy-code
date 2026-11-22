@@ -26,20 +26,82 @@ type Output struct {
 	Attachment bool   `json:"attachment,omitempty"` // a file of the artifact folder, not an artifact (openapi.yaml, estrutura.md)
 }
 
-// Stage is a stage of the definition.
-type Stage struct {
-	ID            string   `json:"id"`
-	Name          string   `json:"name"`
-	ShortName     string   `json:"short_name"`
-	Agent         string   `json:"agent"`
-	AgentMode     string   `json:"agent_mode,omitempty"`
-	DependsOn     []string `json:"depends_on"`
-	ProjectInputs []string `json:"project_inputs,omitempty"`
-	Outputs       []Output `json:"outputs"`
-	Gate          string   `json:"gate"`
+// Participant roles of a stage with several agents (the Validação técnica).
+const (
+	RoleLead        = "lead"
+	RoleParticipant = "participant"
+)
+
+// Participant is an agent of a stage led by another one (workflow-padrao, validation): the lead
+// writes the stage artifact; each participant gives its own review opinion in a wave of its own.
+type Participant struct {
+	Agent     string   `json:"agent"`
+	Role      string   `json:"role"`
+	AgentMode string   `json:"agent_mode,omitempty"`
+	Inputs    []string `json:"inputs,omitempty"`
 }
 
-// Definition is a workflow file (workflow-basico.yaml in Phase 1).
+// Stage is a stage of the definition. In a stage with participants, Agent and AgentMode are the
+// lead's.
+type Stage struct {
+	ID            string        `json:"id"`
+	Name          string        `json:"name"`
+	ShortName     string        `json:"short_name"`
+	Agent         string        `json:"agent"`
+	AgentMode     string        `json:"agent_mode,omitempty"`
+	Participants  []Participant `json:"participants,omitempty"`
+	DependsOn     []string      `json:"depends_on"`
+	ProjectInputs []string      `json:"project_inputs,omitempty"`
+	Outputs       []Output      `json:"outputs"`
+	Gate          string        `json:"gate"`
+}
+
+// Reviewers are the participants that are not the lead, in the workflow order.
+func (s Stage) Reviewers() []Participant {
+	var out []Participant
+	for _, p := range s.Participants {
+		if p.Role != RoleLead {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// Agents are every agent that runs waves in the stage: the reviewers, then the lead or the agent.
+func (s Stage) Agents() []string {
+	var out []string
+	for _, p := range s.Reviewers() {
+		out = append(out, p.Agent)
+	}
+	return append(out, s.Agent)
+}
+
+// ModeOf is the agent mode of an agent in the stage: the stage mode for its agent, the participant
+// mode for a reviewer.
+func (s Stage) ModeOf(agent string) string {
+	for _, p := range s.Reviewers() {
+		if p.Agent == agent {
+			return p.AgentMode
+		}
+	}
+	if agent == s.Agent {
+		return s.AgentMode
+	}
+	return ""
+}
+
+// IsReviewer reports whether the agent gives a review opinion in the stage (participant, not lead).
+func (s Stage) IsReviewer(agent string) bool {
+	for _, p := range s.Reviewers() {
+		if p.Agent == agent {
+			return true
+		}
+	}
+	return false
+}
+
+// Definition is a workflow file (workflow-basico.yaml in Phase 1; in Phase 2 workflow-padrao.yaml
+// restricted to the stages whose agents exist, specs.StandardWorkflow).
 type Definition struct {
 	ID      string  `json:"id"`
 	Name    string  `json:"name"`
@@ -112,3 +174,25 @@ func WaveCode(stage string, n int64) string { return fmt.Sprintf("%s-%02d", Wave
 func ModelRequirement() pricing.Requirement {
 	return pricing.Requirement{Capacities: []pricing.Capacity{pricing.CapacityToolUse}, MinContextTokens: 128_000}
 }
+
+// Review opinions of the Validação técnica (VALIDACAO.pareceres).
+const (
+	OpinionApproved = "aprovado"
+	OpinionRejected = "reprovado"
+	// ModeReview is the agent mode of a participant wave: it reads the stage inputs and gives its own
+	// opinion, which the orchestrator consolidates into the lead's artifact (template VALIDACAO).
+	ModeReview = "PARECER"
+)
+
+// ReviewOpinion is the opinion a participant gave in its wave (US-20 RN-2).
+type ReviewOpinion struct {
+	Participant  string   `json:"participante"` // arquiteto | dba | designer
+	Opinion      string   `json:"parecer"`      // aprovado | reprovado
+	Reservations []string `json:"ressalvas"`
+	Wave         string   `json:"onda,omitempty"`
+}
+
+var reviewerNames = map[string]string{"architect-agent": "arquiteto", "dba-agent": "dba", "designer-agent": "designer"}
+
+// ReviewerName is the participant name of an agent in VALIDACAO.pareceres ("" when it has none).
+func ReviewerName(agent string) string { return reviewerNames[agent] }

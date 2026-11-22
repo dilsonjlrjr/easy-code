@@ -155,12 +155,17 @@ func (o *Orchestrator) UnblockReady(ctx context.Context, projectID, correlation 
 const TaskStage = "implementation"
 
 // queueStageWaves queues the first waves of a stage: one per approved T in the implementation, run in
-// order by the executor; one wave otherwise.
+// order by the executor; in a stage with participants (validation), one wave per participant for its
+// opinion and then the lead's, which consolidates them (template VALIDACAO); one wave otherwise.
 func (o *Orchestrator) queueStageWaves(ctx context.Context, projectID string, stage domainworkflow.Stage,
 	emit func(string, string, string, map[string]any) error, orchestrator map[string]any) error {
 	if stage.ID != TaskStage {
-		_, err := o.queueWave(ctx, projectID, stage, "", emit, orchestrator)
-		return err
+		for _, agent := range stage.Agents() {
+			if _, err := o.queueWave(ctx, projectID, stage, agent, "", emit, orchestrator); err != nil {
+				return err
+			}
+		}
+		return nil
 	}
 	tasks, err := o.store.ApprovedTasks(ctx, projectID)
 	if err != nil {
@@ -170,20 +175,29 @@ func (o *Orchestrator) queueStageWaves(ctx context.Context, projectID string, st
 		tasks = []string{""}
 	}
 	for _, task := range tasks {
-		if _, err := o.queueWave(ctx, projectID, stage, task, emit, orchestrator); err != nil {
+		if _, err := o.queueWave(ctx, projectID, stage, stage.Agent, task, emit, orchestrator); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-// QueueRework queues a new wave of a stage whose gate was rejected; it returns the wave code.
-func (o *Orchestrator) QueueRework(ctx context.Context, projectID, stageID, correlation string) (string, error) {
+// QueueRework queues the new waves of a stage whose gate was rejected (the participants' and the lead's in
+// the validation, which is redone as a whole); it returns the wave codes.
+func (o *Orchestrator) QueueRework(ctx context.Context, projectID, stageID, correlation string) ([]string, error) {
 	stage, ok := o.workflow.Stage(stageID)
 	if !ok {
-		return "", fmt.Errorf("unknown stage %s", stageID)
+		return nil, fmt.Errorf("unknown stage %s", stageID)
 	}
-	return o.queueWave(ctx, projectID, stage, "", o.emitter(ctx, projectID, correlation), map[string]any{"type": "orchestrator", "id": "orchestrator"})
+	var codes []string
+	for _, agent := range stage.Agents() {
+		code, err := o.queueWave(ctx, projectID, stage, agent, "", o.emitter(ctx, projectID, correlation), map[string]any{"type": "orchestrator", "id": "orchestrator"})
+		if err != nil {
+			return nil, err
+		}
+		codes = append(codes, code)
+	}
+	return codes, nil
 }
 
 func (o *Orchestrator) queueFirstWave(ctx context.Context, cmd command.Command, stage domainworkflow.Stage,
@@ -191,22 +205,22 @@ func (o *Orchestrator) queueFirstWave(ctx context.Context, cmd command.Command, 
 	return o.queueStageWaves(ctx, cmd.ProjectID, stage, emit, orchestrator)
 }
 
-func (o *Orchestrator) queueWave(ctx context.Context, projectID string, stage domainworkflow.Stage, task string,
+func (o *Orchestrator) queueWave(ctx context.Context, projectID string, stage domainworkflow.Stage, agent, task string,
 	emit func(string, string, string, map[string]any) error, orchestrator map[string]any) (string, error) {
 	pair, err := o.store.ResolvePair(ctx, projectID, stage.ID)
 	if err != nil {
 		return "", err
 	}
-	configuration, err := o.agents(stage.Agent)
+	configuration, err := o.agents(agent)
 	if err != nil {
 		return "", err
 	}
-	wave, err := o.store.QueueWave(ctx, NewWave{ProjectID: projectID, Stage: stage.ID, Agent: stage.Agent, Pair: pair, Configuration: configuration, Task: task})
+	wave, err := o.store.QueueWave(ctx, NewWave{ProjectID: projectID, Stage: stage.ID, Agent: agent, Pair: pair, Configuration: configuration, Task: task})
 	if err != nil {
 		return "", err
 	}
 	created := map[string]any{
-		"wave": wave.Code, "stage": stage.ID, "agent": stage.Agent, "purpose": "execution", "actor": orchestrator,
+		"wave": wave.Code, "stage": stage.ID, "agent": agent, "purpose": "execution", "actor": orchestrator,
 		"transition": map[string]any{"machine": "wave", "from_state": nil, "to_state": "queued"},
 	}
 	if task != "" {
@@ -219,7 +233,7 @@ func (o *Orchestrator) queueWave(ctx context.Context, projectID string, stage do
 	// US-16 CA-1: each wave records the models it uses.
 	for role, model := range map[string]ModelID{"reasoning": pair.Reasoning, "execution": pair.Execution} {
 		err := emit("br.easycode.wave.model_selected.v1", "waves/"+wave.Code, wave.Code, map[string]any{
-			"wave": wave.Code, "stage": stage.ID, "agent": stage.Agent, "purpose": "execution", "actor": orchestrator,
+			"wave": wave.Code, "stage": stage.ID, "agent": agent, "purpose": "execution", "actor": orchestrator,
 			"provider": model.Provider, "model": model.Name, "role": role, "mode": "manual", "reason": "project_configuration",
 		})
 		if err != nil {

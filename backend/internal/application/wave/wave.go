@@ -1,5 +1,6 @@
-// Package wave holds the api use cases of waves: reads (US-09, US-36, US-11 CA-3) and the answer
-// to an agent question (US-10), plus the worker handler that resumes the wave.
+// Package wave holds the api use cases of waves: reads (US-09, US-36, US-11 CA-3), the answer
+// to an agent question (US-10) and the cancellation (US-14), plus the worker handlers that resume
+// and cancel the wave.
 package wave
 
 import (
@@ -162,6 +163,21 @@ type Answers interface {
 	Record(ctx context.Context, principal identity.Principal, projectID, waveCode, questionCode string, answers []string) error
 	// EnqueueAnswer queues the answer command of the wave for the worker.
 	EnqueueAnswer(ctx context.Context, principal identity.Principal, projectID, waveCode, questionCode, key, bodyHash string) (appworkflow.CommandView, error)
+	// EnqueueCancel queues the cancel command of the wave for the worker (US-14).
+	EnqueueCancel(ctx context.Context, principal identity.Principal, projectID, waveCode, key, bodyHash string) (appworkflow.CommandView, error)
+}
+
+// Cancelable are the states the cancel event leaves (estados.yaml wave: cancel; US-14 CA-1, CA-2, CA-4).
+var Cancelable = []string{"queued", "running", "awaiting_user", "pausing", "paused", "failed"}
+
+// CanCancel reports whether a wave in the state can be canceled (US-14 CA-3).
+func CanCancel(state string) bool {
+	for _, s := range Cancelable {
+		if s == state {
+			return true
+		}
+	}
+	return false
 }
 
 // Service is the api side of waves.
@@ -293,6 +309,95 @@ func (s *Service) Answer(ctx context.Context, principal identity.Principal, proj
 		return err
 	})
 	return queued, err
+}
+
+// Cancel is cancelWave (US-14): with the confirmation, a wave that is not completed or canceled gets
+// the cancel command; the worker applies it, aborts the call in flight and records the lost cost.
+// The guard here is shallow (state read now); the worker rechecks it under lock. Call it inside the
+// idempotency transaction.
+func (s *Service) Cancel(ctx context.Context, principal identity.Principal, projectID, waveCode string, confirm bool, key, bodyHash string) (appworkflow.CommandView, error) {
+	if err := s.access(ctx, principal, projectID); err != nil {
+		return appworkflow.CommandView{}, err
+	}
+	if !confirm {
+		return appworkflow.CommandView{}, failure.Invalid(failure.FieldError{Field: "confirm", Message: "required"})
+	}
+	current, err := s.reader.Get(ctx, projectID, waveCode)
+	if err != nil {
+		return appworkflow.CommandView{}, err
+	}
+	if !CanCancel(current.State) {
+		return appworkflow.CommandView{}, failure.New(failure.KindConflict, failure.CodeStateConflict, nil).
+			With("current_state", current.State).With("available_actions", []string{})
+	}
+	var queued appworkflow.CommandView
+	err = s.tx.InTx(ctx, func(ctx context.Context) error {
+		if queued, err = s.answers.EnqueueCancel(ctx, principal, projectID, waveCode, key, bodyHash); err != nil {
+			return err
+		}
+		_, err = s.trail.Append(ctx, domainaudit.Record{
+			ProjectID: projectID, Actor: domainaudit.Actor{Type: domainaudit.ActorHuman, ID: principal.Subject}, Origin: domainaudit.OriginWeb,
+			Action: "wave.cancel", Target: "waves/" + waveCode, CorrelationID: queued.ID,
+		})
+		return err
+	})
+	return queued, err
+}
+
+// Canceled is a wave the worker canceled.
+type Canceled struct {
+	Ref
+	From     string
+	Task     string
+	LostCost string // cost of the call in flight, estimated (RNF-16); "" when none
+	Currency string
+}
+
+// Canceler is the worker store of the cancel command.
+type Canceler interface {
+	// Cancel locks the wave, rechecks the guard, marks the call in flight lost (estimated cost), moves
+	// the wave to canceled and frees its lease, so the worker that runs it stops at once (fencing).
+	Cancel(ctx context.Context, projectID, waveCode string) (Canceled, error)
+}
+
+// CancelHandler applies the cancel command in the worker (estados.yaml wave: cancel).
+type CancelHandler struct {
+	store  Canceler
+	outbox event.Outbox
+}
+
+// NewCancelHandler builds the handler.
+func NewCancelHandler(store Canceler, outbox event.Outbox) *CancelHandler {
+	return &CancelHandler{store: store, outbox: outbox}
+}
+
+// Handle implements command.Handler.
+func (h *CancelHandler) Handle(ctx context.Context, cmd command.Command) error {
+	var payload struct {
+		Wave string `json:"wave"`
+	}
+	if err := json.Unmarshal(cmd.Payload, &payload); err != nil || payload.Wave == "" {
+		return failure.Invalid(failure.FieldError{Field: "payload", Message: "invalid"})
+	}
+	canceled, err := h.store.Cancel(ctx, cmd.ProjectID, payload.Wave)
+	if err != nil {
+		return err
+	}
+	data := map[string]any{
+		"wave": canceled.Code, "stage": canceled.Stage, "agent": canceled.Agent, "purpose": canceled.Purpose, "cause": "user_request",
+		"actor":      map[string]any{"type": "human", "id": cmd.RequestedBy, "origin": "web"},
+		"transition": map[string]any{"machine": "wave", "from_state": canceled.From, "to_state": "canceled"},
+	}
+	if canceled.Task != "" {
+		data["task"] = canceled.Task
+	}
+	if canceled.LostCost != "" {
+		data["lost_cost"] = map[string]any{"value": canceled.LostCost, "currency": canceled.Currency}
+	}
+	encoded, _ := json.Marshal(data)
+	_, err = h.outbox.Append(ctx, domainevent.Draft{Type: "br.easycode.wave.canceled.v1", Subject: "waves/" + canceled.Code,
+		ProjectID: cmd.ProjectID, WaveID: canceled.Code, CorrelationID: cmd.ID, Data: encoded})
+	return err
 }
 
 // Resumer is the worker store of the answer command.

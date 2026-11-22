@@ -17,8 +17,9 @@ import (
 // Usage is the usage of every scripted answer, as the adapter reports it.
 var Usage = provider.Usage{Input: 1000, Output: 200, CacheRead: 100}
 
-// Script returns the answer of the n-th call (from 0) of the server.
-type Script func(call int) provider.Message
+// Script returns the answer of a call from its system prompt (the harness writes the agent and the mode
+// of the wave there), so one script serves every agent.
+type Script func(system string) provider.Message
 
 // Server is a scripted provider API.
 type Server struct {
@@ -36,18 +37,22 @@ func (s *Server) Calls() int {
 	return s.calls
 }
 
-func (s *Server) next(r *http.Request) (int, bool) {
+func (s *Server) next(r *http.Request) (map[string]any, bool) {
 	raw, _ := io.ReadAll(r.Body)
 	var body map[string]any
 	if json.Unmarshal(raw, &body) != nil {
-		return 0, false
+		return nil, false
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	n := s.calls
 	s.calls++
 	s.Bodies = append(s.Bodies, body)
-	return n, true
+	return body, true
+}
+
+func text(value any) string {
+	s, _ := value.(string)
+	return s
 }
 
 // NewAnthropic serves POST /v1/messages and GET /v1/models for the key.
@@ -63,12 +68,17 @@ func NewAnthropic(key string, script Script) *Server {
 			_, _ = io.WriteString(w, `{"data":[{"id":"scripted"}],"has_more":false}`)
 			return
 		}
-		n, ok := s.next(r)
+		body, ok := s.next(r)
 		if !ok {
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
-		answer := script(n)
+		system := ""
+		if blocks, _ := body["system"].([]any); len(blocks) > 0 {
+			first, _ := blocks[0].(map[string]any)
+			system = text(first["text"])
+		}
+		answer := script(system)
 		content := []map[string]any{}
 		if answer.Text != "" {
 			content = append(content, map[string]any{"type": "text", "text": answer.Text})
@@ -101,12 +111,18 @@ func NewOpenAI(key string, script Script) *Server {
 			_, _ = io.WriteString(w, `{"object":"list","data":[{"id":"scripted","object":"model"}]}`)
 			return
 		}
-		n, ok := s.next(r)
+		body, ok := s.next(r)
 		if !ok {
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
-		answer := script(n)
+		system := ""
+		if messages, _ := body["messages"].([]any); len(messages) > 0 {
+			if first, _ := messages[0].(map[string]any); text(first["role"]) == "system" {
+				system = text(first["content"])
+			}
+		}
+		answer := script(system)
 		message := map[string]any{"role": "assistant", "content": nil}
 		if answer.Text != "" {
 			message["content"] = answer.Text

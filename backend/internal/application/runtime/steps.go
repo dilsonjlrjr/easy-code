@@ -11,6 +11,7 @@ import (
 	"easycode/internal/domain/permission"
 	"easycode/internal/domain/provider"
 	"easycode/internal/domain/sandbox"
+	"easycode/internal/domain/workflow"
 )
 
 // Step types (StepResult.Type).
@@ -38,7 +39,7 @@ type WaveContext struct {
 	Instruction   string // instruction text in the pinned version
 	BusinessNeed  string // untrusted input (RNF-05)
 	Constraints   string // rendered technical constraints, untrusted
-	Skills        string // skills by description (none in MARCO-1)
+	Skills        string // skills of the agent in the project, by description (US-43 RN-1)
 	Language      string // artifact language (RNF-21)
 	Feedback      string // reason of the last rejected gate round (rework), untrusted
 	WritablePaths []string
@@ -51,11 +52,17 @@ type WaveContext struct {
 	Base map[string]string
 	// Approved maps the path of every approved artifact to its author (US-30 CA-2, RN-1).
 	Approved map[string]string
-	Mode     string         // agent mode of the stage (DESENHO, MANUAL…)
+	Mode     string         // agent mode of the wave in its stage (DESENHO, VALIDACAO, PARECER…)
 	Task     string         // T of an implementation wave (one wave per task, PL-20)
 	Image    string         // logical sandbox image of the project stack
 	Limits   sandbox.Limits // effective limits of the commands (min of agent and project, RNF-03)
+	// Opinions are the review opinions the participants of the stage gave in their waves; the lead
+	// copies them into its artifact (VALIDACAO.pareceres, consolidated by the orchestrator).
+	Opinions []workflow.ReviewOpinion
 }
+
+// Reviewing reports whether the wave only gives the agent's review opinion (participant wave).
+func (w WaveContext) Reviewing() bool { return w.Mode == workflow.ModeReview }
 
 // ModelRef is a model of the wave pair.
 type ModelRef struct {
@@ -121,6 +128,8 @@ type StepResult struct {
 	Failure  string // failure cause when Type = fail
 	// TaskFailed is set when the step was a failed build or test command of the task.
 	TaskFailed *TaskFailure
+	// Opinion is the review opinion delivered by a participant wave (Type = complete).
+	Opinion *workflow.ReviewOpinion
 }
 
 // Steps is implemented by the agent harness: one unit of work per Next, never touching the database.

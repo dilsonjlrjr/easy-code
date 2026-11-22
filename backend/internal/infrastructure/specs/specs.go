@@ -1,5 +1,5 @@
-// Package specs embeds the domain specifications the binaries run on: the Phase 1 workflow
-// (specs/dominio/workflow/workflow-basico.yaml), the artifact JSON schemas, the agent permissions
+// Package specs embeds the domain specifications the binaries run on: the workflows
+// (specs/dominio/workflow/workflow-basico.yaml and workflow-padrao.yaml), the artifact JSON schemas, the agent permissions
 // and the agent instructions. The files under data/ are copies kept equal to the repository
 // sources by "make check-specs" (part of make ci), so builds stay reproducible from project/backend.
 package specs
@@ -46,6 +46,72 @@ func BasicWorkflow() (Workflow, error) {
 	}
 	sum := sha256.Sum256(encoded)
 	return Workflow{Definition: definition, JSON: encoded, Hash: hex.EncodeToString(sum[:])}, nil
+}
+
+// StandardAgents are the agents with a harness in the platform (MARCO-4: the Phase 1 agents plus DBA
+// and Designer). The stages of workflow-padrao run by other agents (QA, Segurança, the Release of the
+// orchestrator) enter the workflow in force when their agents do.
+var StandardAgents = []string{"requirements-agent", "architect-agent", "dba-agent", "designer-agent", "developer-agent"}
+
+// StandardWorkflow loads workflow-padrao.yaml (Phase 2) restricted to the stages whose every agent is
+// in agents: other stages, the parallel activities of missing agents and the dependencies on them are
+// left out, as workflow-basico does in Phase 1 (PD-01). A stage with participants (validation) runs
+// with its lead as the stage agent.
+func StandardWorkflow(agents []string) (Workflow, error) {
+	raw, err := files.ReadFile("data/workflow/workflow-padrao.yaml")
+	if err != nil {
+		return Workflow{}, err
+	}
+	encoded, err := YAMLToJSON(raw)
+	if err != nil {
+		return Workflow{}, fmt.Errorf("workflow-padrao.yaml: %w", err)
+	}
+	var definition workflow.Definition
+	if err := json.Unmarshal(encoded, &definition); err != nil {
+		return Workflow{}, fmt.Errorf("workflow-padrao.yaml: %w", err)
+	}
+	available := map[string]bool{}
+	for _, agent := range agents {
+		available[agent] = true
+	}
+	kept := map[string]bool{}
+	var stages []workflow.Stage
+	for _, stage := range definition.Stages {
+		for _, p := range stage.Participants {
+			if p.Role == workflow.RoleLead {
+				stage.Agent, stage.AgentMode = p.Agent, p.AgentMode
+			}
+		}
+		runnable := available[stage.Agent]
+		for _, p := range stage.Participants {
+			runnable = runnable && available[p.Agent]
+		}
+		if !runnable {
+			continue
+		}
+		var dependencies []string
+		for _, dependency := range stage.DependsOn {
+			if kept[dependency] {
+				dependencies = append(dependencies, dependency)
+			}
+		}
+		stage.DependsOn = dependencies
+		if stage.DependsOn == nil {
+			stage.DependsOn = []string{}
+		}
+		kept[stage.ID] = true
+		stages = append(stages, stage)
+	}
+	definition.Stages = stages
+	if err := definition.Validate(); err != nil {
+		return Workflow{}, err
+	}
+	pinned, err := json.Marshal(definition)
+	if err != nil {
+		return Workflow{}, err
+	}
+	sum := sha256.Sum256(pinned)
+	return Workflow{Definition: definition, JSON: pinned, Hash: hex.EncodeToString(sum[:])}, nil
 }
 
 // AgentDefaults is the platform default configuration of an agent (agent_configurations

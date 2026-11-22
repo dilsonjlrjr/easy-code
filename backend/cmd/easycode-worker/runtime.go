@@ -17,6 +17,7 @@ import (
 	appwave "easycode/internal/application/wave"
 	appworkflow "easycode/internal/application/workflow"
 	"easycode/internal/domain/sandbox"
+	domainworkflow "easycode/internal/domain/workflow"
 	"easycode/internal/infrastructure/config"
 	"easycode/internal/infrastructure/git"
 	"easycode/internal/infrastructure/postgres"
@@ -25,9 +26,9 @@ import (
 	sandboxapi "easycode/internal/interfaces/sandbox"
 )
 
-// harnessAgents are the agents of the Phase 1 workflow (Requisitos → Arquitetura → Implementação,
-// MARCO-3); waves of other agents stay queued until their harness exists.
-var harnessAgents = []string{"requirements-agent", "architect-agent", "developer-agent"}
+// harnessAgents are the agents with a harness (MARCO-4: Requisitos, Arquiteto, DBA, Designer and
+// Desenvolvedor); the workflow in force has only their stages (specs.StandardWorkflow).
+var harnessAgents = specs.StandardAgents
 
 // runtimeParts is the agent runtime of the worker: executor, gate progress and the answer handler.
 type runtimeParts struct {
@@ -58,7 +59,7 @@ func newRuntime(cfg config.Config, pool *pgxpool.Pool, propagator propagation.Te
 		if policy.Execute {
 			steps = runtime.NewToolAgent(models, cfg.Worker.MaxOutputTokens, runner)
 		}
-		agents[name] = runtime.Agent{Steps: steps, Policy: &policy, Mode: stageMode(wf, name)}
+		agents[name] = runtime.Agent{Steps: steps, Policy: &policy, Modes: stageModes(wf, name)}
 	}
 	progress := appgate.NewProgress(tx, postgres.NewGates(pool), store, validator, stageFlow{workflows, orchestrator}, outbox, wf.Definition)
 	worker := cfg.Worker.ID
@@ -88,14 +89,19 @@ func instruction(agent string) (string, string, error) {
 	return string(defaults.Instruction), defaults.InstructionHash, err
 }
 
-// stageMode is the agent mode of the stage the agent runs in (agent_mode of the workflow).
-func stageMode(wf specs.Workflow, agent string) string {
+// stageModes is the agent mode in each stage the agent runs in (agent_mode of the workflow); a
+// participant of a stage led by another agent gives its review opinion (PARECER).
+func stageModes(wf specs.Workflow, agent string) map[string]string {
+	modes := map[string]string{}
 	for _, stage := range wf.Definition.Stages {
-		if stage.Agent == agent {
-			return stage.AgentMode
+		switch {
+		case stage.IsReviewer(agent):
+			modes[stage.ID] = domainworkflow.ModeReview
+		case stage.Agent == agent:
+			modes[stage.ID] = stage.AgentMode
 		}
 	}
-	return ""
+	return modes
 }
 
 // stageAttachments lists the output paths of a stage that are files of an artifact, not artifacts
