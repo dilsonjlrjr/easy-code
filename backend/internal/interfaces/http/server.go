@@ -28,6 +28,8 @@ type Dependencies struct {
 	PublicOrigin string
 	// AttachmentLimitBytes is shown in getCurrentUser.
 	AttachmentLimitBytes int
+
+	Providers ProviderUseCases
 }
 
 // ServerSettings configures the fasthttp server.

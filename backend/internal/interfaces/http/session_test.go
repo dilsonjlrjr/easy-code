@@ -39,7 +39,7 @@ func (fakeUsers) LeadInAnyProject(context.Context, identity.Principal) (bool, er
 }
 
 // productHarness builds the handler with the real session service over fakes.
-func productHarness(t *testing.T, devSubject string) harness {
+func productHarness(t *testing.T, devSubject string, options ...func(*httpapi.Dependencies)) harness {
 	t.Helper()
 	translator, err := i18n.NewTranslator()
 	if err != nil {
@@ -56,7 +56,10 @@ func productHarness(t *testing.T, devSubject string) harness {
 		PublicOrigin:         "https://easycode.test",
 		AttachmentLimitBytes: 1024,
 	}
-	return harness{handler: httpapi.NewHandler(deps)}
+	for _, option := range options {
+		option(&deps)
+	}
+	return harness{handler: httpapi.NewHandler(deps), logText: logs}
 }
 
 func sessionCookie(t *testing.T, h harness) string {

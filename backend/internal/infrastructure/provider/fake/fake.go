@@ -32,6 +32,9 @@ const errorPrefix = "fake:error:"
 type Provider struct {
 	// Script, when set, answers the calls in order (the last one repeats).
 	Script []provider.Message
+	// Alias, when set, is the provider name it answers for (development stand-in, such as
+	// "anthropic=fake" in EASYCODE_GATEWAY_PROVIDERS), so the product flow runs with no real key.
+	Alias string
 
 	mu    sync.Mutex
 	calls int
@@ -40,7 +43,12 @@ type Provider struct {
 var _ provider.Provider = (*Provider)(nil)
 
 // Name implements provider.Provider.
-func (*Provider) Name() string { return Name }
+func (p *Provider) Name() string {
+	if p.Alias != "" {
+		return p.Alias
+	}
+	return Name
+}
 
 // Capabilities implements provider.Provider.
 func (*Provider) Capabilities(context.Context, string) (provider.Capabilities, error) {
@@ -158,8 +166,8 @@ func lastUserText(req provider.Request) string {
 
 func tokens(text string) int { return (len(text) + 3) / 4 }
 
-// KeyOpener opens "sealed" keys for development and tests: the sealed bytes are the key.
-// Real sealing (ADR-13, platform private key) replaces it with the real provider in Onda 1.
+// KeyOpener opens "sealed" keys in unit tests: the sealed bytes are the key. No binary wires it:
+// easycode-gateway always opens with the platform private key (infrastructure/sealing, ADR-13).
 type KeyOpener struct{}
 
 // Open returns the sealed bytes as the key.

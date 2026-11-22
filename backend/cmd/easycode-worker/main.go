@@ -8,15 +8,21 @@ import (
 	"os"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/trace"
 
+	"easycode/internal/application/command"
 	apphealth "easycode/internal/application/health"
+	"easycode/internal/application/providerkey"
+	"easycode/internal/infrastructure/config"
 	"easycode/internal/infrastructure/logging"
 	"easycode/internal/infrastructure/postgres"
 	"easycode/internal/infrastructure/process"
 	"easycode/internal/infrastructure/telemetry"
+	gatewayapi "easycode/internal/interfaces/gateway"
 )
 
 const serviceName = "easycode-worker"
@@ -81,6 +87,18 @@ func work(ctx context.Context, proc process.Process) error {
 	outboxListener := postgres.NewListener(pool, proc.Logger, func(context.Context) { signal() }, postgres.ChannelOutbox)
 	go func() { _ = outboxListener.Run(ctx, func(string, string) { signal() }) }()
 	go runOutboxPublisher(ctx, jobs, postgres.NewOutboxPublisher(pool), wake, cfg.Worker.OutboxPollInterval)
+
+	dispatcher := newDispatcher(cfg, pool, tracing.Propagator)
+	commandWake := make(chan struct{}, 1)
+	commandSignal := func() {
+		select {
+		case commandWake <- struct{}{}:
+		default:
+		}
+	}
+	commandListener := postgres.NewListener(pool, proc.Logger, func(context.Context) { commandSignal() }, postgres.ChannelCommands)
+	go func() { _ = commandListener.Run(ctx, func(string, string) { commandSignal() }) }()
+	go runCommandQueue(ctx, jobs, dispatcher, commandWake, cfg.Worker.CommandPollInterval)
 
 	runHeartbeat(ctx, jobs, health, cfg.Worker.HeartbeatInterval)
 	return nil
@@ -159,6 +177,40 @@ func runOutboxPublisher(ctx context.Context, jobs jobRunner, publisher outboxPub
 				return []slog.Attr{slog.Int("published", published)}, err
 			})
 		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-wake:
+		case <-ticker.C:
+		}
+	}
+}
+
+// newDispatcher registers the handler of each command type the worker applies.
+func newDispatcher(cfg config.Config, pool *pgxpool.Pool, propagator propagation.TextMapPropagator) *command.Dispatcher {
+	tx := postgres.NewTxRunner(pool)
+	dispatcher := command.NewDispatcher(tx, postgres.NewCommands(pool))
+	tester := providerkey.NewTester(postgres.NewProviderKeys(pool), gatewayapi.NewClient(cfg.Gateway.Socket, propagator))
+	dispatcher.Register("test_provider_key", func(ctx context.Context, cmd command.Command) error {
+		return tester.Test(ctx, cmd.ProviderKeyID)
+	})
+	return dispatcher
+}
+
+// commandDrainer applies pending commands.
+type commandDrainer interface {
+	Drain(ctx context.Context) (int, error)
+}
+
+// runCommandQueue drains the command queue when the api notifies and at every poll interval.
+func runCommandQueue(ctx context.Context, jobs jobRunner, dispatcher commandDrainer, wake <-chan struct{}, poll time.Duration) {
+	ticker := time.NewTicker(poll)
+	defer ticker.Stop()
+	for {
+		jobs.run(ctx, "apply_commands", true, func(ctx context.Context) ([]slog.Attr, error) {
+			processed, err := dispatcher.Drain(ctx)
+			return []slog.Attr{slog.Int("processed", processed)}, err
+		})
 		select {
 		case <-ctx.Done():
 			return

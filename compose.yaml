@@ -7,7 +7,12 @@
 # - no reverse proxy, TLS or Keycloak yet: the api runs the marco1 profile, with the fixed development
 #   identity (user "dev", administrator, lead and approver of the projects it creates) and its session
 #   cookie issued by POST /api/v1/dev/session (ADR-12; outside openapi.yaml, refused outside marco1);
-# - easycode-gateway runs the fake provider (real provider adapter lands in Onda 1).
+# - easycode-gateway has no network (the egress proxy of ADR-16 is not in the stack yet), so it serves
+#   the deterministic fake under the name "anthropic" (EASYCODE_GATEWAY_PROVIDERS=anthropic=fake): any key
+#   but "invalid" passes the test. Set EASYCODE_GATEWAY_PROVIDERS=anthropic and give the gateway a route
+#   to api.anthropic.com (override file) to use the real adapter;
+# - gateway-keys creates the platform key pair once (ADR-13): the private key only in the gateway
+#   volume, the public key in the volume the api reads.
 
 name: easycode
 
@@ -62,6 +67,17 @@ services:
         condition: service_healthy
     restart: "no"
 
+  gateway-keys:
+    build:
+      context: ./backend
+      args:
+        BINARY: easycode-gateway
+    command: ["keygen", "/run/easycode-gateway-key/private.pem", "/run/easycode-sealing/public.pem"]
+    volumes:
+      - gateway-key:/run/easycode-gateway-key
+      - sealing-public:/run/easycode-sealing
+    restart: "no"
+
   api:
     <<: *backend
     build:
@@ -72,6 +88,14 @@ services:
       <<: [*backend-env, *marco1]
       EASYCODE_HTTP_ADDR: ":8080"
       EASYCODE_PUBLIC_ORIGIN: ${EASYCODE_PUBLIC_ORIGIN:-http://localhost:8080}
+      EASYCODE_SEALING_PUBLIC_KEY_FILE: /run/easycode-sealing/public.pem
+    volumes:
+      - sealing-public:/run/easycode-sealing:ro
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      gateway-keys:
+        condition: service_completed_successfully
     ports:
       - "127.0.0.1:8081:8080"
 
@@ -93,10 +117,15 @@ services:
         BINARY: easycode-gateway
     environment:
       EASYCODE_LOG_LEVEL: ${EASYCODE_LOG_LEVEL:-debug}
-      EASYCODE_GATEWAY_PROVIDERS: fake
+      EASYCODE_GATEWAY_PROVIDERS: ${EASYCODE_GATEWAY_PROVIDERS:-anthropic=fake}
+      EASYCODE_GATEWAY_PRIVATE_KEY_FILE: /run/easycode-gateway-key/private.pem
     network_mode: none
     volumes:
       - gateway-socket:/run/easycode-gateway
+      - gateway-key:/run/easycode-gateway-key:ro
+    depends_on:
+      gateway-keys:
+        condition: service_completed_successfully
 
   frontend:
     build:
@@ -109,3 +138,5 @@ services:
 volumes:
   postgres-data:
   gateway-socket:
+  gateway-key:
+  sealing-public:

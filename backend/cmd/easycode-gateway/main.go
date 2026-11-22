@@ -1,6 +1,8 @@
 // Command easycode-gateway is the only process that opens provider keys and talks to AI
 // providers (S-03, ADR-02, interno.md section 3). It serves the worker over a Unix socket.
-// Until Onda 1 brings the real provider adapter, only the deterministic "fake" provider exists.
+// Providers: "anthropic" (real adapter) and "fake" (deterministic, development and tests). Sealed keys
+// open only with the platform private key (ADR-13). "easycode-gateway keygen <private> <public>"
+// creates the key pair once at installation.
 package main
 
 import (
@@ -12,6 +14,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	appgateway "easycode/internal/application/gateway"
@@ -19,7 +22,9 @@ import (
 	"easycode/internal/infrastructure/config"
 	"easycode/internal/infrastructure/logging"
 	"easycode/internal/infrastructure/process"
+	"easycode/internal/infrastructure/provider/anthropic"
 	fakeprovider "easycode/internal/infrastructure/provider/fake"
+	"easycode/internal/infrastructure/sealing"
 	"easycode/internal/infrastructure/telemetry"
 	gatewayapi "easycode/internal/interfaces/gateway"
 )
@@ -39,6 +44,9 @@ func main() {
 }
 
 func run() error {
+	if len(os.Args) > 1 && os.Args[1] == "keygen" {
+		return keygen(os.Args[2:])
+	}
 	proc, err := process.Start(serviceName, version)
 	if err != nil {
 		return err
@@ -55,10 +63,18 @@ func run() error {
 
 func serve(ctx context.Context, proc process.Process) error {
 	cfg := proc.Config
-	providers, opener, err := buildProviders(cfg.Gateway.Providers)
+	providers, err := buildProviders(cfg.Gateway)
 	if err != nil {
 		return err
 	}
+	if cfg.Gateway.PrivateKeyFile == "" {
+		return fmt.Errorf("%s is required (create it with: easycode-gateway keygen)", config.EnvGatewayPrivateKey)
+	}
+	opener, err := sealing.LoadOpener(cfg.Gateway.PrivateKeyFile)
+	if err != nil {
+		return err
+	}
+	proc.Logger.Info("platform private key loaded", slog.String("key_ref", opener.KeyRef()))
 	tracing, err := telemetry.Setup(ctx, telemetry.Settings{
 		Enabled: cfg.Telemetry.Enabled, Endpoint: cfg.Telemetry.Endpoint, Insecure: cfg.Telemetry.Insecure,
 		SampleRatio: cfg.Telemetry.SampleRatio, Service: serviceName, Version: version,
@@ -95,19 +111,48 @@ func serve(ctx context.Context, proc process.Process) error {
 	return nil
 }
 
-// buildProviders enables the configured adapters. Only "fake" exists before Onda 1.
-func buildProviders(names []string) ([]provider.Provider, appgateway.KeyOpener, error) {
-	if len(names) == 0 {
-		return nil, nil, fmt.Errorf("%s is required (available: %s)", config.EnvGatewayProviders, fakeprovider.Name)
+// buildProviders enables the configured adapters.
+func buildProviders(cfg config.Gateway) ([]provider.Provider, error) {
+	available := anthropic.Name + ", " + fakeprovider.Name
+	if len(cfg.Providers) == 0 {
+		return nil, fmt.Errorf("%s is required (available: %s)", config.EnvGatewayProviders, available)
 	}
 	var providers []provider.Provider
-	for _, name := range names {
-		if name != fakeprovider.Name {
-			return nil, nil, fmt.Errorf("%s: unknown provider %q", config.EnvGatewayProviders, name)
+	for _, name := range cfg.Providers {
+		if alias, adapter, ok := strings.Cut(name, "="); ok && adapter == fakeprovider.Name && alias != "" {
+			// Development stand-in: the fake answers under a real provider name, never with a real key.
+			providers = append(providers, &fakeprovider.Provider{Alias: alias})
+			continue
 		}
-		providers = append(providers, &fakeprovider.Provider{})
+		switch name {
+		case anthropic.Name:
+			providers = append(providers, anthropic.New(cfg.AnthropicBaseURL, nil, cfg.CallTimeout))
+		case fakeprovider.Name:
+			providers = append(providers, &fakeprovider.Provider{})
+		default:
+			return nil, fmt.Errorf("%s: unknown provider %q (available: %s)", config.EnvGatewayProviders, name, available)
+		}
 	}
-	return providers, fakeprovider.KeyOpener{}, nil
+	return providers, nil
+}
+
+// keygen creates the platform key pair if it does not exist (installation step, ADR-13).
+func keygen(args []string) error {
+	if len(args) != 2 {
+		fmt.Fprintln(os.Stderr, "usage: easycode-gateway keygen <private-key-file> <public-key-file>")
+		return errors.New("keygen needs two paths")
+	}
+	created, err := sealing.GenerateKeyPair(args[0], args[1])
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "keygen failed:", err)
+		return err
+	}
+	if created {
+		fmt.Println("platform key pair created")
+	} else {
+		fmt.Println("platform key pair already exists; kept")
+	}
+	return nil
 }
 
 func listenSocket(path string) (net.Listener, error) {

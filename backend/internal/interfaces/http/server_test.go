@@ -38,6 +38,7 @@ func (f fakeHealth) Readiness(context.Context) (health.Report, error) {
 type harness struct {
 	handler fasthttp.RequestHandler
 	logs    *bytes.Buffer
+	logText *strings.Builder
 }
 
 func newHarness(t *testing.T, useCases httpapi.HealthUseCases) harness {

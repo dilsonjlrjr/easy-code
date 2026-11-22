@@ -11,4 +11,9 @@ func (a *api) register(router *Router) {
 	router.Handle(fasthttp.MethodGet, APIPrefix+"/me", auth(a.currentUser))
 	router.Handle(fasthttp.MethodPost, APIPrefix+"/session/logout", auth(a.endSession))
 
+	if a.deps.Providers != nil {
+		router.Handle(fasthttp.MethodGet, APIPrefix+"/providers", auth(a.listProviders))
+		router.Handle(fasthttp.MethodPut, APIPrefix+"/providers/{provider}/key", auth(a.saveProviderKey))
+		router.Handle(fasthttp.MethodDelete, APIPrefix+"/providers/{provider}/key", auth(a.removeProviderKey))
+	}
 }

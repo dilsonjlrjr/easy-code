@@ -14,12 +14,14 @@ import (
 
 	apphealth "easycode/internal/application/health"
 	"easycode/internal/application/idempotency"
+	"easycode/internal/application/providerkey"
 	appsession "easycode/internal/application/session"
 	"easycode/internal/infrastructure/config"
 	"easycode/internal/infrastructure/i18n"
 	"easycode/internal/infrastructure/logging"
 	"easycode/internal/infrastructure/postgres"
 	"easycode/internal/infrastructure/process"
+	"easycode/internal/infrastructure/sealing"
 	"easycode/internal/infrastructure/telemetry"
 	"easycode/internal/infrastructure/websession"
 	httpapi "easycode/internal/interfaces/http"
@@ -115,7 +117,10 @@ func serve(ctx context.Context, proc process.Process) error {
 	if err != nil {
 		return err
 	}
-	deps := productDependencies(cfg, pool)
+	deps, err := productDependencies(cfg, pool, proc.Logger)
+	if err != nil {
+		return err
+	}
 	deps.Logger = proc.Logger
 	deps.Translator = translator
 	deps.Health = apphealth.NewService(version, cfg.Database.ProbeTimeout, postgres.NewDatabaseProbe(pool))
@@ -132,19 +137,30 @@ func serve(ctx context.Context, proc process.Process) error {
 }
 
 // productDependencies wires the use cases of the product routes over PostgreSQL.
-func productDependencies(cfg config.Config, pool *pgxpool.Pool) httpapi.Dependencies {
+func productDependencies(cfg config.Config, pool *pgxpool.Pool, logger *slog.Logger) (httpapi.Dependencies, error) {
 	tx := postgres.NewTxRunner(pool)
 	devSubject := ""
 	if cfg.Identity.DevIdentity() {
 		devSubject = cfg.Identity.DevUserSubject
 	}
 	sessions := appsession.NewService(postgres.NewUsers(pool), websession.NewCodec(cfg.Identity.DevSessionSecret), devSubject)
-	return httpapi.Dependencies{
+	trail := postgres.NewAuditTrail(pool)
+	deps := httpapi.Dependencies{
 		Sessions:             sessions,
 		Idempotency:          idempotency.NewGuard(tx, postgres.NewIdempotencyKeys(pool)),
 		PublicOrigin:         cfg.Identity.PublicOrigin,
 		AttachmentLimitBytes: cfg.Providers.AttachmentLimitBytes,
 	}
+	if cfg.Providers.SealingPublicKeyFile == "" {
+		logger.Warn("provider key routes disabled: no sealing public key", slog.String("variable", config.EnvSealingPublicKey))
+	} else {
+		sealer, err := sealing.LoadSealer(cfg.Providers.SealingPublicKeyFile)
+		if err != nil {
+			return deps, err
+		}
+		deps.Providers = providerkey.NewService(tx, postgres.NewProviderKeys(pool), sealer, trail, cfg.Providers.KeyTestTimeout)
+	}
+	return deps, nil
 }
 
 func listenUntilDone(ctx context.Context, proc process.Process, listen func(string) error, shutdown func(context.Context) error) error {
