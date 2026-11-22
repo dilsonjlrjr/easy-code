@@ -94,6 +94,51 @@ export interface Question {
   } | null
 }
 
+/** Category of `permissoes.yaml` (`command_categories`) the command ran under. */
+export type CommandCategory =
+  | 'build'
+  | 'tests'
+  | 'lint'
+  | 'migrations'
+  | 'package_manager'
+  | 'disposable_database'
+  | 'validate_ddl'
+  | 'validate_openapi'
+  | 'validate_schema'
+  | 'local_static_server'
+  | 'scanner'
+  | 'local_http_client'
+  | 'install_dependencies'
+
+/** Why the sandbox ended the command (`EndReason` of the executor, interno.md). */
+export type EndReason =
+  | 'completed'
+  | 'time_limit'
+  | 'memory_limit'
+  | 'process_limit'
+  | 'disk_limit'
+  | 'output_limit'
+  | 'aborted'
+  | 'executor_error'
+
+/** openapi `SandboxExecution` (US-41): one command run in the project sandbox. */
+export interface SandboxExecution {
+  id: string
+  command: string
+  category: CommandCategory
+  profile?: string
+  start: string
+  duration_ms: number
+  exit_code?: number | null
+  end_reason: EndReason
+  tests?: { total: number; passed: number; failed: number; ignored?: number } | null
+  /** First 64 KiB of the output. Untrusted: shown as plain text only (RNF-05). */
+  output_start?: string
+  output_bytes: number
+  output_sha256?: string
+  image_digest?: string
+}
+
 export interface EventsPage {
   items: CloudEvent[]
   last_sequence: number
@@ -113,6 +158,13 @@ export interface WavesApi {
     idempotencyKey: string,
   ) => Promise<Command>
   listEvents: (projectId: string, waveId: string) => Promise<EventsPage>
+  listSandboxExecutions: (projectId: string, waveId: string) => Promise<SandboxExecution[]>
+  /** The full combined output of a command, as text (never rendered as HTML; RNF-05). */
+  downloadExecutionOutput: (
+    projectId: string,
+    waveId: string,
+    executionId: string,
+  ) => Promise<string>
 }
 
 function wavePath(projectId: string, waveId: string): string {
@@ -157,6 +209,17 @@ export function createWavesApi(client: HttpClient = apiClient): WavesApi {
         `${wavePath(projectId, waveId)}/questions/${encodeURIComponent(questionId)}/answer`,
         { answers },
         { headers: idempotencyHeaders(idempotencyKey) },
+      ),
+    listSandboxExecutions: (projectId, waveId) =>
+      readAllPages((cursor) =>
+        client.get<Page<SandboxExecution>>(`${wavePath(projectId, waveId)}/sandbox-executions`, {
+          query: { cursor, limit: PAGE_LIMIT },
+        }),
+      ),
+    downloadExecutionOutput: (projectId, waveId, executionId) =>
+      client.get<string>(
+        `${wavePath(projectId, waveId)}/sandbox-executions/${encodeURIComponent(executionId)}/output`,
+        { headers: { Accept: 'text/plain' } },
       ),
     /** US-09 CA-4: the full history of the wave, page after page. */
     listEvents: async (projectId, waveId) => {

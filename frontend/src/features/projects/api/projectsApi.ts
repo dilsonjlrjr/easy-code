@@ -159,6 +159,8 @@ export interface WaveSummary {
   purpose: 'execution' | 'rework' | 'revalidation' | 'reevaluation' | 'edit_review'
   finding?: string | null
   attempt: number
+  /** The T an implementation wave runs (one wave per task, PL-20); null in other stages. */
+  task?: string | null
   created_at: string
   started_at?: string | null
   ended_at?: string | null

@@ -10,6 +10,7 @@ import {
   type CallRecord,
   type Checkpoint,
   type Question,
+  type SandboxExecution,
   type Wave,
   type WavesApi,
 } from '../api/wavesApi'
@@ -54,6 +55,8 @@ export function useWaveLive(projectId: string, waveId: string) {
   const calls = ref<CallRecord[]>([])
   const checkpoints = ref<Checkpoint[]>([])
   const questions = ref<Question[]>([])
+  const executions = ref<SandboxExecution[]>([])
+  const executionsError = ref<unknown>()
   const history = ref<CloudEvent[]>([])
   const resumeNotice = ref<ResumeNotice>()
   const retryInSeconds = ref<number>()
@@ -62,6 +65,19 @@ export function useWaveLive(projectId: string, waveId: string) {
   const paused = ref(false)
   const pendingWhilePaused = ref<CloudEvent[]>([])
   let refreshTimer: ReturnType<typeof setTimeout> | undefined
+
+  /**
+   * US-41: the sandbox evidence is read on its own, so a failure there shows in its block and never
+   * hides the rest of the wave.
+   */
+  async function readExecutions(): Promise<void> {
+    try {
+      executions.value = await api.listSandboxExecutions(projectId, waveId)
+      executionsError.value = undefined
+    } catch (caught) {
+      executionsError.value = caught
+    }
+  }
 
   async function readState(): Promise<number | undefined> {
     const loadedProject = await projectApi.getProject(projectId)
@@ -72,6 +88,7 @@ export function useWaveLive(projectId: string, waveId: string) {
         api.listCheckpoints(projectId, waveId),
         api.listQuestions(projectId, waveId),
         api.listEvents(projectId, waveId),
+        readExecutions(),
       ],
     )
     project.value = loadedProject
@@ -92,6 +109,7 @@ export function useWaveLive(projectId: string, waveId: string) {
       api.listCalls(projectId, waveId),
       api.listCheckpoints(projectId, waveId),
       api.listQuestions(projectId, waveId),
+      readExecutions(),
     ])
     wave.value = loadedWave
     calls.value = loadedCalls
@@ -192,6 +210,8 @@ export function useWaveLive(projectId: string, waveId: string) {
     calls,
     checkpoints,
     questions,
+    executions,
+    executionsError,
     history,
     resumeNotice,
     retryInSeconds,

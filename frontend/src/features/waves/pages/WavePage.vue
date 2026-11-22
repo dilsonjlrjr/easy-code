@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, nextTick, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute } from 'vue-router'
 import { ROUTE_NAMES } from '@/app/router/routeNames'
@@ -14,8 +14,10 @@ import LoadingState from '@/shared/ui/LoadingState.vue'
 import ProblemAlert from '@/shared/ui/ProblemAlert.vue'
 import StateLabel from '@/shared/ui/StateLabel.vue'
 import { projectsApi } from '@/features/projects/api/projectsApi'
-import type { CallRecord, Question } from '../api/wavesApi'
+import type { CallRecord, Question, SandboxExecution } from '../api/wavesApi'
+import SandboxEvidence from '../components/SandboxEvidence.vue'
 import WaveQuestions from '../components/WaveQuestions.vue'
+import { refusedToolCalls } from '../composables/sandboxEvidence'
 import { currentWavesApi, useWaveLive } from '../composables/useWaveLive'
 
 const i18n = useI18n()
@@ -34,6 +36,14 @@ const isEnded = computed(() => (wave.value ? ENDED_STATES.has(wave.value.state) 
 const notFound = computed(() => isApiError(live.error.value) && live.error.value.status === 404)
 const canAnswer = computed(() => wave.value?.available_actions.includes('answer') ?? false)
 const recentHistory = computed(() => [...live.history.value].reverse())
+const refusedCalls = computed(() => refusedToolCalls(live.calls.value))
+/** ESP-18: the evidence block shows when the wave ran commands; the developer's waves always show it. */
+const showEvidence = computed(
+  () =>
+    live.executions.value.length > 0 ||
+    live.executionsError.value !== undefined ||
+    wave.value?.agent === 'developer-agent',
+)
 const hasEstimatedLoss = computed(() => Number(wave.value?.cost.estimated_lost?.value ?? 0) > 0)
 
 const breadcrumbs = computed(() => [
@@ -52,7 +62,18 @@ const breadcrumbs = computed(() => [
 onMounted(async () => {
   await live.load()
   openedWaiting.value = live.wave.value?.state === 'awaiting_user'
+  // PT-48: the stage, the task and the gate link straight to the evidence block.
+  if (route.hash === '#evidence') {
+    await nextTick()
+    const heading = document.getElementById('evidence-heading')
+    heading?.scrollIntoView()
+    heading?.focus()
+  }
 })
+
+function downloadOutput(execution: SandboxExecution): Promise<string> {
+  return currentWavesApi().downloadExecutionOutput(projectId, waveId, execution.id)
+}
 
 /** US-10 CA-1: the answer is a command; the wave goes back to running from where it stopped. */
 async function submitAnswer(
@@ -81,6 +102,12 @@ function failureCauseText(cause: string | null | undefined): string {
   if (!cause) return t('waves.failureCauses.unknown')
   const key = `waves.failureCauses.${cause}`
   return i18n.te(key) ? t(key) : cause
+}
+
+/** US-30: the refusal reason from the catalog; an unknown code is shown as sent (an enumeration). */
+function refusalText(reason: string): string {
+  const key = `waves.calls.refusalReasons.${reason}`
+  return i18n.te(key) ? t(key) : reason
 }
 
 function callTitle(call: CallRecord): string {
@@ -119,6 +146,7 @@ function callTitle(call: CallRecord): string {
       <p class="text-body-1 mb-4">
         {{ $t(`stages.${wave.stage}`) }} · {{ $t(`agents.${wave.agent}`) }} ·
         {{ $t(`waves.purpose.${wave.purpose}`) }}
+        <template v-if="wave.task"> · {{ $t('waves.task', { task: wave.task }) }}</template>
         <template v-if="wave.attempt > 1">
           · {{ $t('waves.attempt', { n: wave.attempt }) }}</template
         >
@@ -283,6 +311,15 @@ function callTitle(call: CallRecord): string {
         </ul>
       </section>
 
+      <SandboxEvidence
+        v-if="showEvidence"
+        :wave-id="waveId"
+        :executions="live.executions.value"
+        :error="live.executionsError.value"
+        :download="downloadOutput"
+        @retry="live.refreshLists"
+      />
+
       <section aria-labelledby="calls-heading" class="mb-8">
         <div class="d-flex flex-wrap align-center ga-2 mb-2">
           <h2 id="calls-heading" class="text-h6">{{ $t('waves.calls.title') }}</h2>
@@ -297,6 +334,16 @@ function callTitle(call: CallRecord): string {
             {{ live.paused.value ? $t('live.resumeUpdates') : $t('live.pauseUpdates') }}
           </v-btn>
         </div>
+        <!-- US-30 CA-1, RNF-07: least privilege refused some tool calls; each one is in the record. -->
+        <v-alert
+          v-if="refusedCalls.length > 0"
+          type="info"
+          variant="tonal"
+          class="mb-2"
+          data-testid="refused-calls"
+        >
+          {{ $t('waves.calls.refusedNotice', { count: refusedCalls.length }) }}
+        </v-alert>
         <p v-if="live.paused.value && live.pendingWhilePaused.value.length > 0" class="text-body-2">
           {{ $t('live.pendingCount', { count: live.pendingWhilePaused.value.length }) }}
         </p>
@@ -327,7 +374,7 @@ function callTitle(call: CallRecord): string {
               </p>
               <p v-if="call.summary" class="text-body-2">{{ call.summary }}</p>
               <p v-if="call.refusal_reason" class="text-body-2">
-                {{ $t('waves.calls.refusal', { reason: call.refusal_reason }) }}
+                {{ $t('waves.calls.refusal', { reason: refusalText(call.refusal_reason) }) }}
               </p>
               <p class="text-body-2 text-medium-emphasis">
                 {{ format.dateTime(call.start) }} · {{ format.duration(call.duration_ms) }}

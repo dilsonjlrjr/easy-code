@@ -302,6 +302,13 @@ function origin(record: DecisionRecord): string {
   return record.origin ? t(`waves.origin.${record.origin}`) : t('agents.orchestrator')
 }
 
+/** openapi `WaveId`: evidence that points at a wave links to its sandbox evidence (US-41). */
+const WAVE_REFERENCE = /^(REQ|ARQ|DBA|DSG|VAL|DEV|QA|SEG|REL)-[0-9]{2,}$/
+
+function isWaveReference(reference: string): boolean {
+  return WAVE_REFERENCE.test(reference)
+}
+
 function checkStatus(check: CheckResult): string {
   return t(`gates.checkStatus.${check.status}`)
 }
@@ -466,7 +473,20 @@ function checkStatus(check: CheckResult): string {
                 <td>
                   <ul v-if="check.evidence?.length" class="plain-list">
                     <li v-for="(item, index) in check.evidence" :key="index" class="text-body-2">
-                      <span v-if="item.reference" class="monospace">{{ item.reference }}</span>
+                      <!-- PT-48: a wave reference opens the build and test evidence of that wave. -->
+                      <router-link
+                        v-if="item.reference && isWaveReference(item.reference)"
+                        :to="{
+                          name: ROUTE_NAMES.wave,
+                          params: { projectId, waveId: item.reference },
+                          hash: '#evidence',
+                        }"
+                        class="monospace"
+                        :aria-label="$t('evidence.openOf', { wave: item.reference })"
+                      >
+                        {{ item.reference }}
+                      </router-link>
+                      <span v-else-if="item.reference" class="monospace">{{ item.reference }}</span>
                       <span v-if="item.path" class="monospace"> {{ item.path }}</span>
                       {{ item.message }}
                     </li>

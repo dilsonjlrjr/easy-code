@@ -49,6 +49,12 @@ export interface ProjectState {
   calls: Record<string, Json[]>
   checkpoints: Record<string, Json[]>
   questions: Record<string, Json[]>
+  /** `SandboxExecution` items by wave (US-41). */
+  executions: Record<string, Json[]>
+  /** Full output of each execution by its id (`downloadExecutionOutput`). */
+  outputs: Partial<Record<string, string>>
+  /** `Repository` (US-42); null answers 404 like a repository not created yet. */
+  repository: Json | null
   history: Json[]
   /** `Member` items (US-02); the creator starts as lead and approver (RN-1). */
   members: Json[]
@@ -216,6 +222,9 @@ export class FakeApi {
       calls: {},
       checkpoints: {},
       questions: {},
+      executions: {},
+      outputs: {},
+      repository: null,
       history: [],
       members: [
         {
@@ -309,6 +318,17 @@ export class FakeApi {
         body: response.sse,
       })
     }
+    if ('text' in response) {
+      return route.fulfill({
+        status: 200,
+        headers: {
+          'Content-Type': 'text/plain; charset=utf-8',
+          'Content-Disposition': 'attachment',
+          'X-Content-Type-Options': 'nosniff',
+        },
+        body: response.text,
+      })
+    }
     if (response.status === 204) return route.fulfill({ status: 204 })
     return this.json(route, response.status, response.body, response.headers)
   }
@@ -335,7 +355,10 @@ export class FakeApi {
     body: unknown,
     url: URL,
     headers: Record<string, string> = {},
-  ): { status: number; body?: unknown; headers?: Record<string, string> } | { sse: string } {
+  ):
+    | { status: number; body?: unknown; headers?: Record<string, string> }
+    | { sse: string }
+    | { text: string } {
     const [first, second, third, fourth, fifth, sixth, seventh] = segments as Array<
       string | undefined
     >
@@ -550,14 +573,34 @@ export class FakeApi {
       // Without a script the stream closes and the client waits a minute to come back.
       return { sse: script?.body ?? 'retry: 60000\n\n: hb\n\n' }
     }
-    if (third === 'waves' && !fourth)
-      return { status: 200, body: { items: state.waves, next_cursor: null } }
+    if (third === 'repository') {
+      return state.repository
+        ? { status: 200, body: state.repository }
+        : { status: 404, body: problem('not-found', 404) }
+    }
+    if (third === 'waves' && !fourth) {
+      const stage = url.searchParams.get('stage')
+      const task = url.searchParams.get('task')
+      const items = state.waves.filter(
+        (wave) => (!stage || wave.stage === stage) && (!task || wave.task === task),
+      )
+      return { status: 200, body: { items, next_cursor: null } }
+    }
     if (third === 'waves' && fourth) {
       const wave = state.waveDetails[fourth]
       if (!wave) return { status: 404, body: problem('not-found', 404) }
       if (!fifth) return { status: 200, body: wave }
       if (fifth === 'calls')
         return { status: 200, body: { items: state.calls[fourth] ?? [], next_cursor: null } }
+      if (fifth === 'sandbox-executions' && !sixth) {
+        return { status: 200, body: { items: state.executions[fourth] ?? [], next_cursor: null } }
+      }
+      if (fifth === 'sandbox-executions' && sixth && seventh === 'output') {
+        const output = state.outputs[sixth]
+        return output === undefined
+          ? { status: 404, body: problem('not-found', 404) }
+          : { text: output }
+      }
       if (fifth === 'checkpoints') {
         return { status: 200, body: { items: state.checkpoints[fourth] ?? [], next_cursor: null } }
       }
@@ -586,7 +629,12 @@ export class FakeApi {
       return {
         status: 200,
         body: {
-          items: Object.values(state.artifacts).flatMap((item) => (item ? [item.current] : [])),
+          items: Object.values(state.artifacts).flatMap((item) =>
+            item &&
+            (!url.searchParams.get('type') || item.current.type === url.searchParams.get('type'))
+              ? [item.current]
+              : [],
+          ),
           next_cursor: null,
         },
       }
