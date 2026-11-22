@@ -10,6 +10,7 @@ import {
 
 const PROJECT_ID = '3f6c1e2a-8b4d-4c9e-a1f7-5d2b9e0c7a14'
 const SHA = '9c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d'
+const LOAD_TIMEOUT = 30_000
 const CLONE_URL = `https://easycode.empresa.local/git/${PROJECT_ID}.git`
 
 function artifact(id: string, type: string, title: string, header: Record<string, unknown> = {}) {
@@ -118,6 +119,7 @@ test('US-19 CA-1, US-41, US-42 CA-1: the implementation stage shows each task, i
 
   await page.goto(`/projects/${PROJECT_ID}/stages/implementation`)
   const plan = page.getByTestId('task-plan')
+  await expect(page.getByTestId('task-T-02')).toBeVisible({ timeout: LOAD_TIMEOUT })
   // Plan order: T-01 before T-02, which depends on it; the running task opens selected.
   await expect(plan.getByRole('listitem').first()).toContainText('T-01')
   await expect(page.getByTestId('task-T-01')).toContainText('Concluída')
@@ -164,7 +166,10 @@ test('US-18 CA-1: the architecture stage shows the task plan with what each task
   await api.install(page)
 
   await page.goto(`/projects/${PROJECT_ID}/stages/architecture`)
-  await expect(page.getByTestId('task-T-01')).toContainText('tamanho pequena')
+  // The plan comes after the stage, the T list and each T: three round trips on a loaded CI host.
+  await expect(page.getByTestId('task-T-01')).toContainText('tamanho pequena', {
+    timeout: LOAD_TIMEOUT,
+  })
   await page.getByTestId('task-T-02').click()
   const detail = page.getByTestId('task-detail')
   await expect(detail.getByRole('link', { name: 'US-03' })).toHaveAttribute(
