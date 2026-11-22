@@ -2,7 +2,8 @@
 
 Esqueleto da plataforma, iniciado a pedido do dono em 2026-11-21. As convenções estão na
 [ADR-21](../docs/arquitetura/adr/ADR-21.md): o código é em inglês, segue Clean Architecture e usa i18n pt-BR (padrão)
-e en. O backend registra tudo em log, com redação. Ainda não há feature de produto: elas entram depois da E7.
+e en. O backend registra tudo em log, com redação. A construção segue os marcos de
+[docs/entrega/PLANO.md](../docs/entrega/PLANO.md), a começar pelo MARCO-0 (Fundação).
 
 | Pasta | Conteúdo |
 |---|---|
@@ -23,6 +24,26 @@ docker compose up --build
 
 O serviço `migrate` (`easycode-api migrate`) aplica as migrações em ordem, registra cada uma em `schema_migrations` e
 termina. Depois disso sobem a api e o worker.
+
+## CI
+
+Ponto de entrada único, só com Docker e make no host (RNF-17). Não há arquivo de fornecedor de CI porque o
+repositório ainda não tem remoto: qualquer executor (GitHub Actions, GitLab CI, Jenkins, cron no servidor) só chama
+
+```sh
+make -C project ci
+```
+
+| Alvo | O que roda | Container |
+|---|---|---|
+| `backend-ci` | `make -C backend ci` (lint, testes e build do backend) | `golang`, `golangci-lint` |
+| `frontend-ci` | `npm ci`, depois `lint`, `type-check`, `test` (vitest) e `build-only` | `node:24.22.3-bookworm-slim` |
+| `frontend-e2e` | Playwright contra o build de produção | `mcr.microsoft.com/playwright:v1.65.1-noble` |
+| `specs` | `python3 specs/dominio/ferramentas/validar_tudo.py` (repositório montado só leitura) | `python:3.13.9-slim-bookworm` |
+
+Cada alvo também roda sozinho (por exemplo `make -C project frontend-ci`). O cache do npm fica no volume
+`easycode-npm-cache`. A Definition of Done está em [docs/entrega/DoD.md](../docs/entrega/DoD.md) e o plano dos marcos em
+[docs/entrega/PLANO.md](../docs/entrega/PLANO.md).
 
 ## Backend
 
