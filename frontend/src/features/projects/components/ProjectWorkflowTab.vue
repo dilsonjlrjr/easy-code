@@ -56,7 +56,17 @@ function waitingDependencies(stage: StageSummary): string {
           <p class="text-body-2 text-medium-emphasis">
             {{ $t('projects.workflow.position', { n: index + 1 }) }}
           </p>
-          <h3 class="text-subtitle-1 font-weight-medium">{{ stageName(stage) }}</h3>
+          <!-- US-49 CA-2: choosing a stage opens its detail. -->
+          <h3 class="text-subtitle-1 font-weight-medium">
+            <router-link
+              :to="{
+                name: ROUTE_NAMES.stage,
+                params: { projectId: store.project?.id ?? '', stageId: stage.id },
+              }"
+            >
+              {{ stageName(stage) }}
+            </router-link>
+          </h3>
           <p class="text-body-2 mb-2">{{ $t(`agents.${stage.agent}`) }}</p>
           <StateLabel machine="stage" :state="stageState(stage)" />
           <p
@@ -79,6 +89,21 @@ function waitingDependencies(stage: StageSummary): string {
               · {{ $t(`states.wave.${wave.state}`) }}
             </li>
           </ul>
+          <!-- ESP-12 section 2: the gate is reached from its stage in the workflow. -->
+          <router-link
+            v-if="stage.gate && stage.current_round"
+            :to="{
+              name: ROUTE_NAMES.gate,
+              params: {
+                projectId: store.project?.id ?? '',
+                gateId: stage.gate,
+                round: stage.current_round,
+              },
+            }"
+            class="d-inline-block text-body-2 mt-2"
+          >
+            {{ $t('projects.stage.openGate', { round: stage.current_round }) }}
+          </router-link>
           <p v-if="stage.cost" class="text-body-2 mt-2">
             {{ $t('projects.workflow.cost', { cost: format.money(stage.cost) }) }}
           </p>
