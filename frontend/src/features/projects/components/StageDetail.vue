@@ -9,6 +9,8 @@ import { useFormat } from '@/shared/format/useFormat'
 import LoadingState from '@/shared/ui/LoadingState.vue'
 import ProblemAlert from '@/shared/ui/ProblemAlert.vue'
 import StateLabel from '@/shared/ui/StateLabel.vue'
+import RepositoryPanel from '@/features/repository/components/RepositoryPanel.vue'
+import TaskPlan from '@/features/tasks/components/TaskPlan.vue'
 import type { Stage } from '../api/projectsApi'
 import { currentProjectApi, useCurrentProjectStore } from '../stores/currentProjectStore'
 
@@ -36,6 +38,10 @@ const stageName = computed(() => {
   const key = `stages.${stageId.value}`
   return i18n.te(key) ? t(key) : (stage.value?.short_name ?? stage.value?.name ?? stageId.value)
 })
+
+/** US-18: the architect plans the tasks; US-19, US-42: the developer runs them into the repository. */
+const showsTasks = computed(() => ['architecture', 'implementation'].includes(stageId.value))
+const isImplementation = computed(() => stageId.value === 'implementation')
 
 watch([stageId, () => store.revision], () => void loader.run(), { immediate: true })
 </script>
@@ -117,10 +123,33 @@ watch([stageId, () => store.revision], () => void loader.run(), { immediate: tru
           >
             {{ wave.id }}
           </router-link>
+          <template v-if="wave.task"> · {{ $t('waves.task', { task: wave.task }) }}</template>
           · {{ $t(`waves.purpose.${wave.purpose}`) }} · {{ $t(`states.wave.${wave.state}`) }}
           <template v-if="wave.cost_total"> · {{ format.money(wave.cost_total) }}</template>
+          <template v-if="wave.agent === 'developer-agent'">
+            ·
+            <router-link
+              :to="{
+                name: ROUTE_NAMES.wave,
+                params: { projectId, waveId: wave.id },
+                hash: '#evidence',
+              }"
+              :data-testid="`stage-evidence-${wave.id}`"
+            >
+              {{ $t('evidence.openOf', { wave: wave.id }) }}
+            </router-link>
+          </template>
         </li>
       </ul>
+
+      <TaskPlan
+        v-if="showsTasks"
+        :project-id="projectId"
+        :waves="stage.waves"
+        :show-execution="isImplementation"
+        :revision="store.revision"
+      />
+      <RepositoryPanel v-if="isImplementation" :project-id="projectId" :heading-level="3" />
 
       <h3 class="text-subtitle-1 font-weight-medium mb-2">{{ $t('pages.project.artifacts') }}</h3>
       <p v-if="stage.artifacts.length === 0" class="text-body-2 mb-4">

@@ -48,7 +48,7 @@ export interface ArtifactVersionSummary {
 }
 
 export interface ArtifactsApi {
-  listArtifacts: (projectId: string) => Promise<ArtifactSummary[]>
+  listArtifacts: (projectId: string, filters?: { type?: string }) => Promise<ArtifactSummary[]>
   getArtifact: (projectId: string, artifactId: string) => Promise<Artifact>
   listVersions: (projectId: string, artifactId: string) => Promise<ArtifactVersionSummary[]>
   getVersion: (projectId: string, artifactId: string, version: number) => Promise<Artifact>
@@ -62,13 +62,13 @@ function artifactPath(projectId: string, artifactId: string): string {
 
 export function createArtifactsApi(client: HttpClient = apiClient): ArtifactsApi {
   return {
-    listArtifacts: async (projectId) => {
+    listArtifacts: async (projectId, filters = {}) => {
       const items: ArtifactSummary[] = []
       let cursor: string | undefined
       do {
         const page = await client.get<Page<ArtifactSummary>>(
           `/projects/${encodeURIComponent(projectId)}/artifacts`,
-          { query: { cursor, limit: 100 } },
+          { query: { cursor, limit: 100, type: filters.type } },
         )
         items.push(...page.items)
         cursor = page.next_cursor ?? undefined
