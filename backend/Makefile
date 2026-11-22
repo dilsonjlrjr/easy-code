@@ -10,7 +10,7 @@ DOCKER_GO       := docker run --rm -u $(shell id -u):$(shell id -g) -e HOME=/tmp
 TEST_NETWORK    ?=
 RUN_ENV         ?= --network host -e EASYCODE_DATABASE_URL -e EASYCODE_HTTP_ADDR -e EASYCODE_LOG_LEVEL
 
-.PHONY: build test test-race lint run migrate image fmt cache
+.PHONY: build test test-race test-integration lint run migrate image fmt tidy cache ci
 
 cache:
 	@docker volume create easycode-go-cache >/dev/null
@@ -26,11 +26,21 @@ test: cache
 test-race: cache
 	$(DOCKER_GO) -e EASYCODE_TEST_DATABASE_URL $(TEST_NETWORK) $(GO_IMAGE) go test -race -count=1 ./...
 
+# Runs every test, integration included, against a throwaway PostgreSQL container.
+test-integration:
+	./scripts/with-postgres.sh $(MAKE) test
+
+# What CI runs; needs only Docker. From the repo root: make -C project/backend ci
+ci: lint test-integration build
+
 lint: cache
 	$(DOCKER_GO) $(LINT_IMAGE) golangci-lint run ./...
 
 fmt: cache
 	$(DOCKER_GO) $(GO_IMAGE) gofmt -w .
+
+tidy: cache
+	$(DOCKER_GO) $(GO_IMAGE) go mod tidy
 
 # Runs a binary against the database in EASYCODE_DATABASE_URL, e.g. make run BINARY=easycode-worker.
 run: build
