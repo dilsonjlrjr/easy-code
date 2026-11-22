@@ -602,6 +602,18 @@ export const en: MessageSchema = {
     lostCost: 'Cost lost in the interruption: {cost}.',
     lostCostEstimated: 'Cost lost in the interruption (estimated): {cost}.',
     retryIn: 'Trying again in {seconds} s.',
+    cancel: {
+      action: 'Cancel wave',
+      title: 'Cancel wave {wave}?',
+      final: 'Canceling is final: the wave cannot be resumed or restarted afterwards.',
+      lostCall:
+        'The model call in progress, if any, is aborted; its tokens are lost and charged. Partial artifacts stay as drafts.',
+      keep: 'Keep the wave',
+      confirm: 'Cancel the wave',
+      pending: 'Cancellation sent; waiting for the platform.',
+      applied: 'Wave canceled.',
+      canceledNotice: 'Wave canceled. Lost cost: {cost}. Partial artifacts stay as drafts.',
+    },
     failureCause: 'Failure cause: {cause}',
     failureCauses: {
       unknown: 'not reported',

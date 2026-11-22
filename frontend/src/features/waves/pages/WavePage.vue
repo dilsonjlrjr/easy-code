@@ -16,6 +16,7 @@ import StateLabel from '@/shared/ui/StateLabel.vue'
 import { projectsApi } from '@/features/projects/api/projectsApi'
 import type { CallRecord, Question, SandboxExecution } from '../api/wavesApi'
 import SandboxEvidence from '../components/SandboxEvidence.vue'
+import WaveCancelDialog from '../components/WaveCancelDialog.vue'
 import WaveQuestions from '../components/WaveQuestions.vue'
 import { refusedToolCalls } from '../composables/sandboxEvidence'
 import { currentWavesApi, useWaveLive } from '../composables/useWaveLive'
@@ -29,12 +30,25 @@ const waveId = String(route.params.waveId)
 const live = useWaveLive(projectId, waveId)
 const openedWaiting = ref(false)
 const answerNotice = ref<string>()
+const cancelDialogOpen = ref(false)
+const cancelNotice = ref<string>()
 
 const wave = computed(() => live.wave.value)
 const ENDED_STATES = new Set(['completed', 'failed', 'canceled'])
 const isEnded = computed(() => (wave.value ? ENDED_STATES.has(wave.value.state) : false))
 const notFound = computed(() => isApiError(live.error.value) && live.error.value.status === 404)
 const canAnswer = computed(() => wave.value?.available_actions.includes('answer') ?? false)
+/**
+ * US-14 CA-3, ER-18-1: "cancel" shows exactly when the api offers it (never for a completed or
+ * canceled wave) and only to a project role that controls waves (member, approver, lead).
+ */
+const CONTROL_ROLES = new Set(['member', 'approver', 'lead'])
+const canControl = computed(
+  () => live.project.value?.my_roles.some((role) => CONTROL_ROLES.has(role)) ?? false,
+)
+const canCancel = computed(
+  () => canControl.value && (wave.value?.available_actions.includes('cancel') ?? false),
+)
 const recentHistory = computed(() => [...live.history.value].reverse())
 const refusedCalls = computed(() => refusedToolCalls(live.calls.value))
 /** ESP-18: the evidence block shows when the wave ran commands; the developer's waves always show it. */
@@ -93,6 +107,28 @@ async function submitAnswer(
   await live.refreshLists()
 }
 
+/**
+ * US-14 CA-1, CA-2, CA-4: cancel is a command; the wave goes to "canceled" (live by the stream, and
+ * re-read here so the screen never depends on the stream alone). A refusal (409 `state-conflict`)
+ * re-reads the wave so the real state and its actions show.
+ */
+async function submitCancel(key: string): Promise<void> {
+  cancelNotice.value = t('waves.cancel.pending')
+  try {
+    const accepted = await currentWavesApi().cancelWave(projectId, waveId, key)
+    const finished = await waitForCommand(accepted, (id) => projectsApi.getCommand(projectId, id))
+    if (finished.state === 'refused') {
+      throw new ApiError(finished.refusal?.status ?? 409, finished.refusal)
+    }
+    cancelNotice.value = t('waves.cancel.applied')
+  } catch (error) {
+    cancelNotice.value = undefined
+    await live.refreshLists().catch(() => undefined)
+    throw error
+  }
+  await live.refreshLists()
+}
+
 function describe(event: CloudEvent): string {
   return describeEvent(t, event)
 }
@@ -143,6 +179,15 @@ function callTitle(call: CallRecord): string {
         <v-spacer />
         <LiveConnectionStatus :status="live.status.value" />
       </div>
+      <div v-if="canCancel" class="d-flex flex-wrap ga-2 mb-3" data-testid="wave-actions">
+        <v-btn color="error" variant="outlined" @click="cancelDialogOpen = true">
+          {{ $t('waves.cancel.action') }}
+        </v-btn>
+      </div>
+      <WaveCancelDialog v-model="cancelDialogOpen" :wave-id="wave.id" :submit="submitCancel" />
+      <div v-if="cancelNotice" role="status" class="text-body-2 mb-2" data-testid="cancel-notice">
+        {{ cancelNotice }}
+      </div>
       <p class="text-body-1 mb-4">
         {{ $t(`stages.${wave.stage}`) }} · {{ $t(`agents.${wave.agent}`) }} ·
         {{ $t(`waves.purpose.${wave.purpose}`) }}
@@ -187,6 +232,16 @@ function callTitle(call: CallRecord): string {
         {{ $t('waves.retryIn', { seconds: live.retryInSeconds.value }) }}
       </v-alert>
 
+      <!-- ESP-18 section 6: a canceled wave keeps its final and lost cost; partial artifacts stay drafts. -->
+      <v-alert
+        v-if="wave.state === 'canceled'"
+        type="info"
+        variant="tonal"
+        class="mb-4"
+        data-testid="canceled-notice"
+      >
+        {{ $t('waves.cancel.canceledNotice', { cost: format.money(wave.cost.lost) }) }}
+      </v-alert>
       <!-- US-29 CA-2: a failed wave shows its cause and the schema errors per artifact. -->
       <v-alert
         v-if="wave.state === 'failed'"

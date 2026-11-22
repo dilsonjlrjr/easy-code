@@ -607,6 +607,19 @@ export const ptBR = {
     lostCost: 'Custo perdido na interrupção: {cost}.',
     lostCostEstimated: 'Custo perdido na interrupção (estimado): {cost}.',
     retryIn: 'Tentando de novo em {seconds} s.',
+    cancel: {
+      action: 'Cancelar onda',
+      title: 'Cancelar a onda {wave}?',
+      final: 'O cancelamento é final: a onda não pode ser retomada nem reiniciada depois.',
+      lostCall:
+        'A chamada de modelo em curso, se houver, é abortada; os tokens dela são perdidos e cobrados. Os artefatos parciais ficam em rascunho.',
+      keep: 'Manter a onda',
+      confirm: 'Cancelar a onda',
+      pending: 'Cancelamento enviado; aguardando a plataforma.',
+      applied: 'Onda cancelada.',
+      canceledNotice:
+        'Onda cancelada. Custo perdido: {cost}. Os artefatos parciais ficam em rascunho.',
+    },
     failureCause: 'Causa da falha: {cause}',
     failureCauses: {
       unknown: 'não informada',

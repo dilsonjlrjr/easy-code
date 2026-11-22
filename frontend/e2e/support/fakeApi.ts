@@ -607,6 +607,7 @@ export class FakeApi {
           ? { status: 404, body: problem('not-found', 404) }
           : { text: output }
       }
+      if (fifth === 'cancellation' && method === 'POST') return this.cancelWave(state, wave, input)
       if (fifth === 'checkpoints') {
         return { status: 200, body: { items: state.checkpoints[fourth] ?? [], next_cursor: null } }
       }
@@ -680,6 +681,31 @@ export class FakeApi {
     }
     this.commands[id] = command
     return command
+  }
+
+  /**
+   * cancelWave (US-14): member, approver or lead; `confirm: true`; `completed` or `canceled` → 409
+   * `state-conflict` (CA-3). Accepted as pending; the next getCommand finds it applied.
+   */
+  private cancelWave(
+    state: ProjectState,
+    wave: Json,
+    input: Json,
+  ): { status: number; body: unknown } {
+    const roles = (state.project.my_roles as string[] | undefined) ?? []
+    if (!roles.some((role) => ['member', 'approver', 'lead'].includes(role)))
+      return { status: 403, body: problem('forbidden', 403) }
+    if (input.confirm !== true) return { status: 400, body: problem('validation', 400) }
+    if (['completed', 'canceled'].includes(String(wave.state)))
+      return { status: 409, body: problem('state-conflict', 409, { current_state: wave.state }) }
+    wave.state = 'canceled'
+    wave.result = 'canceled'
+    wave.available_actions = []
+    wave.question_open = null
+    const summary = state.waves.find((item) => item.id === wave.id)
+    if (summary) summary.state = 'canceled'
+    const command = this.command('cancel', 'wave', String(wave.id), 'applied')
+    return { status: 202, body: { ...command, state: 'pending' } }
   }
 
   /** listGateRounds, getGateRound, approveGate and rejectGate with the rules of US-06 and ADR-19. */

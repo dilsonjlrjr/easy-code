@@ -169,6 +169,8 @@ export interface WavesApi {
     idempotencyKey: string,
   ) => Promise<Command>
   listEvents: (projectId: string, waveId: string) => Promise<EventsPage>
+  /** US-14: `cancel` (confirmed); aborts the call in progress and records the lost cost. */
+  cancelWave: (projectId: string, waveId: string, idempotencyKey: string) => Promise<Command>
   listSandboxExecutions: (projectId: string, waveId: string) => Promise<SandboxExecution[]>
   /** The full combined output of a command, as text (never rendered as HTML; RNF-05). */
   downloadExecutionOutput: (
@@ -219,6 +221,12 @@ export function createWavesApi(client: HttpClient = apiClient): WavesApi {
       client.post<Command>(
         `${wavePath(projectId, waveId)}/questions/${encodeURIComponent(questionId)}/answer`,
         { answers },
+        { headers: idempotencyHeaders(idempotencyKey) },
+      ),
+    cancelWave: (projectId, waveId, idempotencyKey) =>
+      client.post<Command>(
+        `${wavePath(projectId, waveId)}/cancellation`,
+        { confirm: true },
         { headers: idempotencyHeaders(idempotencyKey) },
       ),
     listSandboxExecutions: (projectId, waveId) =>
