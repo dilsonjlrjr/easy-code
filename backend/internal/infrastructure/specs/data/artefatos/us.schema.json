@@ -1,0 +1,164 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:easycode:schema:us:v1",
+  "title": "História de usuário",
+  "description": "História de usuário com critérios de aceite Dado/Quando/Então.",
+  "allOf": [
+    {
+      "$ref": "cabecalho-comum.schema.json"
+    },
+    {
+      "properties": {
+        "tipo": {
+          "const": "US"
+        },
+        "id": {
+          "type": "string",
+          "description": "Id do artefato: US-NN.",
+          "pattern": "^US-[0-9]{2,}$"
+        },
+        "ator": {
+          "type": "string",
+          "description": "Quem quer.",
+          "minLength": 1
+        },
+        "quero": {
+          "type": "string",
+          "description": "O que o ator quer.",
+          "minLength": 1
+        },
+        "para": {
+          "type": "string",
+          "description": "Benefício.",
+          "minLength": 1
+        },
+        "prioridade": {
+          "type": "string",
+          "description": "Prioridade MoSCoW.",
+          "enum": [
+            "must",
+            "should",
+            "could",
+            "wont"
+          ]
+        },
+        "origem": {
+          "type": "string",
+          "description": "Trecho exato da ideia de entrada ou resposta do usuário que gerou a história. Nunca inventado.",
+          "minLength": 1
+        },
+        "tem_interface": {
+          "type": "boolean",
+          "description": "Define se o Design precisa de tela."
+        },
+        "criterios_aceite": {
+          "type": "array",
+          "description": "Critérios de aceite testáveis.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "description": "Id local do critério.",
+                "pattern": "^CA-[0-9]+$"
+              },
+              "dado": {
+                "type": "string",
+                "description": "Contexto.",
+                "minLength": 1
+              },
+              "quando": {
+                "type": "string",
+                "description": "Ação.",
+                "minLength": 1
+              },
+              "entao": {
+                "type": "string",
+                "description": "Resultado verificável.",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "id",
+              "dado",
+              "quando",
+              "entao"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 1
+        },
+        "regras_negocio": {
+          "type": "array",
+          "description": "Regras de negócio exigidas pela história.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "description": "Id local da regra.",
+                "pattern": "^RN-[0-9]+$"
+              },
+              "descricao": {
+                "type": "string",
+                "description": "Regra de negócio.",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "id",
+              "descricao"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "perguntas_abertas": {
+          "type": "array",
+          "description": "Perguntas sem resposta.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "pergunta": {
+                "type": "string",
+                "description": "Pergunta.",
+                "minLength": 1
+              },
+              "bloqueante": {
+                "type": "boolean",
+                "description": "Se verdadeiro, o gate não aprova."
+              }
+            },
+            "required": [
+              "pergunta",
+              "bloqueante"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "rnf": {
+          "type": "array",
+          "description": "RNF que afetam esta história.",
+          "items": {
+            "type": "string",
+            "description": "Id de RNF.",
+            "pattern": "^RNF-[0-9]{2,}$"
+          },
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "ator",
+        "quero",
+        "para",
+        "prioridade",
+        "origem",
+        "tem_interface",
+        "criterios_aceite",
+        "regras_negocio",
+        "perguntas_abertas",
+        "rnf"
+      ]
+    }
+  ],
+  "unevaluatedProperties": false
+}

@@ -63,7 +63,7 @@ func (u Users) LeadInAnyProject(ctx context.Context, p identity.Principal) (bool
 	var lead bool
 	err := conn(ctx, u.pool).QueryRow(WithOperation(ctx, "users.lead_in_any_project"), `
 SELECT EXISTS (SELECT 1 FROM easycode.project_members m JOIN easycode.projects p ON p.id = m.project_id
-                 WHERE m.user_id = `+userIDSQL(1, 2)+` AND m.role = 'lead' AND p.deletion_requested_at IS NULL)`,
+                 WHERE m.user_id = `+principalUserIDSQL+` AND m.role = 'lead' AND p.deletion_requested_at IS NULL)`,
 		p.OrganizationID, p.Subject).Scan(&lead)
 	if err != nil {
 		return false, fmt.Errorf("lead in any project: %w", classify(err))
@@ -71,11 +71,10 @@ SELECT EXISTS (SELECT 1 FROM easycode.project_members m JOIN easycode.projects p
 	return lead, nil
 }
 
-// userIDSQL is the subquery that resolves a principal (organization public id, sub) to users.id.
-func userIDSQL(organizationParam, subjectParam int) string {
-	return fmt.Sprintf(`(SELECT uu.id FROM easycode.users uu JOIN easycode.organizations oo ON oo.id = uu.organization_id
- WHERE oo.public_id = $%d::uuid AND uu.sub = $%d)`, organizationParam, subjectParam)
-}
+// principalUserIDSQL resolves the principal of parameters $1 (organization public id) and $2
+// (sub) to users.id.
+const principalUserIDSQL = `(SELECT uu.id FROM easycode.users uu JOIN easycode.organizations oo ON oo.id = uu.organization_id
+ WHERE oo.public_id = $1::uuid AND uu.sub = $2)`
 
 // SeedDevIdentity creates the development organization and its "dev" user, administrator of the
 // organization (marco1 profile, ADR-12). It runs with the migration role, which owns the tables;

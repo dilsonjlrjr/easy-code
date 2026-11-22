@@ -1,0 +1,597 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:easycode:schema:rel-seg:v1",
+  "title": "Relatório de Segurança",
+  "description": "Relatório da auditoria de segurança: resumo por severidade, varreduras, revisão OWASP Top 10:2025 e ameaças conferidas.",
+  "allOf": [
+    {
+      "$ref": "cabecalho-comum.schema.json"
+    },
+    {
+      "properties": {
+        "tipo": {
+          "const": "REL-SEG"
+        },
+        "id": {
+          "type": "string",
+          "description": "Id do artefato: REL-SEG-NN.",
+          "pattern": "^REL-SEG-[0-9]{2,}$"
+        },
+        "execucao": {
+          "type": "integer",
+          "description": "Número da execução.",
+          "minimum": 1
+        },
+        "resumo": {
+          "type": "object",
+          "description": "Achados por severidade.",
+          "properties": {
+            "critico": {
+              "type": "object",
+              "description": "Críticos.",
+              "properties": {
+                "abertos": {
+                  "type": "integer",
+                  "description": "Abertos.",
+                  "minimum": 0
+                },
+                "fechados": {
+                  "type": "integer",
+                  "description": "Fechados.",
+                  "minimum": 0
+                },
+                "aceitos": {
+                  "type": "integer",
+                  "description": "Aceitos (risco assumido por humano).",
+                  "minimum": 0
+                }
+              },
+              "required": [
+                "abertos",
+                "fechados",
+                "aceitos"
+              ],
+              "additionalProperties": false
+            },
+            "alto": {
+              "type": "object",
+              "description": "Altos.",
+              "properties": {
+                "abertos": {
+                  "type": "integer",
+                  "description": "Abertos.",
+                  "minimum": 0
+                },
+                "fechados": {
+                  "type": "integer",
+                  "description": "Fechados.",
+                  "minimum": 0
+                },
+                "aceitos": {
+                  "type": "integer",
+                  "description": "Aceitos (risco assumido por humano).",
+                  "minimum": 0
+                }
+              },
+              "required": [
+                "abertos",
+                "fechados",
+                "aceitos"
+              ],
+              "additionalProperties": false
+            },
+            "medio": {
+              "type": "object",
+              "description": "Médios.",
+              "properties": {
+                "abertos": {
+                  "type": "integer",
+                  "description": "Abertos.",
+                  "minimum": 0
+                },
+                "fechados": {
+                  "type": "integer",
+                  "description": "Fechados.",
+                  "minimum": 0
+                },
+                "aceitos": {
+                  "type": "integer",
+                  "description": "Aceitos (risco assumido por humano).",
+                  "minimum": 0
+                }
+              },
+              "required": [
+                "abertos",
+                "fechados",
+                "aceitos"
+              ],
+              "additionalProperties": false
+            },
+            "baixo": {
+              "type": "object",
+              "description": "Baixos.",
+              "properties": {
+                "abertos": {
+                  "type": "integer",
+                  "description": "Abertos.",
+                  "minimum": 0
+                },
+                "fechados": {
+                  "type": "integer",
+                  "description": "Fechados.",
+                  "minimum": 0
+                },
+                "aceitos": {
+                  "type": "integer",
+                  "description": "Aceitos (risco assumido por humano).",
+                  "minimum": 0
+                }
+              },
+              "required": [
+                "abertos",
+                "fechados",
+                "aceitos"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "critico",
+            "alto",
+            "medio",
+            "baixo"
+          ],
+          "additionalProperties": false
+        },
+        "varreduras": {
+          "type": "array",
+          "description": "Varreduras automáticas (open source), ao menos 3.",
+          "items": {
+            "type": "object",
+            "description": "Uma varredura.",
+            "properties": {
+              "ferramenta": {
+                "type": "string",
+                "description": "Ferramenta.",
+                "enum": [
+                  "opengrep",
+                  "trivy",
+                  "gitleaks",
+                  "outra"
+                ]
+              },
+              "versao": {
+                "type": "string",
+                "description": "Versão da ferramenta.",
+                "minLength": 1,
+                "pattern": "\\S"
+              },
+              "comando": {
+                "type": "string",
+                "description": "Comando exato.",
+                "minLength": 1,
+                "pattern": "\\S"
+              },
+              "achados": {
+                "type": "array",
+                "description": "ACH emitidos a partir da varredura.",
+                "items": {
+                  "type": "string",
+                  "description": "Id de ACH.",
+                  "pattern": "^ACH-[0-9]{2,}$"
+                },
+                "uniqueItems": true
+              },
+              "falsos_positivos": {
+                "type": "integer",
+                "description": "Quantidade de falsos positivos descartados (detalhe em `falsos_positivos` do artefato).",
+                "minimum": 0
+              },
+              "resultados": {
+                "type": "array",
+                "description": "Resultados reais da varredura e o que cada um virou (PL-21): id do resultado na Ferramenta (regra ou CVE, ex.: GL-01) e o ACH emitido, ou nenhum quando é falso positivo (listado em `falsos_positivos` do artefato). Opcional.",
+                "items": {
+                  "type": "object",
+                  "description": "Um resultado da Ferramenta.",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "description": "Id do resultado na Ferramenta (regra, CVE ou id local); nunca o segredo encontrado.",
+                      "minLength": 1,
+                      "maxLength": 128,
+                      "pattern": "\\S"
+                    },
+                    "achado": {
+                      "type": "string",
+                      "description": "ACH emitido a partir do resultado.",
+                      "pattern": "^ACH-[0-9]{2,}$"
+                    },
+                    "falso_positivo": {
+                      "type": "boolean",
+                      "description": "Resultado descartado como falso positivo."
+                    }
+                  },
+                  "required": [
+                    "id"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": [
+              "ferramenta",
+              "versao",
+              "comando",
+              "achados",
+              "falsos_positivos"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 3
+        },
+        "owasp": {
+          "type": "array",
+          "description": "Revisão manual OWASP Top 10:2025: exatamente 10 itens, A01 a A10. Nomes e ordem em owasp.org/Top10/2025.",
+          "items": {
+            "type": "object",
+            "description": "Uma categoria.",
+            "properties": {
+              "categoria": {
+                "type": "string",
+                "description": "Categoria OWASP.",
+                "enum": [
+                  "A01",
+                  "A02",
+                  "A03",
+                  "A04",
+                  "A05",
+                  "A06",
+                  "A07",
+                  "A08",
+                  "A09",
+                  "A10"
+                ]
+              },
+              "verificado": {
+                "const": true,
+                "description": "Sempre true: verificado, mesmo sem achado."
+              },
+              "resultado": {
+                "type": "string",
+                "description": "Resultado: 'verificado, sem achado' é resultado.",
+                "minLength": 1,
+                "pattern": "\\S"
+              },
+              "achados": {
+                "type": "array",
+                "description": "ACH da categoria.",
+                "items": {
+                  "type": "string",
+                  "description": "Id de ACH.",
+                  "pattern": "^ACH-[0-9]{2,}$"
+                },
+                "uniqueItems": true
+              }
+            },
+            "required": [
+              "categoria",
+              "verificado",
+              "resultado",
+              "achados"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 10,
+          "maxItems": 10,
+          "allOf": [
+            {
+              "contains": {
+                "type": "object",
+                "properties": {
+                  "categoria": {
+                    "const": "A01"
+                  }
+                },
+                "required": [
+                  "categoria"
+                ]
+              }
+            },
+            {
+              "contains": {
+                "type": "object",
+                "properties": {
+                  "categoria": {
+                    "const": "A02"
+                  }
+                },
+                "required": [
+                  "categoria"
+                ]
+              }
+            },
+            {
+              "contains": {
+                "type": "object",
+                "properties": {
+                  "categoria": {
+                    "const": "A03"
+                  }
+                },
+                "required": [
+                  "categoria"
+                ]
+              }
+            },
+            {
+              "contains": {
+                "type": "object",
+                "properties": {
+                  "categoria": {
+                    "const": "A04"
+                  }
+                },
+                "required": [
+                  "categoria"
+                ]
+              }
+            },
+            {
+              "contains": {
+                "type": "object",
+                "properties": {
+                  "categoria": {
+                    "const": "A05"
+                  }
+                },
+                "required": [
+                  "categoria"
+                ]
+              }
+            },
+            {
+              "contains": {
+                "type": "object",
+                "properties": {
+                  "categoria": {
+                    "const": "A06"
+                  }
+                },
+                "required": [
+                  "categoria"
+                ]
+              }
+            },
+            {
+              "contains": {
+                "type": "object",
+                "properties": {
+                  "categoria": {
+                    "const": "A07"
+                  }
+                },
+                "required": [
+                  "categoria"
+                ]
+              }
+            },
+            {
+              "contains": {
+                "type": "object",
+                "properties": {
+                  "categoria": {
+                    "const": "A08"
+                  }
+                },
+                "required": [
+                  "categoria"
+                ]
+              }
+            },
+            {
+              "contains": {
+                "type": "object",
+                "properties": {
+                  "categoria": {
+                    "const": "A09"
+                  }
+                },
+                "required": [
+                  "categoria"
+                ]
+              }
+            },
+            {
+              "contains": {
+                "type": "object",
+                "properties": {
+                  "categoria": {
+                    "const": "A10"
+                  }
+                },
+                "required": [
+                  "categoria"
+                ]
+              }
+            }
+          ]
+        },
+        "ameacas_conferidas": {
+          "type": "array",
+          "description": "Ameaças do modelo conferidas na auditoria. Forma padrão (PL-21): um objeto por ameaça com o resultado da conferência e os ACH abertos por ela; o id simples (AM-n) é aceito por compatibilidade e equivale a resultado sem detalhe.",
+          "items": {
+            "oneOf": [
+              {
+                "type": "string",
+                "description": "Id de ameaça (AM-n), forma simples.",
+                "pattern": "^AM-[0-9]+$"
+              },
+              {
+                "type": "object",
+                "description": "Conferência de uma ameaça na auditoria.",
+                "properties": {
+                  "ameaca": {
+                    "type": "string",
+                    "description": "Id de ameaça (AM-n).",
+                    "pattern": "^AM-[0-9]+$"
+                  },
+                  "resultado": {
+                    "type": "string",
+                    "description": "`mitigada`: mitigação implementada e testada; `nao_mitigada`: exige ACH em `achados` (ou ACH aceito por humano).",
+                    "enum": [
+                      "mitigada",
+                      "nao_mitigada"
+                    ]
+                  },
+                  "achados": {
+                    "type": "array",
+                    "description": "ACH abertos pela conferência da ameaça.",
+                    "items": {
+                      "type": "string",
+                      "description": "Id de ACH.",
+                      "pattern": "^ACH-[0-9]{2,}$"
+                    },
+                    "uniqueItems": true
+                  }
+                },
+                "required": [
+                  "ameaca",
+                  "resultado"
+                ],
+                "additionalProperties": false,
+                "if": {
+                  "properties": {
+                    "resultado": {
+                      "const": "nao_mitigada"
+                    }
+                  },
+                  "required": [
+                    "resultado"
+                  ]
+                },
+                "then": {
+                  "required": [
+                    "achados"
+                  ],
+                  "properties": {
+                    "achados": {
+                      "minItems": 1
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "uniqueItems": true
+        },
+        "falsos_positivos": {
+          "type": "array",
+          "description": "Falsos positivos descartados, com justificativa.",
+          "items": {
+            "type": "object",
+            "description": "Falso positivo.",
+            "properties": {
+              "ferramenta": {
+                "type": "string",
+                "description": "Ferramenta.",
+                "minLength": 1,
+                "pattern": "\\S"
+              },
+              "regra": {
+                "type": "string",
+                "description": "Regra.",
+                "minLength": 1,
+                "pattern": "\\S"
+              },
+              "local": {
+                "type": "string",
+                "description": "Arquivo:linha.",
+                "minLength": 1,
+                "pattern": "\\S"
+              },
+              "justificativa": {
+                "type": "string",
+                "description": "Por que é falso positivo.",
+                "minLength": 1,
+                "pattern": "\\S"
+              }
+            },
+            "required": [
+              "ferramenta",
+              "regra",
+              "local",
+              "justificativa"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "comandos": {
+          "type": "array",
+          "description": "Comandos exatos para reproduzir as varreduras.",
+          "items": {
+            "type": "string",
+            "description": "Comando.",
+            "minLength": 1,
+            "pattern": "\\S"
+          },
+          "minItems": 1
+        },
+        "veredito": {
+          "type": "string",
+          "description": "Veredito. Aprovado exige zero Crítico e Alto abertos.",
+          "enum": [
+            "aprovado",
+            "reprovado"
+          ]
+        }
+      },
+      "required": [
+        "execucao",
+        "resumo",
+        "varreduras",
+        "owasp",
+        "ameacas_conferidas",
+        "falsos_positivos",
+        "comandos",
+        "veredito"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "veredito": {
+                "const": "aprovado"
+              }
+            },
+            "required": [
+              "veredito"
+            ]
+          },
+          "then": {
+            "properties": {
+              "resumo": {
+                "properties": {
+                  "critico": {
+                    "properties": {
+                      "abertos": {
+                        "const": 0
+                      }
+                    }
+                  },
+                  "alto": {
+                    "properties": {
+                      "abertos": {
+                        "const": 0
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "unevaluatedProperties": false
+}

@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:easycode:schema:cabecalho-comum:v1",
+  "title": "Cabeçalho comum de artefato",
+  "description": "Campos presentes no cabeçalho YAML de todo artefato. Cada esquema de tipo referencia este com allOf e acrescenta seus campos próprios.",
+  "type": "object",
+  "required": ["id", "tipo", "titulo", "autor", "onda", "versao", "estado", "vinculos", "historico"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "description": "Identificador do artefato no projeto. Prefixo do tipo + número (US-03) ou id fixo (VISAO, ARQ, DIC, PERSIST, AMEACAS, BACKLOG, TELAS).",
+      "pattern": "^([A-Z]+(-[A-Z]+)?-[0-9]{2,}|VISAO|ARQ|DIC|PERSIST|AMEACAS|BACKLOG|TELAS)$"
+    },
+    "tipo": {
+      "type": "string",
+      "enum": ["VISAO", "US", "RNF", "BACKLOG", "ARQ", "ADR", "T", "DIC", "PERSIST", "VALIDACAO", "CT", "AMEACAS", "ACH", "REL-QA", "REL-SEG", "RELEASE", "TELAS"]
+    },
+    "titulo": { "type": "string", "minLength": 3, "maxLength": 140 },
+    "autor": {
+      "type": "string",
+      "description": "Quem produziu a versão atual: o agente, o orquestrador ou `humano` (PD-03, US-53). `humano` = a versão nasceu de edição humana, que só vale depois da validação e formatação pelo agente da Etapa: a pessoa fica em `editado_por` e o agente em `revisado_por`. Edição humana só nos tipos de `x-human-edit-types`.",
+      "x-human-edit-types": ["VISAO", "US", "RNF", "BACKLOG", "ADR"],
+      "enum": ["requirements-agent", "architect-agent", "dba-agent", "designer-agent", "developer-agent", "qa-agent", "security-agent", "orquestrador", "humano"]
+    },
+    "editado_por": {
+      "type": "string",
+      "description": "Pessoa que editou a versão atual (id opaco do provedor de identidade, sub do Keycloak; nunca nome ou e-mail). Obrigatório quando autor = humano.",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "\\S"
+    },
+    "revisado_por": {
+      "type": "string",
+      "description": "Agente da Etapa que validou e formatou a edição humana antes de ela valer (onda de revisão da edição, em `onda`). Obrigatório quando autor = humano.",
+      "enum": ["requirements-agent", "architect-agent", "dba-agent", "designer-agent", "developer-agent", "qa-agent", "security-agent"]
+    },
+    "onda": {
+      "type": "string",
+      "description": "Onda que produziu a versão atual: sigla + número de 2 ou mais dígitos, numerado por sigla no projeto. Siglas (D-33): requisitos REQ, arquitetura ARQ, dados DBA, design DSG, validacao VAL (líder e todo participante: arquiteto, DBA, designer), implementacao DEV, qa QA, seguranca SEG, release REL; atividades paralelas qa-plano QA e seguranca-ameacas SEG (sigla do agente da atividade). Veja `x-siglas-onda`.",
+      "x-siglas-onda": {"requisitos": "REQ", "arquitetura": "ARQ", "dados": "DBA", "design": "DSG", "validacao": "VAL", "implementacao": "DEV", "qa": "QA", "seguranca": "SEG", "release": "REL", "qa-plano": "QA", "seguranca-ameacas": "SEG"},
+      "pattern": "^(REQ|ARQ|DBA|DSG|VAL|DEV|QA|SEG|REL)-[0-9]{2,}$"
+    },
+    "versao": { "type": "integer", "minimum": 1 },
+    "estado": {
+      "type": "string",
+      "description": "Ciclo de vida do artefato (specs/dominio/estados/artefato.md).",
+      "enum": ["rascunho", "em_revisao", "aprovado", "substituido"]
+    },
+    "substituido_por": {
+      "type": "string",
+      "description": "Id do artefato que substitui este; obrigatório quando estado = substituido."
+    },
+    "vinculos": {
+      "type": "array",
+      "description": "Ids de outros artefatos relacionados de forma genérica. Vínculos com significado próprio (cobre, segue, testa, mitiga) ficam nos campos tipados de cada esquema.",
+      "items": { "type": "string" },
+      "uniqueItems": true
+    },
+    "historico": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["versao", "data", "onda", "descricao"],
+        "properties": {
+          "versao": { "type": "integer", "minimum": 1 },
+          "data": { "type": "string", "format": "date" },
+          "onda": { "type": "string" },
+          "descricao": { "type": "string", "minLength": 3 },
+          "achado": { "type": "string", "description": "Id do ACH que motivou a versão, se for retrabalho ou mudança de escopo.", "pattern": "^ACH-[0-9]{2,}$" },
+          "editado_por": { "type": "string", "description": "Pessoa que editou a versão, quando ela nasceu de edição humana (id opaco, como `editado_por` do cabeçalho).", "minLength": 1, "maxLength": 128 }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "estado": { "const": "substituido" } }, "required": ["estado"] },
+      "then": { "required": ["substituido_por"] }
+    },
+    {
+      "if": { "properties": { "autor": { "const": "humano" } }, "required": ["autor"] },
+      "then": {
+        "required": ["editado_por", "revisado_por"],
+        "properties": { "tipo": { "enum": ["VISAO", "US", "RNF", "BACKLOG", "ADR"] } }
+      }
+    }
+  ]
+}

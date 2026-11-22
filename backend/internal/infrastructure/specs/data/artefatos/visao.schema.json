@@ -1,0 +1,114 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:easycode:schema:visao:v1",
+  "title": "Visão do produto",
+  "description": "Visão do produto: problema, público, objetivo, fora de escopo e glossário. Um por projeto.",
+  "allOf": [
+    {
+      "$ref": "cabecalho-comum.schema.json"
+    },
+    {
+      "properties": {
+        "tipo": {
+          "const": "VISAO"
+        },
+        "id": {
+          "const": "VISAO"
+        },
+        "problema": {
+          "type": "string",
+          "description": "O que dói hoje e para quem.",
+          "minLength": 1
+        },
+        "atores": {
+          "type": "array",
+          "description": "Público e atores.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "nome": {
+                "type": "string",
+                "description": "Nome do ator.",
+                "minLength": 1
+              },
+              "quem_e": {
+                "type": "string",
+                "description": "Quem é.",
+                "minLength": 1
+              },
+              "necessidade": {
+                "type": "string",
+                "description": "O que precisa.",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "nome",
+              "quem_e",
+              "necessidade"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 1
+        },
+        "objetivo": {
+          "type": "string",
+          "description": "O que o sistema resolve, em uma ou duas frases.",
+          "minLength": 1
+        },
+        "metricas_sucesso": {
+          "type": "array",
+          "description": "Métricas de sucesso.",
+          "items": {
+            "type": "string",
+            "description": "Como saber que funcionou.",
+            "minLength": 1
+          }
+        },
+        "fora_de_escopo": {
+          "type": "array",
+          "description": "O que não será feito.",
+          "items": {
+            "type": "string",
+            "description": "Item que não será feito.",
+            "minLength": 1
+          },
+          "minItems": 1
+        },
+        "glossario": {
+          "type": "array",
+          "description": "Termos do domínio; todo termo usado nas US deve estar aqui.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "termo": {
+                "type": "string",
+                "description": "Termo do domínio.",
+                "minLength": 1
+              },
+              "definicao": {
+                "type": "string",
+                "description": "Definição.",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "termo",
+              "definicao"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 1
+        }
+      },
+      "required": [
+        "problema",
+        "atores",
+        "objetivo",
+        "fora_de_escopo",
+        "glossario"
+      ]
+    }
+  ],
+  "unevaluatedProperties": false
+}

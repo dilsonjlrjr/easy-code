@@ -1,0 +1,162 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:easycode:schema:adr:v1",
+  "title": "Decisão de arquitetura",
+  "description": "ADR: decisão com opções comparadas e consequências. `natureza: imposta` (PD-03) registra decisão já tomada fora do projeto (norma da empresa, infraestrutura obrigatória): cita a restrição do projeto que a impõe (PL-13) e dispensa a comparação de opções.",
+  "allOf": [
+    {
+      "$ref": "cabecalho-comum.schema.json"
+    },
+    {
+      "properties": {
+        "tipo": {
+          "const": "ADR"
+        },
+        "id": {
+          "type": "string",
+          "description": "Id do artefato: ADR-NN.",
+          "pattern": "^ADR-[0-9]{2,}$"
+        },
+        "natureza": {
+          "type": "string",
+          "description": "`escolhida` (padrão): o Arquiteto compara ao menos 2 opções e decide, motivado por US/RNF. `imposta`: decisão já tomada, imposta por restrição do projeto (`restricoes`); basta a opção imposta. Pode ser escrita pelo Arquiteto ou por edição humana (autor humano, US-53).",
+          "enum": [
+            "escolhida",
+            "imposta"
+          ],
+          "default": "escolhida"
+        },
+        "restricoes": {
+          "type": "array",
+          "description": "Restrições técnicas do projeto que impõem a decisão (campo `restricoes` do projeto, US-54). Obrigatório com natureza = imposta.",
+          "items": {
+            "type": "string",
+            "description": "Id da restrição do projeto.",
+            "pattern": "^RESTR-[0-9]{2,}$"
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "contexto": {
+          "type": "string",
+          "description": "Problema, restrições e requisitos que pedem a decisão.",
+          "minLength": 1
+        },
+        "opcoes": {
+          "type": "array",
+          "description": "Opções consideradas: ao menos 2 com natureza escolhida; com natureza imposta, ao menos a opção imposta.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "nome": {
+                "type": "string",
+                "description": "Nome da opção.",
+                "minLength": 1
+              },
+              "pros": {
+                "type": "array",
+                "description": "Prós.",
+                "items": {
+                  "type": "string",
+                  "description": "Prós.",
+                  "minLength": 1
+                },
+                "minItems": 1
+              },
+              "contras": {
+                "type": "array",
+                "description": "Contras.",
+                "items": {
+                  "type": "string",
+                  "description": "Contras.",
+                  "minLength": 1
+                },
+                "minItems": 1
+              }
+            },
+            "required": [
+              "nome",
+              "pros",
+              "contras"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 1
+        },
+        "decisao": {
+          "type": "string",
+          "description": "Opção escolhida e por quê.",
+          "minLength": 1
+        },
+        "consequencias": {
+          "type": "array",
+          "description": "O que fica mais fácil e o que fica mais difícil.",
+          "items": {
+            "type": "string",
+            "description": "Consequência.",
+            "minLength": 1
+          },
+          "minItems": 1
+        },
+        "skills": {
+          "type": "array",
+          "description": "Skills que orientaram a decisão.",
+          "items": {
+            "type": "string",
+            "description": "Skill.",
+            "minLength": 1
+          }
+        },
+        "motivada_por": {
+          "type": "array",
+          "description": "US/RNF que motivaram a decisão. Obrigatório com natureza escolhida; opcional com natureza imposta.",
+          "items": {
+            "type": "string",
+            "description": "Id de US ou RNF.",
+            "pattern": "^(US|RNF)-[0-9]{2,}$"
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "substitui": {
+          "type": "string",
+          "description": "ADR anterior que esta substitui (a antiga vira substituido).",
+          "pattern": "^ADR-[0-9]{2,}$"
+        }
+      },
+      "required": [
+        "contexto",
+        "opcoes",
+        "decisao",
+        "consequencias",
+        "skills"
+      ],
+      "if": {
+        "properties": {
+          "natureza": {
+            "const": "imposta"
+          }
+        },
+        "required": [
+          "natureza"
+        ]
+      },
+      "then": {
+        "required": [
+          "restricoes"
+        ]
+      },
+      "else": {
+        "required": [
+          "motivada_por"
+        ],
+        "properties": {
+          "opcoes": {
+            "minItems": 2
+          }
+        }
+      }
+    }
+  ],
+  "unevaluatedProperties": false
+}

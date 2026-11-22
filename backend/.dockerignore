@@ -2,3 +2,4 @@ bin/
 *.md
 .golangci.yml
 Makefile
+!internal/infrastructure/specs/data/agentes/*.md

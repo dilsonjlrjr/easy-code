@@ -10,7 +10,7 @@ DOCKER_GO       := docker run --rm -u $(shell id -u):$(shell id -g) -e HOME=/tmp
 TEST_NETWORK    ?=
 RUN_ENV         ?= --network host -e EASYCODE_DATABASE_URL -e EASYCODE_HTTP_ADDR -e EASYCODE_LOG_LEVEL
 
-.PHONY: build test test-race test-integration lint run migrate image fmt tidy cache ci
+.PHONY: build test test-race test-integration lint run migrate image fmt tidy cache ci check-specs sync-specs
 
 cache:
 	@docker volume create easycode-go-cache >/dev/null
@@ -30,8 +30,26 @@ test-race: cache
 test-integration:
 	./scripts/with-postgres.sh $(MAKE) test
 
+# The binaries embed copies of domain specs (workflow, artifact schemas, permissions) and agent
+# instructions, so builds are reproducible from project/backend alone. check-specs fails when a copy
+# drifts from its source in the repository; sync-specs refreshes the copies.
+SPECS_DIR := internal/infrastructure/specs/data
+
+check-specs:
+	@cmp -s ../../specs/dominio/workflow/workflow-basico.yaml $(SPECS_DIR)/workflow/workflow-basico.yaml || { echo "drift: workflow-basico.yaml (make sync-specs)"; exit 1; }
+	@cmp -s ../../specs/dominio/governanca/permissoes.yaml $(SPECS_DIR)/governanca/permissoes.yaml || { echo "drift: permissoes.yaml (make sync-specs)"; exit 1; }
+	@diff -rq ../../specs/dominio/artefatos $(SPECS_DIR)/artefatos --exclude=README.md
+	@diff -rq ../../agentes/instrucoes $(SPECS_DIR)/agentes --exclude=README.md
+	@echo "embedded specs in sync"
+
+sync-specs:
+	cp ../../specs/dominio/workflow/workflow-basico.yaml $(SPECS_DIR)/workflow/
+	cp ../../specs/dominio/governanca/permissoes.yaml $(SPECS_DIR)/governanca/
+	cp ../../specs/dominio/artefatos/*.schema.json $(SPECS_DIR)/artefatos/
+	for f in ../../agentes/instrucoes/*.md; do case "$$f" in */README.md) ;; *) cp "$$f" $(SPECS_DIR)/agentes/ ;; esac; done
+
 # What CI runs; needs only Docker. From the repo root: make -C project/backend ci
-ci: lint test-integration build
+ci: check-specs lint test-integration build
 
 lint: cache
 	$(DOCKER_GO) $(LINT_IMAGE) golangci-lint run ./...

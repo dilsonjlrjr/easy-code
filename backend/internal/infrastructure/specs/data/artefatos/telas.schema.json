@@ -1,0 +1,183 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:easycode:schema:telas:v1",
+  "title": "Mapa de telas",
+  "description": "Mapa tela x história do Design (um por projeto): telas, US e critérios atendidos, estados desenhados, acessibilidade e lacunas do contrato da API. Aponta para o fluxo, o protótipo e o guia de estilo. Corpo em docs/design/TELAS.md.",
+  "allOf": [
+    {
+      "$ref": "cabecalho-comum.schema.json"
+    },
+    {
+      "properties": {
+        "tipo": {
+          "const": "TELAS"
+        },
+        "id": {
+          "type": "string",
+          "description": "Id fixo: TELAS.",
+          "pattern": "^TELAS$"
+        },
+        "fluxo": {
+          "type": "string",
+          "description": "Caminho do fluxo de navegação.",
+          "pattern": "^\\S+$",
+          "examples": [
+            "docs/design/fluxo.md"
+          ]
+        },
+        "prototipo": {
+          "type": "string",
+          "description": "Caminho da pasta do protótipo navegável.",
+          "pattern": "^\\S+$",
+          "examples": [
+            "docs/design/prototipo/"
+          ]
+        },
+        "estilo": {
+          "type": "string",
+          "description": "Caminho do guia de estilo (design system).",
+          "pattern": "^\\S+$",
+          "examples": [
+            "docs/design/estilo.md"
+          ]
+        },
+        "telas": {
+          "type": "array",
+          "description": "Telas do produto; toda US com interface tem ao menos uma.",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "description": "Uma tela.",
+            "properties": {
+              "id": {
+                "type": "string",
+                "description": "Id local da tela (TL-n).",
+                "pattern": "^TL-[0-9]+$"
+              },
+              "nome": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "\\S",
+                "description": "Nome da tela."
+              },
+              "arquivo": {
+                "type": "string",
+                "description": "Arquivo da tela no protótipo.",
+                "pattern": "^\\S+$",
+                "examples": [
+                  "docs/design/prototipo/reservar.html"
+                ]
+              },
+              "us": {
+                "type": "array",
+                "description": "US atendidas pela tela.",
+                "items": {
+                  "type": "string",
+                  "description": "Id de US.",
+                  "pattern": "^US-[0-9]{2,}$"
+                },
+                "minItems": 1,
+                "uniqueItems": true
+              },
+              "criterios": {
+                "type": "array",
+                "description": "Critérios de aceite que a tela mostra, no formato US-NN/CA-n.",
+                "items": {
+                  "type": "string",
+                  "description": "Critério de aceite.",
+                  "pattern": "^US-[0-9]{2,}/CA-[0-9]+$"
+                },
+                "minItems": 1,
+                "uniqueItems": true
+              },
+              "estados": {
+                "type": "array",
+                "description": "Estados desenhados da tela (vazio, carregando, erro, sucesso, sem_permissao ou outro, em snake_case).",
+                "items": {
+                  "type": "string",
+                  "description": "Estado da tela.",
+                  "pattern": "^[a-z][a-z0-9_]*$",
+                  "examples": [
+                    "vazio",
+                    "carregando",
+                    "erro",
+                    "sucesso",
+                    "sem_permissao"
+                  ]
+                },
+                "minItems": 1,
+                "uniqueItems": true
+              },
+              "operacoes": {
+                "type": "array",
+                "description": "operationId do contrato da API (docs/arquitetura/api/openapi.yaml) que o item usa ou implementa (rastreabilidade.md, L-02).",
+                "items": {
+                  "type": "string",
+                  "description": "operationId do OpenAPI.",
+                  "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$"
+                },
+                "uniqueItems": true
+              }
+            },
+            "required": [
+              "id",
+              "nome",
+              "arquivo",
+              "us",
+              "criterios",
+              "estados"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "acessibilidade": {
+          "type": "object",
+          "description": "Verificação de acessibilidade do conjunto de telas.",
+          "properties": {
+            "nivel": {
+              "type": "string",
+              "description": "Nível exigido.",
+              "enum": [
+                "wcag22_aa"
+              ]
+            },
+            "verificado": {
+              "type": "boolean",
+              "description": "Teclado, foco, contraste e rótulos verificados no protótipo."
+            },
+            "observacoes": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "\\S",
+              "description": "Observações, exceções e itens pendentes."
+            }
+          },
+          "required": [
+            "nivel",
+            "verificado"
+          ],
+          "additionalProperties": false
+        },
+        "lacunas_contrato": {
+          "type": "array",
+          "description": "ACH abertos para a Arquitetura por campo ou ação sem endpoint no contrato da API; vazio se nenhuma.",
+          "items": {
+            "type": "string",
+            "description": "Id de ACH.",
+            "pattern": "^ACH-[0-9]{2,}$"
+          },
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "fluxo",
+        "prototipo",
+        "estilo",
+        "telas",
+        "acessibilidade",
+        "lacunas_contrato"
+      ]
+    }
+  ],
+  "unevaluatedProperties": false
+}

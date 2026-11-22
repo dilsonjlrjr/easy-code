@@ -1,0 +1,531 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:easycode:schema:release:v1",
+  "title": "Release",
+  "description": "Consolidação da entrega (um por entrega), com gates, qualidade, rastreabilidade, custos e aprovação humana. Autor: orquestrador.",
+  "allOf": [
+    {
+      "$ref": "cabecalho-comum.schema.json"
+    },
+    {
+      "properties": {
+        "tipo": {
+          "const": "RELEASE"
+        },
+        "id": {
+          "type": "string",
+          "description": "Id do artefato: RELEASE-NN.",
+          "pattern": "^RELEASE-[0-9]{2,}$"
+        },
+        "autor": {
+          "const": "orquestrador"
+        },
+        "gates": {
+          "type": "array",
+          "description": "Gate de cada etapa, um item por etapa.",
+          "items": {
+            "type": "object",
+            "description": "Gate de uma etapa.",
+            "properties": {
+              "etapa": {
+                "type": "string",
+                "description": "Etapa.",
+                "enum": [
+                  "requisitos",
+                  "arquitetura",
+                  "dados",
+                  "design",
+                  "validacao",
+                  "implementacao",
+                  "qa",
+                  "seguranca"
+                ]
+              },
+              "aprovado_por": {
+                "type": "string",
+                "description": "Quem aprovou (pessoa, ou 'automatico' no modo automático de Implementação).",
+                "minLength": 1,
+                "pattern": "\\S"
+              },
+              "quando": {
+                "type": "string",
+                "description": "Data (ou data e hora) da aprovação.",
+                "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}(T[0-9:.+\\-Z]+)?$"
+              }
+            },
+            "required": [
+              "etapa",
+              "aprovado_por",
+              "quando"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 8,
+          "maxItems": 8,
+          "allOf": [
+            {
+              "contains": {
+                "type": "object",
+                "properties": {
+                  "etapa": {
+                    "const": "requisitos"
+                  }
+                },
+                "required": [
+                  "etapa"
+                ]
+              }
+            },
+            {
+              "contains": {
+                "type": "object",
+                "properties": {
+                  "etapa": {
+                    "const": "arquitetura"
+                  }
+                },
+                "required": [
+                  "etapa"
+                ]
+              }
+            },
+            {
+              "contains": {
+                "type": "object",
+                "properties": {
+                  "etapa": {
+                    "const": "dados"
+                  }
+                },
+                "required": [
+                  "etapa"
+                ]
+              }
+            },
+            {
+              "contains": {
+                "type": "object",
+                "properties": {
+                  "etapa": {
+                    "const": "design"
+                  }
+                },
+                "required": [
+                  "etapa"
+                ]
+              }
+            },
+            {
+              "contains": {
+                "type": "object",
+                "properties": {
+                  "etapa": {
+                    "const": "validacao"
+                  }
+                },
+                "required": [
+                  "etapa"
+                ]
+              }
+            },
+            {
+              "contains": {
+                "type": "object",
+                "properties": {
+                  "etapa": {
+                    "const": "implementacao"
+                  }
+                },
+                "required": [
+                  "etapa"
+                ]
+              }
+            },
+            {
+              "contains": {
+                "type": "object",
+                "properties": {
+                  "etapa": {
+                    "const": "qa"
+                  }
+                },
+                "required": [
+                  "etapa"
+                ]
+              }
+            },
+            {
+              "contains": {
+                "type": "object",
+                "properties": {
+                  "etapa": {
+                    "const": "seguranca"
+                  }
+                },
+                "required": [
+                  "etapa"
+                ]
+              }
+            }
+          ]
+        },
+        "qualidade": {
+          "type": "object",
+          "description": "Relatórios de qualidade e segurança da entrega.",
+          "properties": {
+            "rel_qa": {
+              "type": "string",
+              "description": "REL-QA da entrega.",
+              "pattern": "^REL-QA-[0-9]{2,}$"
+            },
+            "rel_seg": {
+              "type": "string",
+              "description": "REL-SEG da entrega.",
+              "pattern": "^REL-SEG-[0-9]{2,}$"
+            }
+          },
+          "required": [
+            "rel_qa",
+            "rel_seg"
+          ],
+          "additionalProperties": false
+        },
+        "validacao": {
+          "type": "string",
+          "description": "VALIDACAO liberada que vale para a entrega (rastreabilidade.md, L-08).",
+          "pattern": "^VALIDACAO-[0-9]{2,}$"
+        },
+        "riscos_aceitos": {
+          "type": "array",
+          "description": "ACH aceitos (quem, quando e por quê ficam no próprio ACH).",
+          "items": {
+            "type": "string",
+            "description": "Id de ACH.",
+            "pattern": "^ACH-[0-9]{2,}$"
+          },
+          "uniqueItems": true
+        },
+        "achados_abertos": {
+          "type": "array",
+          "description": "ACH não resolvidos na data da release (aberto, em_retrabalho, revalidando, escalado ou aguardando_escopo), qualquer severidade. Crítico/Alto aqui impede `aprovado` (checagem do gate.release); vazio se nenhum.",
+          "items": {
+            "type": "string",
+            "description": "Id de ACH.",
+            "pattern": "^ACH-[0-9]{2,}$"
+          },
+          "uniqueItems": true
+        },
+        "rastreabilidade": {
+          "type": "object",
+          "description": "Completude das US Must.",
+          "properties": {
+            "us_must_total": {
+              "type": "integer",
+              "description": "Total de US Must.",
+              "minimum": 0
+            },
+            "us_must_completas": {
+              "type": "integer",
+              "description": "US Must com tarefa, código e teste passando.",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "us_must_total",
+            "us_must_completas"
+          ],
+          "additionalProperties": false
+        },
+        "historias": {
+          "type": "array",
+          "description": "US entregues nesta release (escopo da entrega; subconjunto de BACKLOG.historias).",
+          "items": {
+            "type": "string",
+            "description": "Id de US.",
+            "pattern": "^US-[0-9]{2,}$"
+          },
+          "uniqueItems": true
+        },
+        "entrega": {
+          "type": "object",
+          "description": "O que foi entregue e onde. Fases 1-2: a Release termina no repositório (commit e tag; US-52); `pipeline` e `ambiente` são da publicação pelo CI/CD (Fase 3) e só são obrigatórios com situacao = publicado (PC-08).",
+          "properties": {
+            "repositorio": {
+              "type": "string",
+              "description": "Repositório.",
+              "minLength": 1,
+              "pattern": "\\S"
+            },
+            "commit": {
+              "type": "string",
+              "description": "Commit.",
+              "minLength": 1,
+              "pattern": "\\S"
+            },
+            "tag": {
+              "type": "string",
+              "description": "Tag.",
+              "minLength": 1,
+              "pattern": "\\S"
+            },
+            "pipeline": {
+              "type": "string",
+              "description": "Pipeline de CI/CD (link ou nome). Fase 3; obrigatório com situacao = publicado.",
+              "minLength": 1,
+              "pattern": "\\S"
+            },
+            "ambiente": {
+              "type": "string",
+              "description": "Ambiente alvo da publicação. Fase 3; obrigatório com situacao = publicado.",
+              "enum": [
+                "teste",
+                "homologacao",
+                "producao"
+              ]
+            }
+          },
+          "required": [
+            "repositorio",
+            "commit",
+            "tag"
+          ],
+          "additionalProperties": false
+        },
+        "custos": {
+          "type": "array",
+          "description": "Custo e tempo por etapa.",
+          "items": {
+            "type": "object",
+            "description": "Custo de uma etapa.",
+            "properties": {
+              "etapa": {
+                "type": "string",
+                "description": "Etapa.",
+                "enum": [
+                  "requisitos",
+                  "arquitetura",
+                  "dados",
+                  "design",
+                  "validacao",
+                  "implementacao",
+                  "qa",
+                  "seguranca"
+                ]
+              },
+              "ondas": {
+                "type": "integer",
+                "description": "Ondas executadas.",
+                "minimum": 0
+              },
+              "retrabalho": {
+                "type": "integer",
+                "description": "Ondas de retrabalho.",
+                "minimum": 0
+              },
+              "tokens": {
+                "type": "integer",
+                "description": "Tokens consumidos.",
+                "minimum": 0
+              },
+              "custo": {
+                "type": "number",
+                "description": "Custo, calculado pela tabela de preços versionada (PROJETO.md, seção 10).",
+                "minimum": 0
+              },
+              "tempo_execucao_min": {
+                "type": "number",
+                "description": "Tempo de execução, em minutos.",
+                "minimum": 0
+              },
+              "tempo_ciclo_min": {
+                "type": "number",
+                "description": "Tempo de ciclo (inclui esperas e aprovações), em minutos.",
+                "minimum": 0
+              }
+            },
+            "required": [
+              "etapa",
+              "ondas",
+              "retrabalho",
+              "tokens",
+              "custo",
+              "tempo_execucao_min",
+              "tempo_ciclo_min"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "aprovacao": {
+          "type": "object",
+          "description": "Aprovação humana da release; obrigatória a partir de aprovado.",
+          "properties": {
+            "por": {
+              "type": "string",
+              "description": "Quem decidiu.",
+              "minLength": 1,
+              "pattern": "\\S"
+            },
+            "quando": {
+              "type": "string",
+              "description": "Data (ou data e hora).",
+              "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}(T[0-9:.+\\-Z]+)?$"
+            },
+            "decisao": {
+              "type": "string",
+              "description": "Decisão.",
+              "enum": [
+                "aprovado",
+                "recusado"
+              ]
+            },
+            "motivo": {
+              "type": "string",
+              "description": "Motivo; obrigatório se recusado.",
+              "minLength": 1,
+              "pattern": "\\S"
+            }
+          },
+          "required": [
+            "por",
+            "quando",
+            "decisao"
+          ],
+          "additionalProperties": false,
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "decisao": {
+                    "const": "recusado"
+                  }
+                },
+                "required": [
+                  "decisao"
+                ]
+              },
+              "then": {
+                "required": [
+                  "motivo"
+                ]
+              }
+            }
+          ]
+        },
+        "situacao": {
+          "type": "string",
+          "description": "Situação da release. O estado do artefato fica em `estado`. `publicado` só existe na Fase 3 (publicação registrada pelo CI/CD); nas Fases 1-2 a Release aprovada com a tag conclui o projeto (concluirProjeto, US-52).",
+          "enum": [
+            "rascunho",
+            "aprovado",
+            "publicado",
+            "recusado"
+          ]
+        }
+      },
+      "required": [
+        "gates",
+        "qualidade",
+        "riscos_aceitos",
+        "rastreabilidade",
+        "entrega",
+        "custos",
+        "situacao"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "situacao": {
+                "const": "publicado"
+              }
+            },
+            "required": [
+              "situacao"
+            ]
+          },
+          "then": {
+            "properties": {
+              "entrega": {
+                "required": [
+                  "pipeline",
+                  "ambiente"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "situacao": {
+                "enum": [
+                  "aprovado",
+                  "publicado",
+                  "recusado"
+                ]
+              }
+            },
+            "required": [
+              "situacao"
+            ]
+          },
+          "then": {
+            "required": [
+              "aprovacao"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "situacao": {
+                "enum": [
+                  "aprovado",
+                  "publicado"
+                ]
+              }
+            },
+            "required": [
+              "situacao"
+            ]
+          },
+          "then": {
+            "properties": {
+              "aprovacao": {
+                "properties": {
+                  "decisao": {
+                    "const": "aprovado"
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "situacao": {
+                "const": "recusado"
+              }
+            },
+            "required": [
+              "situacao"
+            ]
+          },
+          "then": {
+            "properties": {
+              "aprovacao": {
+                "properties": {
+                  "decisao": {
+                    "const": "recusado"
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "unevaluatedProperties": false
+}

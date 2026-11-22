@@ -1,0 +1,299 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:easycode:schema:ameacas:v1",
+  "title": "Modelo de ameaças",
+  "description": "Modelo de ameaças STRIDE do projeto (um por projeto), com a conferência feita na auditoria. Campos de acompanhamento (x-campos-acompanhamento) podem mudar após a aprovação, sem nova versão; o resto é imutável (specs/dominio/estados/artefato.md).",
+  "x-campos-acompanhamento": [
+    "conferencia"
+  ],
+  "allOf": [
+    {
+      "$ref": "cabecalho-comum.schema.json"
+    },
+    {
+      "properties": {
+        "tipo": {
+          "const": "AMEACAS"
+        },
+        "id": {
+          "type": "string",
+          "description": "Id fixo: AMEACAS.",
+          "pattern": "^AMEACAS$"
+        },
+        "ativos": {
+          "type": "array",
+          "description": "O que proteger.",
+          "items": {
+            "type": "string",
+            "description": "Ativo.",
+            "minLength": 1,
+            "pattern": "\\S"
+          },
+          "minItems": 1
+        },
+        "atores": {
+          "type": "array",
+          "description": "Usuários legítimos por papel e atacantes considerados.",
+          "items": {
+            "type": "string",
+            "description": "Ator.",
+            "minLength": 1,
+            "pattern": "\\S"
+          },
+          "minItems": 1
+        },
+        "fluxo": {
+          "type": "string",
+          "description": "Fluxo de dados e fronteiras de confiança: diagrama Mermaid ou caminho do arquivo do diagrama.",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "ameacas": {
+          "type": "array",
+          "description": "Ameaças identificadas.",
+          "items": {
+            "type": "object",
+            "description": "Uma ameaça concreta.",
+            "properties": {
+              "id": {
+                "type": "string",
+                "description": "Id de ameaça (AM-n).",
+                "pattern": "^AM-[0-9]+$"
+              },
+              "fronteira": {
+                "type": "string",
+                "description": "Fronteira de confiança ou fluxo afetado.",
+                "minLength": 1,
+                "pattern": "\\S"
+              },
+              "stride": {
+                "type": "array",
+                "description": "Categorias STRIDE: spoofing, tampering, repudiation, information disclosure, denial of service, elevation of privilege.",
+                "items": {
+                  "type": "string",
+                  "description": "Categoria STRIDE.",
+                  "enum": [
+                    "s",
+                    "t",
+                    "r",
+                    "i",
+                    "d",
+                    "e"
+                  ]
+                },
+                "minItems": 1,
+                "uniqueItems": true
+              },
+              "descricao": {
+                "type": "string",
+                "description": "Ameaça concreta, não categoria.",
+                "minLength": 1,
+                "pattern": "\\S"
+              },
+              "probabilidade": {
+                "type": "string",
+                "description": "Probabilidade.",
+                "enum": [
+                  "baixa",
+                  "media",
+                  "alta"
+                ]
+              },
+              "impacto": {
+                "type": "string",
+                "description": "Impacto.",
+                "enum": [
+                  "baixo",
+                  "medio",
+                  "alto"
+                ]
+              },
+              "severidade": {
+                "type": "string",
+                "description": "Severidade, na mesma escala do ACH.",
+                "enum": [
+                  "critico",
+                  "alto",
+                  "medio",
+                  "baixo"
+                ]
+              },
+              "mitigacao": {
+                "type": "string",
+                "description": "Mitigação no desenho.",
+                "minLength": 1,
+                "pattern": "\\S"
+              },
+              "onde": {
+                "type": "array",
+                "description": "Onde a mitigação mora: ADR, RNF, T.",
+                "items": {
+                  "type": "string",
+                  "description": "Id de artefato (T-07), item de artefato (US-03/CA-2) ou caminho:linha (backend/src/X.java:58).",
+                  "anyOf": [
+                    {
+                      "pattern": "^([A-Z]+(-[A-Z]+)?-[0-9]{2,}|VISAO|ARQ|DIC|PERSIST|AMEACAS|BACKLOG|TELAS)(/[A-Z]+-[0-9]+)?$"
+                    },
+                    {
+                      "pattern": "^[^\\s:]+:[0-9]+$"
+                    }
+                  ]
+                },
+                "uniqueItems": true
+              },
+              "status": {
+                "type": "string",
+                "description": "Situação da ameaça. `aceita` só com ACH aceito por humano (campo `achado`; a checagem confere a situação do ACH).",
+                "enum": [
+                  "mitigada",
+                  "achado",
+                  "aceita"
+                ]
+              },
+              "achado": {
+                "type": "string",
+                "description": "ACH da ameaça: o aberto para a ameaça sem mitigação (status achado) ou o ACH aceito por humano que registra a aceitação do risco (status aceita). Obrigatório nos dois casos.",
+                "pattern": "^ACH-[0-9]{2,}$"
+              }
+            },
+            "required": [
+              "id",
+              "fronteira",
+              "stride",
+              "descricao",
+              "probabilidade",
+              "impacto",
+              "severidade",
+              "onde",
+              "status"
+            ],
+            "additionalProperties": false,
+            "allOf": [
+              {
+                "if": {
+                  "properties": {
+                    "status": {
+                      "const": "mitigada"
+                    }
+                  },
+                  "required": [
+                    "status"
+                  ]
+                },
+                "then": {
+                  "required": [
+                    "mitigacao"
+                  ]
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "status": {
+                      "const": "mitigada"
+                    }
+                  },
+                  "required": [
+                    "status"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "onde": {
+                      "minItems": 1
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "status": {
+                      "const": "achado"
+                    }
+                  },
+                  "required": [
+                    "status"
+                  ]
+                },
+                "then": {
+                  "required": [
+                    "achado"
+                  ]
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "status": {
+                      "const": "aceita"
+                    }
+                  },
+                  "required": [
+                    "status"
+                  ]
+                },
+                "then": {
+                  "required": [
+                    "achado"
+                  ]
+                }
+              }
+            ]
+          },
+          "minItems": 1
+        },
+        "conferencia": {
+          "type": "array",
+          "description": "Conferência feita na auditoria (modo AUDITORIA).",
+          "items": {
+            "type": "object",
+            "description": "Conferência de uma ameaça.",
+            "properties": {
+              "ameaca": {
+                "type": "string",
+                "description": "Ameaça conferida.",
+                "pattern": "^AM-[0-9]+$"
+              },
+              "implementada": {
+                "type": "boolean",
+                "description": "A mitigação está implementada."
+              },
+              "testada_por": {
+                "type": "array",
+                "description": "CT ou testes que exercitam a mitigação.",
+                "items": {
+                  "type": "string",
+                  "description": "CT-NN ou arquivo::nome.",
+                  "minLength": 1,
+                  "pattern": "\\S"
+                },
+                "uniqueItems": true
+              },
+              "resultado": {
+                "type": "string",
+                "description": "Resultado da conferência.",
+                "minLength": 1,
+                "pattern": "\\S"
+              }
+            },
+            "required": [
+              "ameaca",
+              "implementada",
+              "testada_por",
+              "resultado"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "ativos",
+        "atores",
+        "fluxo",
+        "ameacas"
+      ]
+    }
+  ],
+  "unevaluatedProperties": false
+}

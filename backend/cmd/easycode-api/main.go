@@ -15,6 +15,7 @@ import (
 	apphealth "easycode/internal/application/health"
 	"easycode/internal/application/idempotency"
 	apppricing "easycode/internal/application/pricing"
+	appproject "easycode/internal/application/project"
 	"easycode/internal/application/providerkey"
 	appsession "easycode/internal/application/session"
 	"easycode/internal/infrastructure/config"
@@ -23,6 +24,7 @@ import (
 	"easycode/internal/infrastructure/postgres"
 	"easycode/internal/infrastructure/process"
 	"easycode/internal/infrastructure/sealing"
+	"easycode/internal/infrastructure/specs"
 	"easycode/internal/infrastructure/telemetry"
 	"easycode/internal/infrastructure/websession"
 	httpapi "easycode/internal/interfaces/http"
@@ -146,12 +148,19 @@ func productDependencies(cfg config.Config, pool *pgxpool.Pool, logger *slog.Log
 	}
 	sessions := appsession.NewService(postgres.NewUsers(pool), websession.NewCodec(cfg.Identity.DevSessionSecret), devSubject)
 	trail := postgres.NewAuditTrail(pool)
+	wf, err := specs.BasicWorkflow()
+	if err != nil {
+		return httpapi.Dependencies{}, err
+	}
+	definition := wf.Definition
+	projects := postgres.NewProjects(pool, definition.ID, len(definition.Stages))
 	deps := httpapi.Dependencies{
 		Sessions:             sessions,
 		Idempotency:          idempotency.NewGuard(tx, postgres.NewIdempotencyKeys(pool)),
 		PublicOrigin:         cfg.Identity.PublicOrigin,
 		AttachmentLimitBytes: cfg.Providers.AttachmentLimitBytes,
 		Pricing:              apppricing.NewService(tx, postgres.NewCatalog(pool), trail),
+		Projects:             appproject.NewService(tx, projects, postgres.NewOutbox(pool), trail, definition.ID, definition.Version),
 	}
 	if cfg.Providers.SealingPublicKeyFile == "" {
 		logger.Warn("provider key routes disabled: no sealing public key", slog.String("variable", config.EnvSealingPublicKey))

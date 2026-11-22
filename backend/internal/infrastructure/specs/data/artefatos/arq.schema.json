@@ -1,0 +1,232 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:easycode:schema:arq:v1",
+  "title": "Documento de arquitetura da solução",
+  "description": "Arquitetura da solução. Um por projeto, versionado.",
+  "allOf": [
+    {
+      "$ref": "cabecalho-comum.schema.json"
+    },
+    {
+      "properties": {
+        "tipo": {
+          "const": "ARQ"
+        },
+        "id": {
+          "const": "ARQ"
+        },
+        "contexto": {
+          "type": "object",
+          "properties": {
+            "resumo": {
+              "type": "string",
+              "description": "O que o sistema resolve, atores e restrições.",
+              "minLength": 1
+            },
+            "restricoes": {
+              "type": "array",
+              "description": "Restrições do projeto.",
+              "items": {
+                "type": "string",
+                "description": "Restrição.",
+                "minLength": 1
+              }
+            },
+            "rnf_criticos": {
+              "type": "array",
+              "description": "RNF que mais pesam na arquitetura.",
+              "items": {
+                "type": "string",
+                "description": "Id de RNF.",
+                "pattern": "^RNF-[0-9]{2,}$"
+              },
+              "uniqueItems": true
+            }
+          },
+          "required": [
+            "resumo",
+            "restricoes",
+            "rnf_criticos"
+          ],
+          "additionalProperties": false
+        },
+        "c4": {
+          "type": "string",
+          "description": "Caminho do arquivo C4 (Mermaid).",
+          "examples": [
+            "docs/arquitetura/ARQ.md"
+          ]
+        },
+        "componentes": {
+          "type": "array",
+          "description": "Componentes; nenhum sem US ou RNF que o justifique.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "nome": {
+                "type": "string",
+                "description": "Nome do componente.",
+                "minLength": 1
+              },
+              "responsabilidade": {
+                "type": "string",
+                "description": "Responsabilidade.",
+                "minLength": 1
+              },
+              "tecnologia": {
+                "type": "string",
+                "description": "Tecnologia.",
+                "minLength": 1
+              },
+              "atende": {
+                "type": "array",
+                "description": "US/RNF que justificam o componente.",
+                "items": {
+                  "type": "string",
+                  "description": "Id de US ou RNF.",
+                  "pattern": "^(US|RNF)-[0-9]{2,}$"
+                },
+                "minItems": 1,
+                "uniqueItems": true
+              }
+            },
+            "required": [
+              "nome",
+              "responsabilidade",
+              "tecnologia",
+              "atende"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 1
+        },
+        "contratos": {
+          "type": "object",
+          "properties": {
+            "openapi": {
+              "type": "string",
+              "description": "Caminho do OpenAPI.",
+              "examples": [
+                "docs/arquitetura/api/openapi.yaml"
+              ]
+            },
+            "integracoes": {
+              "type": "array",
+              "description": "Integrações externas; vazio se não houver.",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "sistema": {
+                    "type": "string",
+                    "description": "Sistema externo.",
+                    "minLength": 1
+                  },
+                  "protocolo": {
+                    "type": "string",
+                    "description": "Protocolo.",
+                    "minLength": 1
+                  },
+                  "autenticacao": {
+                    "type": "string",
+                    "description": "Autenticação.",
+                    "minLength": 1
+                  },
+                  "dono": {
+                    "type": "string",
+                    "description": "Dono do sistema.",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "sistema",
+                  "protocolo",
+                  "autenticacao",
+                  "dono"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "integracoes"
+          ],
+          "additionalProperties": false
+        },
+        "decisoes": {
+          "type": "array",
+          "description": "ADR que sustentam a arquitetura.",
+          "items": {
+            "type": "string",
+            "description": "Id de ADR.",
+            "pattern": "^ADR-[0-9]{2,}$"
+          },
+          "uniqueItems": true
+        },
+        "diretrizes": {
+          "type": "array",
+          "description": "Organização do código, convenções, erros, autenticação, logs.",
+          "items": {
+            "type": "string",
+            "description": "Diretriz de implementação.",
+            "minLength": 1
+          },
+          "minItems": 1
+        },
+        "persistencia": {
+          "type": "string",
+          "description": "Resumo da persistência; o modelo é do DBA."
+        },
+        "riscos": {
+          "type": "array",
+          "description": "Riscos técnicos; obrigatório mesmo se vazio.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "description": "Id local.",
+                "pattern": "^RK-[0-9]+$"
+              },
+              "descricao": {
+                "type": "string",
+                "description": "Risco técnico.",
+                "minLength": 1
+              },
+              "impacto": {
+                "type": "string",
+                "description": "Impacto.",
+                "enum": [
+                  "baixo",
+                  "medio",
+                  "alto",
+                  "critico"
+                ]
+              },
+              "mitigacao": {
+                "type": "string",
+                "description": "Mitigação.",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "id",
+              "descricao",
+              "impacto",
+              "mitigacao"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "contexto",
+        "componentes",
+        "contratos",
+        "decisoes",
+        "diretrizes",
+        "riscos"
+      ]
+    }
+  ],
+  "unevaluatedProperties": false
+}

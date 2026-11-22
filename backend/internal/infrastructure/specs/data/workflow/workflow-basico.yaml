@@ -1,0 +1,84 @@
+# Workflow básico do Easy Code: Fase 1 (PD-01, decisão do dono de 2026-11-21; US-05 RN-1).
+# Esquema: workflow.schema.json. Texto de apoio: README.md. As 9 etapas (workflow-padrao.yaml) entram na Fase 2.
+# Só as etapas com agente disponível na Fase 1: Requisitos → Arquitetura → Implementação. Sem atividades paralelas,
+# sem Release: a Fase 1 termina com o gate.implementation aprovado (concluir o projeto, US-52, é da Fase 2).
+# Etapas, saídas, gates e checagens iguais às do workflow-padrao; só mudam as dependências e as entradas da implementação,
+# e o gate.implementation é só humano (modo automático, US-07, é da Fase 2).
+id: workflow-basico
+name: Workflow básico (Fase 1)
+version: 1
+mode: fixed
+fase: 1
+
+stages:
+  - id: requirements
+    name: Discovery e Requisitos
+    short_name: Requisitos
+    agent: requirements-agent
+    depends_on: []
+    inputs: []
+    project_inputs: [business_need]
+    outputs:
+      - { type: VISAO, path: docs/requisitos/VISAO.md, required: true }
+      - { type: US, path: docs/requisitos/US-NN-<slug>.md, required: true }
+      - { type: RNF, path: docs/requisitos/RNF-NN-<slug>.md, required: true }
+      - { type: BACKLOG, path: docs/requisitos/BACKLOG.md, required: true }
+    gate: gate.requirements
+    default_approval: human
+    default_mode: human
+
+  - id: architecture
+    name: Arquitetura da Solução
+    short_name: Arquitetura
+    agent: architect-agent
+    agent_mode: DESENHO
+    depends_on: [requirements]
+    inputs:
+      - { type: VISAO, origin: requirements }
+      - { type: US, origin: requirements }
+      - { type: RNF, origin: requirements }
+      - { type: BACKLOG, origin: requirements }
+    project_inputs: [constraints]
+    outputs:
+      - { type: ARQ, path: docs/arquitetura/ARQ.md, required: true, description: "Inclui o C4 (Mermaid) no corpo" }
+      - { type: ARQ, path: docs/arquitetura/api/openapi.yaml, required: false, attachment: true, description: "Contrato de API, quando o sistema expõe API; textos de apoio (streams, contratos internos) em docs/arquitetura/api/" }
+      - { type: ARQ, path: docs/arquitetura/estrutura.md, required: true, attachment: true }
+      - { type: ADR, path: docs/arquitetura/adr/ADR-NN.md, required: true }
+      - { type: T, path: docs/arquitetura/tarefas/T-NN.md, required: true }
+    gate: gate.architecture
+    default_approval: human
+    default_mode: human
+
+  - id: implementation
+    name: Implementação
+    short_name: Implementação
+    agent: developer-agent
+    agent_mode: MANUAL   # "modo manual" = gate.implementation humano; sem aprovação por tarefa (PL-35)
+    depends_on: [architecture]
+    inputs:
+      - { type: US, origin: requirements }
+      - { type: RNF, origin: requirements }
+      - { type: ARQ, origin: architecture }
+      - { type: ADR, origin: architecture }
+      - { type: T, origin: architecture }
+    outputs:
+      - { path: app/, required: true, description: "Código-fonte, testes automatizados, migrations, README e evidências de execução" }
+    gate: gate.implementation
+    default_approval: human
+    default_mode: human
+
+parallel_activities: []
+
+returns:
+  cycle_limit: 3
+  internal_cycle: [implementation]
+  # Sem etapas dados e design na Fase 1: as duas categorias voltam à arquitetura, dona do modelo e do contrato.
+  default_destination_by_category:
+    defect: implementation
+    ambiguous_requirement: requirements
+    vulnerability: implementation
+    architecture_deviation: architecture
+    data_inconsistency: architecture
+    design_inconsistency: architecture
+    technical_debt: implementation
+    contract_gap: architecture

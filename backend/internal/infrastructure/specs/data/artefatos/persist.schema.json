@@ -1,0 +1,281 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:easycode:schema:persist:v1",
+  "title": "Estratégia de persistência",
+  "description": "Persistência: índices, migrações, desempenho, backup e permissões. Um por projeto.",
+  "allOf": [
+    {
+      "$ref": "cabecalho-comum.schema.json"
+    },
+    {
+      "properties": {
+        "tipo": {
+          "const": "PERSIST"
+        },
+        "id": {
+          "const": "PERSIST"
+        },
+        "banco": {
+          "type": "object",
+          "properties": {
+            "sgbd": {
+              "type": "string",
+              "description": "SGBD.",
+              "minLength": 1
+            },
+            "versao": {
+              "type": "string",
+              "description": "Versão alvo.",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "sgbd",
+            "versao"
+          ],
+          "additionalProperties": false
+        },
+        "acesso": {
+          "type": "string",
+          "description": "Padrão de acesso da aplicação (SQL explícito, ORM), conforme ADR.",
+          "minLength": 1
+        },
+        "concorrencia": {
+          "type": "array",
+          "description": "Transações e concorrência; vazio se não há disputa.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "situacao": {
+                "type": "string",
+                "description": "Onde há disputa.",
+                "minLength": 1
+              },
+              "garantia": {
+                "type": "string",
+                "description": "Como o banco garante a regra (constraint, lock, nível de isolamento).",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "situacao",
+              "garantia"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "indices": {
+          "type": "array",
+          "description": "Índices; nenhum sem consulta que o justifique.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "nome": {
+                "type": "string",
+                "description": "Nome do índice.",
+                "pattern": "^[a-z][a-z0-9_]*$"
+              },
+              "tabela": {
+                "type": "string",
+                "description": "Tabela.",
+                "pattern": "^[a-z][a-z0-9_]*$"
+              },
+              "colunas": {
+                "type": "array",
+                "description": "Colunas.",
+                "items": {
+                  "type": "string",
+                  "description": "Coluna ou expressão.",
+                  "minLength": 1
+                },
+                "minItems": 1
+              },
+              "tipo": {
+                "type": "string",
+                "description": "Tipo (btree, gist, gin, parcial...).",
+                "minLength": 1
+              },
+              "justificativa": {
+                "type": "string",
+                "description": "Consulta ou regra atendida.",
+                "minLength": 1
+              },
+              "custo_escrita_aceito": {
+                "type": "boolean",
+                "description": "O custo de escrita foi avaliado e aceito."
+              }
+            },
+            "required": [
+              "nome",
+              "tabela",
+              "colunas",
+              "tipo",
+              "justificativa"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "migracoes": {
+          "type": "object",
+          "properties": {
+            "ferramenta": {
+              "type": "string",
+              "description": "Ferramenta.",
+              "minLength": 1
+            },
+            "convencao": {
+              "type": "string",
+              "description": "Convenção de nomes e regras (nunca editar migração aplicada; destrutivas em duas fases).",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "ferramenta",
+            "convencao"
+          ],
+          "additionalProperties": false
+        },
+        "desempenho": {
+          "type": "array",
+          "description": "Consultas críticas.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "consulta": {
+                "type": "string",
+                "description": "Consulta crítica.",
+                "minLength": 1
+              },
+              "volume": {
+                "type": "string",
+                "description": "Volume esperado.",
+                "minLength": 1
+              },
+              "meta": {
+                "type": "string",
+                "description": "Meta (RNF).",
+                "minLength": 1
+              },
+              "plano_conferido": {
+                "type": "boolean",
+                "description": "Plano de execução conferido."
+              },
+              "rnf": {
+                "type": "string",
+                "description": "RNF de origem da meta.",
+                "pattern": "^RNF-[0-9]{2,}$"
+              }
+            },
+            "required": [
+              "consulta",
+              "volume",
+              "meta",
+              "plano_conferido"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "backup": {
+          "description": "Backup e recuperação: RPO/RTO, ou sem_requisito com justificativa.",
+          "oneOf": [
+            {
+              "type": "object",
+              "properties": {
+                "rpo": {
+                  "type": "string",
+                  "description": "Perda máxima aceita.",
+                  "minLength": 1
+                },
+                "rto": {
+                  "type": "string",
+                  "description": "Tempo máximo para voltar.",
+                  "minLength": 1
+                },
+                "estrategia": {
+                  "type": "string",
+                  "description": "Frequência, retenção, teste de restauração.",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "rpo",
+                "rto",
+                "estrategia"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "sem_requisito": {
+                  "const": true,
+                  "description": "Não há requisito de backup."
+                },
+                "justificativa": {
+                  "type": "string",
+                  "description": "Por que não há requisito.",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "sem_requisito",
+                "justificativa"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        },
+        "permissoes": {
+          "type": "array",
+          "description": "Permissões com privilégio mínimo.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "papel": {
+                "type": "string",
+                "description": "Usuário/papel de banco.",
+                "minLength": 1
+              },
+              "privilegios": {
+                "type": "array",
+                "description": "Privilégios concedidos.",
+                "items": {
+                  "type": "string",
+                  "description": "Privilégio.",
+                  "minLength": 1
+                },
+                "minItems": 1
+              },
+              "ddl_em_producao": {
+                "type": "boolean",
+                "description": "Pode executar DDL em produção (deve ser falso para a aplicação)."
+              }
+            },
+            "required": [
+              "papel",
+              "privilegios",
+              "ddl_em_producao"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 1
+        },
+        "protecao_dados_pessoais": {
+          "type": "string",
+          "description": "Proteção, mascaramento em logs e ambientes de teste."
+        }
+      },
+      "required": [
+        "banco",
+        "acesso",
+        "concorrencia",
+        "indices",
+        "migracoes",
+        "desempenho",
+        "backup",
+        "permissoes"
+      ]
+    }
+  ],
+  "unevaluatedProperties": false
+}

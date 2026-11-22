@@ -1,0 +1,558 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:easycode:schema:ach:v1",
+  "title": "Achado",
+  "description": "Problema encontrado por um agente, com evidência, severidade e destino. O autor do ACH é quem revalida. Contrato em specs/dominio/achado.md. Campos de acompanhamento (x-campos-acompanhamento) podem mudar após a aprovação, sem nova versão; o resto é imutável (specs/dominio/estados/artefato.md).",
+  "x-campos-acompanhamento": [
+    "situacao",
+    "ciclos",
+    "aceite",
+    "escalonamentos",
+    "resolucao",
+    "artefatos_alterados",
+    "motivo_descarte"
+  ],
+  "allOf": [
+    {
+      "$ref": "cabecalho-comum.schema.json"
+    },
+    {
+      "properties": {
+        "tipo": {
+          "const": "ACH"
+        },
+        "id": {
+          "type": "string",
+          "description": "Id do artefato: ACH-NN.",
+          "pattern": "^ACH-[0-9]{2,}$"
+        },
+        "severidade": {
+          "type": "string",
+          "description": "Severidade, pela tabela de critérios de achado.md.",
+          "enum": [
+            "critico",
+            "alto",
+            "medio",
+            "baixo"
+          ]
+        },
+        "categoria": {
+          "type": "string",
+          "description": "Natureza do problema. Destino padrão de cada categoria em specs/dominio/achado.md, seção 2.",
+          "enum": [
+            "defeito",
+            "requisito_ambiguo",
+            "vulnerabilidade",
+            "desvio_arquitetura",
+            "inconsistencia_dados",
+            "inconsistencia_design",
+            "divida_tecnica",
+            "lacuna_contrato"
+          ]
+        },
+        "etapa_destino": {
+          "type": "string",
+          "description": "Etapa que corrige. Pode divergir do padrão da categoria, com justificativa no corpo (seção \"Justificativa do destino\"). `validacao` corrige o VALIDACAO (etapa dona de CT e AMEACAS: o retrabalho vai ao agente produtor, pelo workflow).",
+          "enum": [
+            "requisitos",
+            "arquitetura",
+            "dados",
+            "design",
+            "validacao",
+            "implementacao"
+          ]
+        },
+        "etapa_origem": {
+          "type": "string",
+          "description": "Etapa ou atividade paralela da onda que emitiu o ACH (id do workflow). Preenchido pelo orquestrador ao registrar o ACH; o agente pode omitir. O ACH Crítico/Alto bloqueia o gate desta etapa (para atividade paralela, o gate em que ela é aprovada).",
+          "enum": [
+            "requisitos",
+            "arquitetura",
+            "dados",
+            "design",
+            "validacao",
+            "implementacao",
+            "qa",
+            "seguranca",
+            "release",
+            "qa-plano",
+            "seguranca-ameacas"
+          ]
+        },
+        "artefatos_afetados": {
+          "type": "array",
+          "description": "Onde está o problema: id de artefato, item (US-03/CA-2, TELAS/TL-2) ou caminho de arquivo, com ou sem :linha.",
+          "items": {
+            "type": "string",
+            "description": "Id de artefato (T-07), item de artefato (US-03/CA-2) ou caminho de arquivo, com ou sem :linha (backend/src/X.java:58, docs/arquitetura/api/openapi.yaml).",
+            "anyOf": [
+              {
+                "pattern": "^([A-Z]+(-[A-Z]+)?-[0-9]{2,}|VISAO|ARQ|DIC|PERSIST|AMEACAS|BACKLOG|TELAS)(/[A-Z]+-[0-9]+)?$"
+              },
+              {
+                "pattern": "^[^\\s:]+(:[0-9]+)?$"
+              }
+            ]
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "evidencia": {
+          "type": "string",
+          "description": "Prova do problema: saída de teste, trecho de código, resultado de varredura, passos que reproduzem. Achado sem evidência é descartado.",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "impacto": {
+          "type": "string",
+          "description": "O que acontece se não corrigir.",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "correcao_sugerida": {
+          "type": "string",
+          "description": "O que mudar, sem impor a implementação.",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "situacao": {
+          "type": "string",
+          "description": "Situação do achado (máquina de estados em specs/dominio/estados/achado.md). O estado do artefato fica em `estado`. `aguardando_escopo` (PD-06): mudança de escopo decidida, alteração dos Artefatos de requisitos em curso até o gate.requisitos aprovar; o bloqueio continua.",
+          "enum": [
+            "aberto",
+            "em_retrabalho",
+            "revalidando",
+            "fechado",
+            "escalado",
+            "aguardando_escopo",
+            "aceito",
+            "descartado"
+          ]
+        },
+        "ciclos": {
+          "type": "array",
+          "description": "Ciclos de retrabalho e revalidação. Máximo 3; mais de 3 só com rodada extra autorizada por humano (item de `escalonamentos` com `decisao: novo_retrabalho`, `autorizado_por` e `decidido_em`; um por rodada extra). Vazio enquanto não houve retrabalho.",
+          "items": {
+            "type": "object",
+            "description": "Um ciclo.",
+            "properties": {
+              "numero": {
+                "type": "integer",
+                "description": "Número do ciclo (1 a 3; acima de 3 só com rodada extra autorizada).",
+                "minimum": 1
+              },
+              "onda_retrabalho": {
+                "type": "string",
+                "description": "Onda de retrabalho na etapa destino.",
+                "pattern": "^(REQ|ARQ|DBA|DSG|VAL|DEV|QA|SEG|REL)-[0-9]{2,}$"
+              },
+              "commit_ou_versao": {
+                "type": "string",
+                "description": "Commit (código) ou versão do artefato que trouxe a correção.",
+                "minLength": 1,
+                "pattern": "\\S"
+              },
+              "onda_revalidacao": {
+                "type": "string",
+                "description": "Onda em que o autor do ACH revalidou.",
+                "pattern": "^(REQ|ARQ|DBA|DSG|VAL|DEV|QA|SEG|REL)-[0-9]{2,}$"
+              },
+              "resultado": {
+                "type": "string",
+                "description": "Resultado da revalidação.",
+                "enum": [
+                  "corrigido",
+                  "nao_corrigido"
+                ]
+              }
+            },
+            "required": [
+              "numero",
+              "onda_retrabalho"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "aceite": {
+          "type": "object",
+          "description": "Aceite de risco; só humano.",
+          "properties": {
+            "por": {
+              "type": "string",
+              "description": "Pessoa que assumiu o risco.",
+              "minLength": 1,
+              "pattern": "\\S"
+            },
+            "quando": {
+              "type": "string",
+              "description": "Data (ou data e hora) do aceite.",
+              "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}(T[0-9:.+\\-Z]+)?$"
+            },
+            "justificativa": {
+              "type": "string",
+              "description": "Por que o risco é aceito.",
+              "minLength": 1,
+              "pattern": "\\S"
+            },
+            "valido_ate": {
+              "type": "string",
+              "description": "Validade do aceite (opcional; US-33/CA-1, D-29). Sem validade, o aceite vale sem prazo. Vencido, o ACH segue aceito, mas a checagem release.riscos_aceitos_completos bloqueia o gate.release até um humano renovar o aceite (novo `quando` e `valido_ate`, campo de acompanhamento).",
+              "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}(T[0-9:.+\\-Z]+)?$"
+            }
+          },
+          "required": [
+            "por",
+            "quando",
+            "justificativa"
+          ],
+          "additionalProperties": false
+        },
+        "escalonamentos": {
+          "type": "array",
+          "description": "Escalonamentos para decisão humana, em ordem (histórico preservado: cada rodada extra que não corrige escala de novo e acrescenta um item). Só o último item pode estar sem `decisao`.",
+          "items": {
+            "type": "object",
+            "description": "Um escalonamento para decisão humana (ciclos esgotados ou escalada antes). `decisao`, `autorizado_por` e `decidido_em` registram a decisão humana e andam juntos.",
+            "properties": {
+              "quando": {
+                "type": "string",
+                "description": "Data (ou data e hora) do escalonamento.",
+                "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}(T[0-9:.+\\-Z]+)?$"
+              },
+              "motivo": {
+                "type": "string",
+                "description": "Por que escalou.",
+                "minLength": 1,
+                "pattern": "\\S"
+              },
+              "decisao": {
+                "type": "string",
+                "description": "Decisão humana; ausente enquanto não decidida. `novo_retrabalho` autoriza uma rodada extra além do limite de 3 ciclos.",
+                "enum": [
+                  "novo_retrabalho",
+                  "aceitar_risco",
+                  "mudanca_escopo"
+                ]
+              },
+              "autorizado_por": {
+                "type": "string",
+                "description": "Pessoa que tomou a decisão (identidade validada pela plataforma).",
+                "minLength": 1,
+                "pattern": "\\S"
+              },
+              "decidido_em": {
+                "type": "string",
+                "description": "Data (ou data e hora) da decisão humana.",
+                "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}(T[0-9:.+\\-Z]+)?$"
+              },
+              "justificativa": {
+                "type": "string",
+                "description": "Por que o escopo muda; obrigatória com decisao = mudanca_escopo (PC-03).",
+                "minLength": 1,
+                "pattern": "\\S"
+              },
+              "alteracao_por": {
+                "type": "string",
+                "description": "Quem altera os Artefatos de requisitos na mudança de escopo (PD-06): `requirements-agent` (onda de retrabalho de Requisitos) ou `humano` (edição humana direta, validada e formatada pelo agente de Requisitos, US-53). Obrigatório com decisao = mudanca_escopo.",
+                "enum": [
+                  "requirements-agent",
+                  "humano"
+                ]
+              },
+              "artefatos_ponto_de_partida": {
+                "type": "array",
+                "description": "Artefatos de requisitos indicados na decisão como ponto de partida da alteração (reabertos pela decisão). Os efetivamente alterados ficam em `artefatos_alterados`, preenchido quando o gate.requisitos aprova. Obrigatório com decisao = mudanca_escopo.",
+                "items": {
+                  "type": "string",
+                  "description": "Id de artefato de requisitos (VISAO, US-NN, RNF-NN, BACKLOG).",
+                  "pattern": "^(VISAO|BACKLOG|(US|RNF)-[0-9]{2,})$"
+                },
+                "minItems": 1,
+                "uniqueItems": true
+              }
+            },
+            "required": [
+              "quando",
+              "motivo"
+            ],
+            "additionalProperties": false,
+            "allOf": [
+              {
+                "if": {
+                  "required": [
+                    "decisao"
+                  ]
+                },
+                "then": {
+                  "required": [
+                    "autorizado_por",
+                    "decidido_em"
+                  ]
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "decisao": {
+                      "const": "mudanca_escopo"
+                    }
+                  },
+                  "required": [
+                    "decisao"
+                  ]
+                },
+                "then": {
+                  "required": [
+                    "justificativa",
+                    "alteracao_por",
+                    "artefatos_ponto_de_partida"
+                  ]
+                }
+              }
+            ]
+          },
+          "minItems": 1
+        },
+        "motivo_descarte": {
+          "type": "string",
+          "description": "Por que foi descartado: sem evidência ou duplicado (indicar o ACH original).",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "resolucao": {
+          "type": "string",
+          "description": "Como o ACH foi fechado: `corrigido` (revalidação do emissor) ou `mudanca_escopo` (decisão humana; escopo alterado). Obrigatório quando situacao = fechado.",
+          "enum": [
+            "corrigido",
+            "mudanca_escopo"
+          ]
+        },
+        "artefatos_alterados": {
+          "type": "array",
+          "description": "Ids dos artefatos alterados pela mudança de escopo, preenchido quando a alteração passa no gate.requisitos (PD-06, PC-03); obrigatório quando resolucao = mudanca_escopo.",
+          "items": {
+            "type": "string",
+            "description": "Id de artefato ou item (US-03, US-03/CA-2).",
+            "pattern": "^([A-Z]+(-[A-Z]+)?-[0-9]{2,}|VISAO|ARQ|DIC|PERSIST|AMEACAS|BACKLOG|TELAS)(/[A-Z]+-[0-9]+)?$"
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "severidade",
+        "categoria",
+        "etapa_destino",
+        "artefatos_afetados",
+        "evidencia",
+        "impacto",
+        "correcao_sugerida",
+        "situacao",
+        "ciclos"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "situacao": {
+                "const": "aceito"
+              }
+            },
+            "required": [
+              "situacao"
+            ]
+          },
+          "then": {
+            "required": [
+              "aceite"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "situacao": {
+                "const": "escalado"
+              }
+            },
+            "required": [
+              "situacao"
+            ]
+          },
+          "then": {
+            "required": [
+              "escalonamentos"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "situacao": {
+                "const": "aguardando_escopo"
+              }
+            },
+            "required": [
+              "situacao"
+            ]
+          },
+          "then": {
+            "required": [
+              "escalonamentos"
+            ],
+            "properties": {
+              "escalonamentos": {
+                "contains": {
+                  "type": "object",
+                  "properties": {
+                    "decisao": {
+                      "const": "mudanca_escopo"
+                    }
+                  },
+                  "required": [
+                    "decisao",
+                    "autorizado_por",
+                    "decidido_em"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "situacao": {
+                "const": "descartado"
+              }
+            },
+            "required": [
+              "situacao"
+            ]
+          },
+          "then": {
+            "required": [
+              "motivo_descarte"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "situacao": {
+                "const": "fechado"
+              }
+            },
+            "required": [
+              "situacao"
+            ]
+          },
+          "then": {
+            "required": [
+              "resolucao"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "resolucao": {
+                "const": "mudanca_escopo"
+              }
+            },
+            "required": [
+              "resolucao"
+            ]
+          },
+          "then": {
+            "required": [
+              "escalonamentos",
+              "artefatos_alterados"
+            ],
+            "properties": {
+              "escalonamentos": {
+                "contains": {
+                  "type": "object",
+                  "properties": {
+                    "decisao": {
+                      "const": "mudanca_escopo"
+                    }
+                  },
+                  "required": [
+                    "decisao",
+                    "autorizado_por",
+                    "decidido_em"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "ciclos": {
+                "minItems": 4
+              }
+            },
+            "required": [
+              "ciclos"
+            ],
+            "not": {
+              "anyOf": [
+                {
+                  "properties": {
+                    "situacao": {
+                      "enum": [
+                        "escalado",
+                        "aguardando_escopo",
+                        "aceito",
+                        "descartado"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "situacao"
+                  ]
+                },
+                {
+                  "properties": {
+                    "resolucao": {
+                      "const": "mudanca_escopo"
+                    }
+                  },
+                  "required": [
+                    "resolucao"
+                  ]
+                }
+              ]
+            }
+          },
+          "then": {
+            "required": [
+              "escalonamentos"
+            ],
+            "properties": {
+              "escalonamentos": {
+                "contains": {
+                  "type": "object",
+                  "properties": {
+                    "decisao": {
+                      "const": "novo_retrabalho"
+                    }
+                  },
+                  "required": [
+                    "decisao",
+                    "autorizado_por",
+                    "decidido_em"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "unevaluatedProperties": false
+}

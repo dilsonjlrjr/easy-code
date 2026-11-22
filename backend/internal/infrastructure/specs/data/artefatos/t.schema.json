@@ -1,0 +1,243 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:easycode:schema:t:v1",
+  "title": "Tarefa de desenvolvimento",
+  "description": "Tarefa do plano de implementação. Campos de acompanhamento (x-campos-acompanhamento) podem mudar após a aprovação, sem nova versão; o resto é imutável (specs/dominio/estados/artefato.md).",
+  "x-campos-acompanhamento": [
+    "situacao",
+    "justificativa",
+    "registro_dev"
+  ],
+  "allOf": [
+    {
+      "$ref": "cabecalho-comum.schema.json"
+    },
+    {
+      "properties": {
+        "tipo": {
+          "const": "T"
+        },
+        "id": {
+          "type": "string",
+          "description": "Id do artefato: T-NN.",
+          "pattern": "^T-[0-9]{2,}$"
+        },
+        "natureza": {
+          "type": "string",
+          "description": "Natureza da tarefa. `funcional` (padrão) cobre US de negócio; `esqueleto` (estrutura, ambiente, CI) e `refatoracao` podem não cobrir US, com o motivo em `descricao`.",
+          "enum": [
+            "funcional",
+            "esqueleto",
+            "refatoracao"
+          ],
+          "default": "funcional"
+        },
+        "cobre": {
+          "type": "array",
+          "description": "US e critérios cobertos. Obrigatório e não vazio quando natureza = funcional (padrão); opcional em esqueleto e refatoracao.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "us": {
+                "type": "string",
+                "description": "US coberta.",
+                "pattern": "^US-[0-9]{2,}$"
+              },
+              "criterios": {
+                "type": "array",
+                "description": "Critérios cobertos.",
+                "items": {
+                  "type": "string",
+                  "description": "Id de CA.",
+                  "pattern": "^CA-[0-9]+$"
+                },
+                "minItems": 1,
+                "uniqueItems": true
+              }
+            },
+            "required": [
+              "us",
+              "criterios"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "segue": {
+          "type": "array",
+          "description": "ADR seguidas; vazio se nenhuma aplicável.",
+          "items": {
+            "type": "string",
+            "description": "Id de ADR.",
+            "pattern": "^ADR-[0-9]{2,}$"
+          },
+          "uniqueItems": true
+        },
+        "depende_de": {
+          "type": "array",
+          "description": "Tarefas que precisam estar concluídas antes; vazio = nenhuma.",
+          "items": {
+            "type": "string",
+            "description": "Id de T.",
+            "pattern": "^T-[0-9]{2,}$"
+          },
+          "uniqueItems": true
+        },
+        "escopo_arquivos": {
+          "type": "array",
+          "description": "Pastas/arquivos que a tarefa pode tocar.",
+          "items": {
+            "type": "string",
+            "description": "Pasta ou glob.",
+            "minLength": 1
+          },
+          "minItems": 1
+        },
+        "tamanho": {
+          "type": "string",
+          "description": "Tamanho.",
+          "enum": [
+            "p",
+            "m",
+            "g"
+          ]
+        },
+        "cts": {
+          "type": "array",
+          "description": "CT que devem passar.",
+          "items": {
+            "type": "string",
+            "description": "Id de CT.",
+            "pattern": "^CT-[0-9]{2,}$"
+          },
+          "uniqueItems": true
+        },
+        "operacoes": {
+          "type": "array",
+          "description": "operationId do contrato da API (docs/arquitetura/api/openapi.yaml) que o item usa ou implementa (rastreabilidade.md, L-02).",
+          "items": {
+            "type": "string",
+            "description": "operationId do OpenAPI.",
+            "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$"
+          },
+          "uniqueItems": true
+        },
+        "descricao": {
+          "type": "string",
+          "description": "Descrição objetiva: endpoints, entidades, telas, regras.",
+          "minLength": 1
+        },
+        "criterios_pronto": {
+          "type": "array",
+          "description": "Critérios de pronto.",
+          "items": {
+            "type": "string",
+            "description": "Condição verificável.",
+            "minLength": 1
+          },
+          "minItems": 1
+        },
+        "situacao": {
+          "type": "string",
+          "description": "Situação da execução.",
+          "enum": [
+            "planejada",
+            "em_andamento",
+            "concluida",
+            "justificada"
+          ]
+        },
+        "justificativa": {
+          "type": "string",
+          "description": "Motivo de a tarefa não ter sido feita; obrigatória se situacao = justificada.",
+          "minLength": 1
+        },
+        "registro_dev": {
+          "type": "object",
+          "description": "Preenchido pelo Dev ao concluir.",
+          "properties": {
+            "commits": {
+              "type": "array",
+              "description": "Commits.",
+              "items": {
+                "type": "string",
+                "description": "Hash.",
+                "minLength": 1
+              }
+            },
+            "testes": {
+              "type": "array",
+              "description": "Testes criados.",
+              "items": {
+                "type": "string",
+                "description": "Arquivo.",
+                "minLength": 1
+              }
+            },
+            "desvios": {
+              "type": "string",
+              "description": "'nenhum' ou o que mudou e por quê."
+            }
+          },
+          "required": [],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "segue",
+        "depende_de",
+        "escopo_arquivos",
+        "tamanho",
+        "descricao",
+        "criterios_pronto",
+        "situacao"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "situacao": {
+                "const": "justificada"
+              }
+            },
+            "required": [
+              "situacao"
+            ]
+          },
+          "then": {
+            "required": [
+              "justificativa"
+            ]
+          }
+        },
+        {
+          "if": {
+            "not": {
+              "properties": {
+                "natureza": {
+                  "enum": [
+                    "esqueleto",
+                    "refatoracao"
+                  ]
+                }
+              },
+              "required": [
+                "natureza"
+              ]
+            }
+          },
+          "then": {
+            "required": [
+              "cobre"
+            ],
+            "properties": {
+              "cobre": {
+                "minItems": 1
+              }
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "unevaluatedProperties": false
+}

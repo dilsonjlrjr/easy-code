@@ -1,0 +1,190 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:easycode:schema:ct:v1",
+  "title": "Cenário de teste",
+  "description": "Cenário de teste que cobre um critério de aceite (US) ou um RNF, com a execução registrada pelo QA. Campos de acompanhamento (x-campos-acompanhamento) podem mudar após a aprovação, sem nova versão; o resto é imutável (specs/dominio/estados/artefato.md).",
+  "x-campos-acompanhamento": [
+    "execucao"
+  ],
+  "allOf": [
+    {
+      "$ref": "cabecalho-comum.schema.json"
+    },
+    {
+      "properties": {
+        "tipo": {
+          "const": "CT"
+        },
+        "id": {
+          "type": "string",
+          "description": "Id do artefato: CT-NN.",
+          "pattern": "^CT-[0-9]{2,}$"
+        },
+        "cobre": {
+          "description": "O que o cenário cobre: um critério de aceite de US ou um RNF.",
+          "oneOf": [
+            {
+              "type": "object",
+              "description": "Cobertura de critério de aceite.",
+              "properties": {
+                "us": {
+                  "type": "string",
+                  "description": "US coberta.",
+                  "pattern": "^US-[0-9]{2,}$"
+                },
+                "criterio": {
+                  "type": "string",
+                  "description": "Critério coberto.",
+                  "pattern": "^CA-[0-9]+$"
+                }
+              },
+              "required": [
+                "us",
+                "criterio"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "description": "Cobertura de requisito não funcional.",
+              "properties": {
+                "rnf": {
+                  "type": "string",
+                  "description": "RNF coberto.",
+                  "pattern": "^RNF-[0-9]{2,}$"
+                }
+              },
+              "required": [
+                "rnf"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        },
+        "nivel": {
+          "type": "string",
+          "description": "Nível do teste.",
+          "enum": [
+            "unitario",
+            "integracao",
+            "e2e",
+            "nao_funcional"
+          ]
+        },
+        "tipo_caso": {
+          "type": "string",
+          "description": "Natureza do caso.",
+          "enum": [
+            "positivo",
+            "negativo",
+            "limite",
+            "seguranca"
+          ]
+        },
+        "precondicoes": {
+          "type": "array",
+          "description": "Estado inicial: dados, usuário logado etc.",
+          "items": {
+            "type": "string",
+            "description": "Pré-condição.",
+            "minLength": 1,
+            "pattern": "\\S"
+          },
+          "minItems": 1
+        },
+        "passos": {
+          "type": "array",
+          "description": "Ações em ordem.",
+          "items": {
+            "type": "string",
+            "description": "Passo.",
+            "minLength": 1,
+            "pattern": "\\S"
+          },
+          "minItems": 1
+        },
+        "resultado_esperado": {
+          "type": "array",
+          "description": "Resultados observáveis e verificáveis.",
+          "items": {
+            "type": "string",
+            "description": "Resultado esperado.",
+            "minLength": 1,
+            "pattern": "\\S"
+          },
+          "minItems": 1
+        },
+        "execucao": {
+          "type": "object",
+          "description": "Registro da execução, preenchido pelo QA.",
+          "properties": {
+            "teste": {
+              "type": "string",
+              "description": "Teste automatizado, no formato arquivo::nome.",
+              "pattern": "^[^\\s:]+::\\S.*$"
+            },
+            "resultado": {
+              "type": "string",
+              "description": "Resultado da execução.",
+              "enum": [
+                "passou",
+                "falhou",
+                "bloqueado",
+                "nao_executado"
+              ]
+            },
+            "evidencia": {
+              "type": "string",
+              "description": "Saída, print ou log.",
+              "minLength": 1,
+              "pattern": "\\S"
+            },
+            "achado": {
+              "type": "string",
+              "description": "ACH gerado pela falha.",
+              "pattern": "^ACH-[0-9]{2,}$"
+            },
+            "onda": {
+              "type": "string",
+              "description": "Onda de QA da execução.",
+              "pattern": "^(REQ|ARQ|DBA|DSG|VAL|DEV|QA|SEG|REL)-[0-9]{2,}$"
+            }
+          },
+          "required": [
+            "resultado"
+          ],
+          "additionalProperties": false,
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "resultado": {
+                    "const": "falhou"
+                  }
+                },
+                "required": [
+                  "resultado"
+                ]
+              },
+              "then": {
+                "required": [
+                  "achado",
+                  "evidencia"
+                ]
+              }
+            }
+          ]
+        }
+      },
+      "required": [
+        "cobre",
+        "nivel",
+        "tipo_caso",
+        "precondicoes",
+        "passos",
+        "resultado_esperado"
+      ]
+    }
+  ],
+  "unevaluatedProperties": false
+}

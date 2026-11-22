@@ -1,0 +1,218 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:easycode:schema:dic:v1",
+  "title": "Dicionário de dados",
+  "description": "Dicionário de dados. Um por projeto; o DBML é a fonte, o dicionário não o contradiz.",
+  "allOf": [
+    {
+      "$ref": "cabecalho-comum.schema.json"
+    },
+    {
+      "properties": {
+        "tipo": {
+          "const": "DIC"
+        },
+        "id": {
+          "const": "DIC"
+        },
+        "modelo_dbml": {
+          "type": "string",
+          "description": "Caminho do modelo DBML.",
+          "examples": [
+            "docs/dados/modelo-dados.dbml"
+          ]
+        },
+        "tabelas": {
+          "type": "array",
+          "description": "Tabelas do modelo.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "nome": {
+                "type": "string",
+                "description": "Nome da tabela.",
+                "pattern": "^[a-z][a-z0-9_]*$"
+              },
+              "origem": {
+                "type": "array",
+                "description": "US ou ADR que exigem a tabela (PL-32). Opcional; a tela da Etapa de Dados mostra a origem quando houver.",
+                "items": {
+                  "type": "string",
+                  "description": "Id de US ou ADR.",
+                  "pattern": "^(US|ADR)-[0-9]{2,}$"
+                },
+                "uniqueItems": true
+              },
+              "descricao": {
+                "type": "string",
+                "description": "O que cada linha representa.",
+                "minLength": 1
+              },
+              "colunas": {
+                "type": "array",
+                "description": "Colunas.",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "nome": {
+                      "type": "string",
+                      "description": "Nome da coluna.",
+                      "pattern": "^[a-z][a-z0-9_]*$"
+                    },
+                    "tipo": {
+                      "type": "string",
+                      "description": "Tipo no SGBD.",
+                      "minLength": 1
+                    },
+                    "nulo": {
+                      "type": "boolean",
+                      "description": "Aceita nulo."
+                    },
+                    "padrao": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "description": "Valor padrão; nulo se não houver."
+                    },
+                    "descricao": {
+                      "type": "string",
+                      "description": "Descrição.",
+                      "minLength": 1
+                    },
+                    "dado_pessoal": {
+                      "type": "boolean",
+                      "description": "Dado pessoal (LGPD); deve constar em dados_pessoais."
+                    }
+                  },
+                  "required": [
+                    "nome",
+                    "tipo",
+                    "nulo",
+                    "descricao",
+                    "dado_pessoal"
+                  ],
+                  "additionalProperties": false
+                },
+                "minItems": 1
+              },
+              "constraints": {
+                "type": "array",
+                "description": "Constraints.",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "nome": {
+                      "type": "string",
+                      "description": "Nome explícito (o Dev traduz a violação por ele).",
+                      "pattern": "^[a-z][a-z0-9_]*$"
+                    },
+                    "tipo": {
+                      "type": "string",
+                      "description": "Tipo.",
+                      "enum": [
+                        "primary_key",
+                        "foreign_key",
+                        "unique",
+                        "check",
+                        "exclude",
+                        "not_null"
+                      ]
+                    },
+                    "definicao": {
+                      "type": "string",
+                      "description": "Definição.",
+                      "minLength": 1
+                    },
+                    "regra": {
+                      "type": "string",
+                      "description": "Regra de negócio garantida: US-NN/CA-n ou US-NN/RN-n.",
+                      "pattern": "^US-[0-9]{2,}/(CA|RN)-[0-9]+$"
+                    }
+                  },
+                  "required": [
+                    "nome",
+                    "tipo",
+                    "definicao"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "indices": {
+                "type": "array",
+                "description": "Índices da tabela.",
+                "items": {
+                  "type": "string",
+                  "description": "Nome do índice (detalhe em PERSIST).",
+                  "pattern": "^[a-z][a-z0-9_]*$"
+                }
+              }
+            },
+            "required": [
+              "nome",
+              "descricao",
+              "colunas",
+              "constraints",
+              "indices"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 1
+        },
+        "dados_pessoais": {
+          "type": "array",
+          "description": "Dados pessoais; obrigatório mesmo se vazio.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "campo": {
+                "type": "string",
+                "description": "tabela.coluna.",
+                "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+              },
+              "finalidade": {
+                "type": "string",
+                "description": "Finalidade do tratamento.",
+                "minLength": 1
+              },
+              "base_legal": {
+                "type": "string",
+                "description": "Base legal LGPD (art. 7); a_confirmar até o dono validar.",
+                "enum": [
+                  "a_confirmar",
+                  "consentimento",
+                  "obrigacao_legal",
+                  "politica_publica",
+                  "pesquisa",
+                  "execucao_contrato",
+                  "exercicio_direitos",
+                  "protecao_vida",
+                  "tutela_saude",
+                  "legitimo_interesse",
+                  "protecao_credito"
+                ]
+              },
+              "retencao": {
+                "type": "string",
+                "description": "Prazo e regra de retenção.",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "campo",
+              "finalidade",
+              "base_legal",
+              "retencao"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "tabelas",
+        "dados_pessoais"
+      ]
+    }
+  ],
+  "unevaluatedProperties": false
+}

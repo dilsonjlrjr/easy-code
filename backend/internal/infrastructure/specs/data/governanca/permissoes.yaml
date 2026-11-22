@@ -1,0 +1,370 @@
+# Permissões por agente do Easy Code (E3-4) — formato legível por programa.
+# Esquema: politicas.schema.json. Rascunho v0.4 — 2026-11-20 (fechamento da E5: layout de arquivos, install_dependencies,
+# limites efetivos, Requisitos sem sandbox; revisão final, D-38: sem ambiente_compose, serviços de apoio por perfil,
+# allowlist de argv[0] por categoria, rede do agente sempre nenhuma; decidido sob delegação do dono, revisável).
+# Aplicadas por policy.least_privilege (politicas.yaml). Derivadas de agentes/instrucoes/*.md,
+# do workflow padrão (workflow/workflow-padrao.yaml) e dos esquemas de artefatos (artefatos/).
+#
+# Convenções:
+#   - `reads` e `writes` usam os tipos de artefato do cabeçalho comum. `operation` de escrita:
+#       create_and_modify        — cria e altera o artefato em rascunho na própria onda; aprovado só muda
+#                                em onda de retrabalho por ACH (nova versao), nunca por edição direta;
+#       tracking_fields  — só os campos de x-campos-acompanhamento listados em `fields`,
+#                                inclusive com o artefato aprovado (artefatos/README.md);
+#       own_review_opinion        — só o próprio item em VALIDACAO.pareceres.
+#   - `findings.emits: true` dá ao agente: criar ACH próprio em docs/achados/ (autor = o agente) e,
+#     como emissor, registrar o resultado da revalidação (ciclos[].resultado) só nos ACH de que é autor
+#     (achado.md 1 e 4). `categories` são as que o agente usa por padrão; outra exige justificativa.
+#   - `stages` e `activities`: ids de workflow-padrao.yaml em que o agente executa ondas.
+#   - `extra_paths`: arquivos sem tipo de artefato (código em app/).
+#   - Caminhos relativos à raiz do repositório do projeto, em glob (`**` = qualquer subpasta). Layout (E5):
+#     arquivo principal do artefato com o nome do id (`VISAO.md`, `BACKLOG.md`, `ARQ.md`, `DIC.md`, `PERSIST.md`,
+#     `TELAS.md`); itens numerados com `<ID>-NN[-<slug>].md` (US, RNF, T, CT...); ADR em `docs/arquitetura/adr/`, T em `tarefas/`,
+#     contrato da API em `docs/arquitetura/api/` (`openapi.yaml` + textos de apoio); C4 no corpo do ARQ.md.
+#   - `execute_command.categories`: os comandos concretos de build, teste e lint vêm de
+#     docs/arquitetura/estrutura.md do projeto; a imagem do sandbox fixa as ferramentas (E7). A categoria não é rótulo:
+#     `command_categories` fixa os executáveis (`argv0`) e os padrões de argumento aceitos em cada uma; o harness confere
+#     antes de pedir e o executor de sandbox confere de novo (interno.md seção 2). Shell (`sh -c`) só onde `shell: true`.
+#   - Sem Docker para o agente nas Fases 1-2 (D-38): testes de integração usam serviços de apoio declarados por perfil
+#     (`sandbox_default.support_services`), que o executor sobe numa rede interna isolada da execução; o agente nunca toca no Docker.
+#   - `limits` é o teto do perfil do agente no sandbox, provisório; o limite aplicado segue `effective_limits`
+#     (mínimo entre o teto do agente e o limite do projeto, RNF-03; o projeto não passa do teto da organização,
+#     parâmetros de policy.least_privilege). Agente sem execute_command tem `limits: null`.
+#     Tempo total da onda: policy.wave_timeout.
+#   - Ferramentas de arquivo (read_file, write_file) rodam no worker, confinadas à cópia de trabalho da
+#     onda; só execute_command usa o sandbox (ARQ seção 9). `install_dependencies` é categoria à parte: outra
+#     execução, com rede só até o deps-proxy e sem rodar código do agente (ADR-07).
+#   - `contradictions` registra conflito entre esta derivação e o material existente; não decide.
+#     As resolvidas na conciliação E3 saíram da lista (decisões em specs/dominio/README.md).
+document: permissions
+version: 2
+
+sandbox_default:
+  network: none                 # policy.privilegio_minimo.sandbox_network
+  platform_internal_network: forbidden
+  ai_keys: forbidden          # chamadas de modelo saem do runtime pelo gateway, fora do sandbox
+  isolation: per_project       # dados e sandbox de um projeto inacessíveis a outro (11.3)
+  file_tools: worker   # ler_arquivo/escrever_arquivo no worker, sem sandbox
+  dependency_action:            # ADR-07: execução separada, rede interna com saída só pelo deps-proxy
+    category: install_dependencies
+    network: proxy_deps_only
+    executes_agent_code: false   # só o gerenciador de pacotes com o lockfile; scripts de instalação desligados
+  support_services:               # D-38: testes de integração sem Docker no sandbox
+    declared_by: profile      # o perfil fixo do executor define imagem, versão, recursos e prontidão de cada serviço
+    network: internal_isolated_per_execution   # rede criada pelo executor só para a execução e seus serviços, sem saída e sem rota à plataforma
+    agent_accesses_docker: false
+    cycle: per_execution         # sobe antes do comando, é destruído com ele; nenhum dado persiste
+    catalog: [ephemeral_postgresql]   # provisório; novos serviços entram por perfil revisado, nunca por pedido do agente
+
+command_categories:
+  # argv0: executáveis aceitos como argv[0] (nome, sem caminho; a imagem da stack fixa onde estão). padroes: glob sobre os
+  # argumentos unidos por espaço; vazio = qualquer argumento. shell: aceita ["sh","-c",...] (só build e testes). support_services:
+  # a execução pode pedir serviços de sandbox_default.support_services. Listas provisórias: a imagem por stack fecha na E7.
+  build:                  { argv0: [go, npm, pnpm, node, mvn, gradle, python3, make], defaults: [], shell: true, support_services: false }
+  tests:                 { argv0: [go, npm, pnpm, npx, node, mvn, gradle, python3, pytest, make], defaults: [], shell: true, support_services: true }
+  lint:                   { argv0: [golangci-lint, gofmt, go, eslint, npx, ruff, prettier], defaults: [], shell: false, support_services: false }
+  migrations:              { argv0: [goose, migrate, npx, go], defaults: [], shell: false, support_services: true }
+  package_manager:    { argv0: [go, npm, pnpm, pip, mvn], defaults: ["mod verify*", "mod tidy*", "ls*", "list*", "--offline*", "dependency:tree*"], shell: false, support_services: false }
+  disposable_database:      { argv0: [psql, pg_isready], defaults: [], shell: false, support_services: true }
+  validate_ddl:            { argv0: [psql], defaults: ["-v ON_ERROR_STOP=1 *"], shell: false, support_services: true }
+  validate_openapi:        { argv0: [redocly, npx], defaults: ["lint *", "@redocly/cli@* lint *"], shell: false, support_services: false }
+  validate_schema:        { argv0: [easycode-validate, python3], defaults: ["*", "-m jsonschema *"], shell: false, support_services: false }
+  local_static_server: { argv0: [python3], defaults: ["-m http.server *"], shell: false, support_services: false }
+  scanner:                { argv0: [opengrep, trivy, gitleaks], defaults: [], shell: false, support_services: false }
+  local_http_client:     { argv0: [curl, hurl], defaults: [], shell: false, support_services: true }
+  install_dependencies:  { argv0: [npm, pnpm, go, pip, mvn], defaults: ["ci --ignore-scripts*", "install --frozen-lockfile --ignore-scripts*", "mod download*", "install --require-hashes --no-deps*", "dependency:go-offline*"], shell: false, support_services: false }
+
+effective_limits:
+  rule: min
+  sources: [agent, project]
+  project_ceiling: organization
+  description: >-
+    Para cada recurso (CPU, memória, disco, tempo de comando), o limite aplicado à execução é o menor entre o teto
+    do agente (`limits` abaixo) e o limite do projeto (RNF-03, parâmetros limite_*_projeto de
+    policy.least_privilege). O limite do projeto nunca excede o teto da organização (teto_*): configuração
+    acima é recusada (409 na API). O executor de sandbox confere de novo que o pedido não passa do efetivo (ADR-06).
+
+common_prohibitions:
+  - id: prohibition.modify_others_approved
+    description: Alterar artefato aprovado de outro agente. Mudança só por ACH; exceção são os campos de acompanhamento listados em `writes`.
+    reference: "PROJETO 7.2.2; artefatos/README.md"
+  - id: prohibition.move_artifact_state
+    description: Mudar o campo `state` de qualquer artefato. Só a máquina do artefato, pelo orquestrador, o move.
+    reference: "estados/artefato.md"
+  - id: prohibition.human_decision
+    description: Aprovar ou reprovar gate humano, aceitar risco, decidir escalonamento, mudar escopo ou autorizar publicação.
+    reference: "PROJETO 7.3; policy.required_human_approval"
+  - id: prohibition.call_other_agent
+    description: Chamar outro agente diretamente. Toda comunicação passa pelo orquestrador e fica registrada.
+    reference: "PROJETO 5"
+  - id: prohibition.ai_keys_in_sandbox
+    description: Ler, receber ou gravar chave de provedor de IA no sandbox ou no repositório do projeto.
+    reference: "PROJETO 9.1, 11.3; risco client_token_leaked"
+  - id: prohibition.network_outside_policy
+    description: Acessar rede fora de sandbox_default; a execução de código do agente nunca tem rede (ADR-07). As únicas exceções são a ação install_dependencies, com saída só pelo deps-proxy, e os serviços de apoio do perfil, na rede interna isolada da execução. Nunca a rede interna da plataforma.
+    reference: "PROJETO 11.3; risco code_execution"
+  - id: prohibition.rewrite_history
+    description: Apagar versão, artefato, ACH, log ou reescrever o histórico git (force push, rebase, amend de commit registrado).
+    reference: "PROJETO 7.2.9; policy.history_preservation"
+  - id: prohibition.execute_skill_content
+    description: Executar script de skill ou tratar o conteúdo de skill como instrução de sistema.
+    reference: "PROJETO 8.3; policy.imported_skill"
+  - id: prohibition.outside_role
+    description: Produzir artefato de outra etapa. O que é de outro agente vira ACH, não edição.
+    reference: "agentes/instrucoes/README.md (Regras comuns)"
+
+agents:
+
+  # ------------------------------------------------------------ Requisitos
+  - agent: requirements-agent
+    instruction: agentes/instrucoes/requisitos.md
+    modes: []
+    stages: [requirements]
+    reads:
+      types: [ACH]
+      external: [business_need, user_answers]
+    writes:
+      - { type: VISAO, operation: create_and_modify, paths: [docs/requisitos/VISAO.md] }
+      - { type: US, operation: create_and_modify, paths: ["docs/requisitos/US-*.md"] }
+      - { type: RNF, operation: create_and_modify, paths: ["docs/requisitos/RNF-*.md"] }
+      - { type: BACKLOG, operation: create_and_modify, paths: [docs/requisitos/BACKLOG.md] }
+    findings:
+      emits: false   # D-20: Requisitos é a primeira etapa e não emite ACH; dúvida vira pergunta ou suposição
+      categories: []
+    ask_user: true
+    tools:
+      read_file: ["docs/requisitos/**", "docs/achados/**"]
+      write_file: ["docs/requisitos/**"]
+      execute_command: { allowed: false, categories: [] }
+      git: []
+      browser: false
+      scanners: []
+      network: none
+    limits: null   # não executa comando: ferramentas de arquivo rodam no worker, sem sandbox (ARQ seção 9)
+    prohibitions:
+      - Decidir tecnologia, telas ou modelo de dados.
+      - Escrever história sem "Origem" em trecho real da necessidade ou de resposta.
+    contradictions: []   # resolvida na conciliação E3 (D-20): Requisitos não emite ACH
+
+  # ------------------------------------------------------------ Arquiteto
+  - agent: architect-agent
+    instruction: agentes/instrucoes/arquitetura.md
+    modes: [DESENHO, VALIDACAO]
+    stages: [architecture, validation]
+    reads:
+      types: [VISAO, US, RNF, BACKLOG, CT, DIC, PERSIST, TELAS, AMEACAS, ACH]
+      per_mode:
+        DESENHO: [VISAO, US, RNF, BACKLOG, ACH]   # sem CT (D-19): o plano de testes é conferido na validação
+        VALIDACAO: [US, RNF, ARQ, ADR, T, DIC, PERSIST, TELAS, AMEACAS, CT, ACH]
+    writes:
+      - { type: ARQ, operation: create_and_modify, paths: [docs/arquitetura/ARQ.md, "docs/arquitetura/api/**", docs/arquitetura/estrutura.md] }
+      - { type: ADR, operation: create_and_modify, paths: ["docs/arquitetura/adr/ADR-*.md"] }
+      - { type: T, operation: create_and_modify, paths: ["docs/arquitetura/tarefas/T-*.md"] }
+      - { type: VALIDACAO, operation: create_and_modify, paths: ["docs/validacao/VALIDACAO-*.md"] }
+    findings:
+      emits: true
+      categories: [ambiguous_requirement, data_inconsistency, design_inconsistency]
+    ask_user: true
+    tools:
+      read_file: ["docs/requisitos/**", "docs/arquitetura/**", "docs/dados/**", "docs/design/**", "docs/qa/cenarios/**", "docs/qa/plano.md", "docs/seguranca/ameacas.md", "docs/validacao/**", "docs/achados/**"]
+      write_file: ["docs/arquitetura/**", "docs/validacao/**", "docs/achados/ACH-*.md"]
+      execute_command: { allowed: true, categories: [validate_openapi] }
+      git: []
+      browser: false
+      scanners: []
+      network: none
+    limits: { cpu: 1, memory_mib: 2048, disk_mib: 1024, command_time: PT2M, provisional: true }
+    prohibitions:
+      - Escrever código da aplicação em app/ (só exemplos curtos nas ADR).
+      - Definir modelo de dados, DDL ou estratégia de persistência (são do DBA).
+      - Editar ADR aprovada; mudança gera ADR nova e a antiga vira substituido.
+    contradictions: []   # resolvida (D-19): arquitetura não lê CT no modo DESENHO
+
+  # ------------------------------------------------------------------ DBA
+  - agent: dba-agent
+    instruction: agentes/instrucoes/dba.md
+    modes: []
+    stages: [data, validation]
+    reads:
+      types: [VISAO, US, RNF, ARQ, ADR, DIC, PERSIST, TELAS, VALIDACAO, ACH]
+    writes:
+      - { type: DIC, operation: create_and_modify, paths: [docs/dados/DIC.md, "docs/dados/*.sql", "docs/dados/*.dbml", docs/dados/er.md] }
+      - { type: PERSIST, operation: create_and_modify, paths: [docs/dados/PERSIST.md] }
+      - { type: VALIDACAO, operation: own_review_opinion, paths: ["docs/validacao/VALIDACAO-*.md"] }
+    findings:
+      emits: true
+      categories: [architecture_deviation, ambiguous_requirement, data_inconsistency, contract_gap]
+    ask_user: true
+    tools:
+      read_file: ["docs/requisitos/**", "docs/arquitetura/**", "docs/dados/**", "docs/design/TELAS.md", "docs/validacao/**", "docs/achados/**"]
+      write_file: ["docs/dados/**", "docs/validacao/VALIDACAO-*.md", "docs/achados/ACH-*.md"]
+      execute_command: { allowed: true, categories: [disposable_database, validate_ddl] }
+      git: []
+      browser: false
+      scanners: []
+      network: none
+    limits: { cpu: 2, memory_mib: 4096, disk_mib: 4096, command_time: PT5M, provisional: true }
+    prohibitions:
+      - Editar migração já aplicada.
+      - Alterar contrato da API ou ADR; o que afeta a Arquitetura vira ACH.
+    contradictions: []   # resolvidas (D-19, D-04): TELAS nas entradas do DBA na validação; campo da API sem origem no modelo = contract_gap (destino arquitetura)
+
+  # ------------------------------------------------------------- Designer
+  - agent: designer-agent
+    instruction: agentes/instrucoes/design.md
+    modes: []
+    stages: [design, validation]
+    reads:
+      types: [VISAO, US, RNF, ARQ, ADR, TELAS, VALIDACAO, ACH]
+    writes:
+      - { type: TELAS, operation: create_and_modify, paths: [docs/design/TELAS.md, docs/design/fluxo.md, docs/design/wireframes.md, "docs/design/prototipo/**", docs/design/estilo.md] }
+      - { type: VALIDACAO, operation: own_review_opinion, paths: ["docs/validacao/VALIDACAO-*.md"] }
+    findings:
+      emits: true
+      categories: [architecture_deviation, ambiguous_requirement, contract_gap]
+    ask_user: true
+    tools:
+      read_file: ["docs/requisitos/**", "docs/arquitetura/**", "docs/design/**", "docs/validacao/**", "docs/achados/**"]
+      write_file: ["docs/design/**", "docs/validacao/VALIDACAO-*.md", "docs/achados/ACH-*.md"]
+      execute_command: { allowed: true, categories: [local_static_server] }
+      git: []
+      browser: true
+      scanners: [axe-core]
+      network: none
+    limits: { cpu: 1, memory_mib: 2048, disk_mib: 1024, command_time: PT2M, provisional: true }
+    prohibitions:
+      - Inventar endpoint; lacuna no contrato vira ACH para a Arquitetura (id em lacunas_contrato).
+      - Usar recurso externo no protótipo (CDN, fonte remota); abre direto no navegador, sem rede.
+    contradictions:
+      - "A instrução não diz como verificar teclado, foco e contraste; navegador e axe-core são proposta desta derivação."
+
+  # --------------------------------------------------------- Desenvolvedor
+  - agent: developer-agent
+    instruction: agentes/instrucoes/dev.md
+    modes: [MANUAL, AUTOMATICO]
+    stages: [implementation]
+    reads:
+      types: [US, RNF, ARQ, ADR, T, DIC, PERSIST, TELAS, VALIDACAO, CT, ACH]
+      extra_paths: ["app/**"]
+    writes:
+      - { type: T, operation: tracking_fields, fields: [situacao, justificativa, registro_dev], paths: ["docs/arquitetura/tarefas/T-*.md"] }
+      - { operation: create_and_modify, paths: ["app/**"], description: "Código, testes unitários, migrations, README e .env.example; limitado ao escopo de arquivos da T da onda" }
+    findings:
+      emits: true
+      categories: [ambiguous_requirement, architecture_deviation, data_inconsistency, design_inconsistency, technical_debt]
+    ask_user: true
+    tools:
+      read_file: ["docs/requisitos/**", "docs/arquitetura/**", "docs/dados/**", "docs/design/**", "docs/validacao/**", "docs/qa/cenarios/**", "docs/achados/**", "app/**"]
+      write_file: ["app/**", "docs/arquitetura/tarefas/T-*.md", "docs/achados/ACH-*.md"]
+      execute_command: { allowed: true, categories: [build, tests, lint, migrations, package_manager, install_dependencies] }
+      git: [status, diff, log, add, commit]
+      browser: false
+      scanners: []
+      network: none
+    limits: { cpu: 4, memory_mib: 8192, disk_mib: 20480, command_time: PT15M, provisional: true }
+    prohibitions:
+      - Criar tabela, coluna ou constraint fora do DDL do DBA.
+      - Escrever fora do escopo de arquivos da T; se precisar sair, para e registra.
+      - Segredo no código; configuração por variável de ambiente com .env.example.
+      - Alterar contrato da API, modelo de dados ou design; erro neles vira ACH para a etapa dona.
+    contradictions: []   # resolvida (E5, ADR-07): package_manager roda sem rede sobre o cache da imagem; baixar dependência é install_dependencies, só pelo deps-proxy
+
+  # -------------------------------------------------------------------- QA
+  - agent: qa-agent
+    instruction: agentes/instrucoes/qa.md
+    modes: [PLANO, EXECUCAO]
+    stages: [qa]
+    activities: [qa-plan]
+    reads:
+      types: [US, RNF, T, CT, ACH]
+      extra_paths: ["app/**"]
+      per_mode:
+        PLANO: [US, RNF, ACH]
+        EXECUCAO: [US, RNF, T, CT, ACH]
+    writes:
+      - { type: CT, operation: create_and_modify, paths: [docs/qa/plano.md, "docs/qa/cenarios/CT-*.md"] }
+      - { type: CT, operation: tracking_fields, fields: [execucao], paths: ["docs/qa/cenarios/CT-*.md"] }
+      - { type: REL-QA, operation: create_and_modify, paths: ["docs/qa/REL-QA-*.md"] }
+      - { operation: create_and_modify, paths: ["app/e2e/**"], description: "Testes automatizados de integração e e2e; nunca código da aplicação" }
+    findings:
+      emits: true
+      categories: [defect, ambiguous_requirement]
+    ask_user: true
+    tools:
+      read_file: ["docs/requisitos/**", "docs/arquitetura/tarefas/T-*.md", "docs/arquitetura/estrutura.md", "docs/qa/**", "docs/achados/**", "app/**"]
+      write_file: ["docs/qa/**", "docs/achados/ACH-*.md", "app/e2e/**"]
+      execute_command: { allowed: true, categories: [tests, package_manager, install_dependencies] }
+      git: [status, diff, log]
+      browser: true
+      scanners: [axe-core]
+      network: none
+    limits: { cpu: 4, memory_mib: 8192, disk_mib: 20480, command_time: PT15M, provisional: true }
+    prohibitions:
+      - Alterar código da aplicação (o QA relata, o Dev corrige).
+    contradictions:
+      - "A instrução manda automatizar testes de integração 'na linguagem do backend', que ficam fora de app/e2e/ conforme a estrutura do projeto; a pasta exata vem de estrutura.md. Escrita do QA restrita a app/e2e/** até a E5 definir onde ficam os testes do QA sem misturar com os do Dev. Os testes de integração usam os serviços de apoio do perfil (categoria testes), não Compose (D-38)."
+
+  # ------------------------------------------------------------- Segurança
+  - agent: security-agent
+    instruction: agentes/instrucoes/seguranca.md
+    modes: [AMEACAS, AUDITORIA]
+    stages: [security]
+    activities: [security-threats]
+    reads:
+      types: [US, RNF, ARQ, ADR, DIC, PERSIST, AMEACAS, REL-QA, ACH]
+      extra_paths: ["app/**"]
+      per_mode:
+        AMEACAS: [US, RNF, ARQ, ADR, DIC, PERSIST, ACH]
+        AUDITORIA: [US, RNF, ARQ, ADR, DIC, PERSIST, AMEACAS, REL-QA, ACH]
+    writes:
+      - { type: AMEACAS, operation: create_and_modify, paths: [docs/seguranca/ameacas.md] }
+      - { type: AMEACAS, operation: tracking_fields, fields: [conferencia], paths: [docs/seguranca/ameacas.md] }
+      - { type: REL-SEG, operation: create_and_modify, paths: ["docs/seguranca/REL-SEG-*.md"] }
+    findings:
+      emits: true
+      categories: [vulnerability, architecture_deviation, data_inconsistency, ambiguous_requirement]
+    ask_user: true
+    tools:
+      read_file: ["docs/requisitos/**", "docs/arquitetura/**", "docs/dados/**", "docs/qa/REL-QA-*.md", "docs/seguranca/**", "docs/achados/**", "app/**"]
+      write_file: ["docs/seguranca/**", "docs/achados/ACH-*.md"]
+      execute_command: { allowed: true, categories: [scanner, local_http_client] }
+      git: [status, diff, log]
+      browser: false
+      scanners: [opengrep, trivy, gitleaks]
+      network: none
+    limits: { cpu: 4, memory_mib: 8192, disk_mib: 20480, command_time: PT30M, provisional: true }
+    prohibitions:
+      - Alterar código da aplicação (a Segurança relata, o Dev corrige).
+      - Ataque de prova fora do ambiente do sandbox do projeto.
+    contradictions:
+      - "Trivy precisa de base de vulnerabilidades atualizada e a rede do sandbox é nenhuma; exige base pré-carregada na imagem ou destino liberado (ponto em aberto)."
+
+  # ---------------------------------------------------------- Orquestrador
+  - agent: orchestrator
+    instruction: null
+    modes: []
+    stages: [release]
+    reads:
+      types: [VISAO, US, RNF, BACKLOG, ARQ, ADR, T, DIC, PERSIST, TELAS, VALIDACAO, CT, AMEACAS, ACH, REL-QA, REL-SEG, RELEASE]
+      extra_paths: ["app/**"]
+    writes:
+      - { type: RELEASE, operation: create_and_modify, paths: ["docs/release/RELEASE-*.md"] }
+      - { type: ACH, operation: tracking_fields, fields: [situacao, ciclos], paths: ["docs/achados/ACH-*.md"], description: "Situação, ondas e commit dos ciclos (o Dev informa commit e registro_dev na resposta da onda); etapa_origem ao registrar o ACH; resultado da revalidação é do emissor; aceite, escalonamentos e descarte registram a decisão humana" }
+    findings:
+      emits: true
+      categories: [defect, ambiguous_requirement, vulnerability, architecture_deviation, data_inconsistency, design_inconsistency, technical_debt]
+    ask_user: false
+    tools:
+      read_file: ["docs/**", "app/**"]
+      write_file: ["docs/release/**", "docs/achados/ACH-*.md"]
+      execute_command: { allowed: true, categories: [build, tests, lint, validate_schema] }
+      git: [status, diff, log, add, commit, branch, tag]
+      browser: false
+      scanners: []
+      network: none
+    limits: { cpu: 2, memory_mib: 4096, disk_mib: 4096, command_time: PT15M, provisional: true }
+    prohibitions:
+      - Tomar decisão humana (aprovar gate humano, aceitar risco, decidir escalonamento, mudar escopo, publicar em produção).
+      - Concentrar a inteligência dos agentes; o orquestrador não produz artefato de etapa além do RELEASE.
+    contradictions:
+      - "O orquestrador não é agente de IA nem tem instrução; entra aqui para fixar o que ele faz no sandbox (checagens automáticas; commit dos artefatos em docs/ ao concluir cada onda, D-17). A entrega pelo CI/CD da empresa (seção 12) sai da plataforma, não do sandbox, e não é coberta por esta tabela."

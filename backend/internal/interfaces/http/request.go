@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/valyala/fasthttp"
@@ -78,4 +79,37 @@ func ifMatch(rc *fasthttp.RequestCtx) (string, error) {
 
 func setETag(rc *fasthttp.RequestCtx, version string) {
 	rc.Response.Header.Set(headerETag, `"`+version+`"`)
+}
+
+// pathUUID reads a UUID path parameter; anything else is not found (opaque ids, RNF-04).
+func pathUUID(rc *fasthttp.RequestCtx, name string) (string, error) {
+	value := strings.ToLower(PathParam(rc, name))
+	if !uuidPattern.MatchString(value) {
+		return "", failure.New(failure.KindNotFound, failure.CodeNotFound, nil)
+	}
+	return value, nil
+}
+
+// queryLimit reads the page size (1–100, default 20).
+func queryLimit(rc *fasthttp.RequestCtx) (int, error) {
+	raw := string(rc.QueryArgs().Peek("limit"))
+	if raw == "" {
+		return 20, nil
+	}
+	limit, err := strconv.Atoi(raw)
+	if err != nil || limit < 1 || limit > 100 {
+		return 0, failure.Invalid(failure.FieldError{Field: "limit", Message: "range"})
+	}
+	return limit, nil
+}
+
+// queryList reads a repeatable query parameter (style form, explode).
+func queryList(rc *fasthttp.RequestCtx, name string) []string {
+	values := []string{}
+	for _, value := range rc.QueryArgs().PeekMulti(name) {
+		if text := strings.TrimSpace(string(value)); text != "" {
+			values = append(values, text)
+		}
+	}
+	return values
 }

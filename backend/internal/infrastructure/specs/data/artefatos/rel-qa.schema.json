@@ -1,0 +1,208 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:easycode:schema:rel-qa:v1",
+  "title": "Relatório de QA",
+  "description": "Relatório da execução dos testes pelo QA, com matriz de rastreabilidade US/CA × CT.",
+  "allOf": [
+    {
+      "$ref": "cabecalho-comum.schema.json"
+    },
+    {
+      "properties": {
+        "tipo": {
+          "const": "REL-QA"
+        },
+        "id": {
+          "type": "string",
+          "description": "Id do artefato: REL-QA-NN.",
+          "pattern": "^REL-QA-[0-9]{2,}$"
+        },
+        "execucao": {
+          "type": "integer",
+          "description": "Número da execução.",
+          "minimum": 1
+        },
+        "resumo": {
+          "type": "object",
+          "description": "Indicadores da execução.",
+          "properties": {
+            "ct_executados": {
+              "type": "integer",
+              "description": "CT executados.",
+              "minimum": 0
+            },
+            "passaram": {
+              "type": "integer",
+              "description": "CT que passaram.",
+              "minimum": 0
+            },
+            "falharam": {
+              "type": "integer",
+              "description": "CT que falharam (intermitente conta como falhou).",
+              "minimum": 0
+            },
+            "bloqueados": {
+              "type": "integer",
+              "description": "CT bloqueados.",
+              "minimum": 0
+            },
+            "ca_must_cobertos": {
+              "type": "integer",
+              "description": "CA de US Must cobertos por CT passando.",
+              "minimum": 0
+            },
+            "ca_must_total": {
+              "type": "integer",
+              "description": "Total de CA de US Must.",
+              "minimum": 0
+            },
+            "cobertura_codigo": {
+              "type": "number",
+              "description": "Cobertura de código em percentual, se medida.",
+              "minimum": 0,
+              "maximum": 100
+            }
+          },
+          "required": [
+            "ct_executados",
+            "passaram",
+            "falharam",
+            "bloqueados",
+            "ca_must_cobertos",
+            "ca_must_total"
+          ],
+          "additionalProperties": false
+        },
+        "matriz": {
+          "type": "array",
+          "description": "Matriz de rastreabilidade.",
+          "items": {
+            "type": "object",
+            "description": "Linha da matriz.",
+            "properties": {
+              "us": {
+                "type": "string",
+                "description": "Id de US.",
+                "pattern": "^US-[0-9]{2,}$"
+              },
+              "criterio": {
+                "type": "string",
+                "description": "Id de critério de aceite.",
+                "pattern": "^CA-[0-9]+$"
+              },
+              "ct": {
+                "type": "string",
+                "description": "Id de CT.",
+                "pattern": "^CT-[0-9]{2,}$"
+              },
+              "nivel": {
+                "type": "string",
+                "description": "Nível do CT.",
+                "enum": [
+                  "unitario",
+                  "integracao",
+                  "e2e",
+                  "nao_funcional"
+                ]
+              },
+              "resultado": {
+                "type": "string",
+                "description": "Resultado do CT.",
+                "enum": [
+                  "passou",
+                  "falhou",
+                  "bloqueado",
+                  "nao_executado"
+                ]
+              },
+              "achado": {
+                "type": "string",
+                "description": "ACH gerado.",
+                "pattern": "^ACH-[0-9]{2,}$"
+              }
+            },
+            "required": [
+              "us",
+              "criterio",
+              "ct",
+              "nivel",
+              "resultado"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "sem_cobertura": {
+          "type": "array",
+          "description": "Critérios sem CT ou com CT bloqueado, e por quê; vazio se nenhum.",
+          "items": {
+            "type": "object",
+            "description": "Critério sem cobertura.",
+            "properties": {
+              "us": {
+                "type": "string",
+                "description": "Id de US.",
+                "pattern": "^US-[0-9]{2,}$"
+              },
+              "criterio": {
+                "type": "string",
+                "description": "Id de critério de aceite.",
+                "pattern": "^CA-[0-9]+$"
+              },
+              "motivo": {
+                "type": "string",
+                "description": "Por que não está coberto.",
+                "minLength": 1,
+                "pattern": "\\S"
+              }
+            },
+            "required": [
+              "us",
+              "criterio",
+              "motivo"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "comandos": {
+          "type": "array",
+          "description": "Comandos exatos para reproduzir a execução, do zero em ambiente limpo.",
+          "items": {
+            "type": "string",
+            "description": "Comando.",
+            "minLength": 1,
+            "pattern": "\\S"
+          },
+          "minItems": 1
+        },
+        "achados_abertos": {
+          "type": "array",
+          "description": "ACH abertos ao fim da execução.",
+          "items": {
+            "type": "string",
+            "description": "Id de ACH.",
+            "pattern": "^ACH-[0-9]{2,}$"
+          },
+          "uniqueItems": true
+        },
+        "veredito": {
+          "type": "string",
+          "description": "Veredito. Aprovado exige todo CA Must com CT passando e nenhum ACH Crítico ou Alto aberto (checagem de governança).",
+          "enum": [
+            "aprovado",
+            "reprovado"
+          ]
+        }
+      },
+      "required": [
+        "execucao",
+        "resumo",
+        "matriz",
+        "sem_cobertura",
+        "comandos",
+        "achados_abertos",
+        "veredito"
+      ]
+    }
+  ],
+  "unevaluatedProperties": false
+}

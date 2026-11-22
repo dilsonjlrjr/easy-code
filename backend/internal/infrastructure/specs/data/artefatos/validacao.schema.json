@@ -1,0 +1,377 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:easycode:schema:validacao:v1",
+  "title": "Validação técnica",
+  "description": "Validação técnica conjunta (uma por execução): 5 conferências entre artefatos, parecer de arquiteto, DBA e designer, versões conferidas e veredito. Autor = architect-agent (lidera a etapa); cada participante registra o próprio parecer.",
+  "allOf": [
+    {
+      "$ref": "cabecalho-comum.schema.json"
+    },
+    {
+      "properties": {
+        "tipo": {
+          "const": "VALIDACAO"
+        },
+        "id": {
+          "type": "string",
+          "description": "Id do artefato: VALIDACAO-NN.",
+          "pattern": "^VALIDACAO-[0-9]{2,}$"
+        },
+        "autor": {
+          "const": "architect-agent",
+          "description": "O Arquiteto lidera a validação e é o autor do artefato; DBA e designer escrevem só o próprio item de `pareceres`."
+        },
+        "conferencias": {
+          "type": "array",
+          "description": "Os 5 pares conferidos, um item cada.",
+          "items": {
+            "type": "object",
+            "description": "Conferência de um par.",
+            "properties": {
+              "par": {
+                "type": "string",
+                "description": "Par conferido.",
+                "enum": [
+                  "arquitetura_dados",
+                  "api_dados",
+                  "api_telas",
+                  "ameacas_arquitetura",
+                  "cobertura_us_t_ct"
+                ]
+              },
+              "resultado": {
+                "type": "string",
+                "description": "Resultado.",
+                "enum": [
+                  "ok",
+                  "divergente"
+                ]
+              },
+              "inconsistencia": {
+                "type": "string",
+                "description": "Descrição da inconsistência; obrigatória se divergente.",
+                "minLength": 1,
+                "pattern": "\\S"
+              },
+              "achado": {
+                "type": "string",
+                "description": "ACH aberto para a divergência; obrigatório se divergente.",
+                "pattern": "^ACH-[0-9]{2,}$"
+              }
+            },
+            "required": [
+              "par",
+              "resultado"
+            ],
+            "additionalProperties": false,
+            "allOf": [
+              {
+                "if": {
+                  "properties": {
+                    "resultado": {
+                      "const": "divergente"
+                    }
+                  },
+                  "required": [
+                    "resultado"
+                  ]
+                },
+                "then": {
+                  "required": [
+                    "inconsistencia",
+                    "achado"
+                  ]
+                }
+              }
+            ]
+          },
+          "minItems": 5,
+          "maxItems": 5,
+          "allOf": [
+            {
+              "contains": {
+                "type": "object",
+                "properties": {
+                  "par": {
+                    "const": "arquitetura_dados"
+                  }
+                },
+                "required": [
+                  "par"
+                ]
+              }
+            },
+            {
+              "contains": {
+                "type": "object",
+                "properties": {
+                  "par": {
+                    "const": "api_dados"
+                  }
+                },
+                "required": [
+                  "par"
+                ]
+              }
+            },
+            {
+              "contains": {
+                "type": "object",
+                "properties": {
+                  "par": {
+                    "const": "api_telas"
+                  }
+                },
+                "required": [
+                  "par"
+                ]
+              }
+            },
+            {
+              "contains": {
+                "type": "object",
+                "properties": {
+                  "par": {
+                    "const": "ameacas_arquitetura"
+                  }
+                },
+                "required": [
+                  "par"
+                ]
+              }
+            },
+            {
+              "contains": {
+                "type": "object",
+                "properties": {
+                  "par": {
+                    "const": "cobertura_us_t_ct"
+                  }
+                },
+                "required": [
+                  "par"
+                ]
+              }
+            }
+          ]
+        },
+        "pareceres": {
+          "type": "array",
+          "description": "Exatamente arquiteto, DBA e designer, um parecer por participante. Só o parecer `reprovado` do DBA força veredito `devolvido` (US-20 RN-1, PC-06); o de arquiteto ou designer gera o alerta validacao.parecer_reprovado e impede a aprovação automática do gate.validacao.",
+          "items": {
+            "type": "object",
+            "description": "Parecer de um participante.",
+            "properties": {
+              "participante": {
+                "type": "string",
+                "description": "Participante.",
+                "enum": [
+                  "arquiteto",
+                  "dba",
+                  "designer"
+                ]
+              },
+              "parecer": {
+                "type": "string",
+                "description": "Parecer.",
+                "enum": [
+                  "aprovado",
+                  "reprovado"
+                ]
+              },
+              "ressalvas": {
+                "type": "array",
+                "description": "Ressalvas; obrigatórias se reprovado.",
+                "items": {
+                  "type": "string",
+                  "description": "Ressalva.",
+                  "minLength": 1,
+                  "pattern": "\\S"
+                }
+              },
+              "onda": {
+                "type": "string",
+                "description": "Onda em que o participante deu o parecer (opcional; o orquestrador preenche).",
+                "pattern": "^(REQ|ARQ|DBA|DSG|VAL|DEV|QA|SEG|REL)-[0-9]{2,}$"
+              }
+            },
+            "required": [
+              "participante",
+              "parecer",
+              "ressalvas"
+            ],
+            "additionalProperties": false,
+            "allOf": [
+              {
+                "if": {
+                  "properties": {
+                    "parecer": {
+                      "const": "reprovado"
+                    }
+                  },
+                  "required": [
+                    "parecer"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "ressalvas": {
+                      "minItems": 1
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "allOf": [
+            {
+              "contains": {
+                "type": "object",
+                "properties": {
+                  "participante": {
+                    "const": "arquiteto"
+                  }
+                },
+                "required": [
+                  "participante"
+                ]
+              }
+            },
+            {
+              "contains": {
+                "type": "object",
+                "properties": {
+                  "participante": {
+                    "const": "dba"
+                  }
+                },
+                "required": [
+                  "participante"
+                ]
+              }
+            },
+            {
+              "contains": {
+                "type": "object",
+                "properties": {
+                  "participante": {
+                    "const": "designer"
+                  }
+                },
+                "required": [
+                  "participante"
+                ]
+              }
+            }
+          ]
+        },
+        "artefatos_conferidos": {
+          "type": "array",
+          "description": "Versões exatas dos artefatos conferidos (entradas da etapa: ARQ, ADR, T, DIC, PERSIST, TELAS, AMEACAS, CT). Reaprovação de um deles em versão nova torna a validação desatualizada (rastreabilidade.md, L-10).",
+          "items": {
+            "type": "object",
+            "description": "Artefato conferido.",
+            "properties": {
+              "id": {
+                "type": "string",
+                "description": "Id do artefato.",
+                "pattern": "^([A-Z]+(-[A-Z]+)?-[0-9]{2,}|VISAO|ARQ|DIC|PERSIST|AMEACAS|BACKLOG|TELAS)$"
+              },
+              "versao": {
+                "type": "integer",
+                "description": "Versão conferida.",
+                "minimum": 1
+              }
+            },
+            "required": [
+              "id",
+              "versao"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 1
+        },
+        "veredito": {
+          "type": "string",
+          "description": "Veredito da validação. `devolvido` obrigatório se o parecer do DBA for reprovado ou alguma conferência divergente.",
+          "enum": [
+            "liberado",
+            "devolvido"
+          ]
+        }
+      },
+      "required": [
+        "conferencias",
+        "pareceres",
+        "veredito"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "pareceres"
+            ],
+            "properties": {
+              "pareceres": {
+                "contains": {
+                  "type": "object",
+                  "properties": {
+                    "participante": {
+                      "const": "dba"
+                    },
+                    "parecer": {
+                      "const": "reprovado"
+                    }
+                  },
+                  "required": [
+                    "participante",
+                    "parecer"
+                  ]
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "veredito": {
+                "const": "devolvido"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "conferencias"
+            ],
+            "properties": {
+              "conferencias": {
+                "contains": {
+                  "type": "object",
+                  "properties": {
+                    "resultado": {
+                      "const": "divergente"
+                    }
+                  },
+                  "required": [
+                    "resultado"
+                  ]
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "veredito": {
+                "const": "devolvido"
+              }
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "unevaluatedProperties": false
+}

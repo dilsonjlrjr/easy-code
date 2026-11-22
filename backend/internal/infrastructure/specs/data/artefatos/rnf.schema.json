@@ -1,0 +1,130 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:easycode:schema:rnf:v1",
+  "title": "Requisito não funcional",
+  "description": "RNF com métrica e forma de verificação.",
+  "allOf": [
+    {
+      "$ref": "cabecalho-comum.schema.json"
+    },
+    {
+      "properties": {
+        "tipo": {
+          "const": "RNF"
+        },
+        "id": {
+          "type": "string",
+          "description": "Id do artefato: RNF-NN.",
+          "pattern": "^RNF-[0-9]{2,}$"
+        },
+        "categoria": {
+          "type": "string",
+          "description": "Categoria do RNF.",
+          "enum": [
+            "desempenho",
+            "disponibilidade",
+            "seguranca",
+            "privacidade_lgpd",
+            "acessibilidade",
+            "usabilidade",
+            "manutenibilidade",
+            "compatibilidade",
+            "auditabilidade",
+            "observabilidade",
+            "portabilidade",
+            "custo"
+          ]
+        },
+        "requisito": {
+          "type": "string",
+          "description": "O que o sistema deve garantir.",
+          "minLength": 1
+        },
+        "metrica": {
+          "type": "string",
+          "description": "Número ou condição objetiva.",
+          "minLength": 1
+        },
+        "verificacao": {
+          "type": "object",
+          "properties": {
+            "tipo": {
+              "type": "string",
+              "description": "Forma de verificar.",
+              "enum": [
+                "teste_automatizado",
+                "varredura",
+                "revisao_manual",
+                "medicao"
+              ]
+            },
+            "detalhe": {
+              "type": "string",
+              "description": "Como verificar, em detalhe.",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "tipo",
+            "detalhe"
+          ],
+          "additionalProperties": false
+        },
+        "prioridade": {
+          "type": "string",
+          "description": "Prioridade MoSCoW (sem wont).",
+          "enum": [
+            "must",
+            "should",
+            "could"
+          ]
+        },
+        "origem": {
+          "type": "object",
+          "properties": {
+            "tipo": {
+              "type": "string",
+              "description": "Natureza da origem.",
+              "enum": [
+                "cliente",
+                "lei",
+                "norma",
+                "boa_pratica"
+              ]
+            },
+            "detalhe": {
+              "type": "string",
+              "description": "Entrada do usuário, lei, norma ou prática.",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "tipo",
+            "detalhe"
+          ],
+          "additionalProperties": false
+        },
+        "us_afetadas": {
+          "type": "array",
+          "description": "US afetadas por este RNF.",
+          "items": {
+            "type": "string",
+            "description": "Id de US.",
+            "pattern": "^US-[0-9]{2,}$"
+          },
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "categoria",
+        "requisito",
+        "metrica",
+        "verificacao",
+        "prioridade",
+        "origem",
+        "us_afetadas"
+      ]
+    }
+  ],
+  "unevaluatedProperties": false
+}

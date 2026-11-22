@@ -31,6 +31,7 @@ type Dependencies struct {
 
 	Providers ProviderUseCases
 	Pricing   PricingUseCases
+	Projects  ProjectUseCases
 }
 
 // ServerSettings configures the fasthttp server.

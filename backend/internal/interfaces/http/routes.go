@@ -23,4 +23,9 @@ func (a *api) register(router *Router) {
 		router.Handle(fasthttp.MethodPost, APIPrefix+"/providers/{provider}/models/{model}/prices", auth(a.recordModelPrice))
 		router.Handle(fasthttp.MethodPatch, APIPrefix+"/providers/{provider}/models/{model}/prices/{effectivePeriodId}", auth(a.correctModelPrice))
 	}
+	if a.deps.Projects != nil {
+		router.Handle(fasthttp.MethodGet, APIPrefix+"/projects", auth(a.listProjects))
+		router.Handle(fasthttp.MethodPost, APIPrefix+"/projects", auth(a.createProject))
+		router.Handle(fasthttp.MethodGet, APIPrefix+"/projects/{projectId}", auth(a.getProject))
+	}
 }

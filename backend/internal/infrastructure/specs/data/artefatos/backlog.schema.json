@@ -1,0 +1,254 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:easycode:schema:backlog:v1",
+  "title": "Backlog priorizado",
+  "description": "Backlog priorizado do projeto. Um por projeto.",
+  "allOf": [
+    {
+      "$ref": "cabecalho-comum.schema.json"
+    },
+    {
+      "properties": {
+        "tipo": {
+          "const": "BACKLOG"
+        },
+        "id": {
+          "const": "BACKLOG"
+        },
+        "historias": {
+          "type": "array",
+          "description": "Histórias em ordem de prioridade; toda US do projeto aparece aqui ou em adiadas.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "ordem": {
+                "type": "integer",
+                "minimum": 1,
+                "description": "Posição na ordem de execução (1 = primeira)."
+              },
+              "us": {
+                "type": "string",
+                "description": "Id da US.",
+                "pattern": "^US-[0-9]{2,}$"
+              },
+              "prioridade": {
+                "type": "string",
+                "description": "Prioridade MoSCoW. `wont` não entra aqui: US wont fica só em `adiadas`.",
+                "enum": [
+                  "must",
+                  "should",
+                  "could"
+                ]
+              },
+              "valor": {
+                "type": "string",
+                "description": "Valor para o negócio.",
+                "enum": [
+                  "alto",
+                  "medio",
+                  "baixo"
+                ]
+              },
+              "esforco": {
+                "type": "string",
+                "description": "Esforço estimado.",
+                "enum": [
+                  "p",
+                  "m",
+                  "g"
+                ]
+              },
+              "epico": {
+                "type": "string",
+                "description": "Épico da história (id de `epicos`).",
+                "pattern": "^EP-[0-9]{2,}$"
+              },
+              "fase": {
+                "type": "integer",
+                "description": "Fase do PROJETO.md (seção 15) em que a história entra.",
+                "minimum": 1,
+                "maximum": 4
+              },
+              "marco": {
+                "type": "string",
+                "description": "Marco de entrega (id de `marcos`).",
+                "pattern": "^MARCO-[0-9]+$"
+              },
+              "depende_de": {
+                "type": "array",
+                "description": "US que precisam vir antes (ordem menor no backlog); vazio ou ausente = nenhuma.",
+                "items": {
+                  "type": "string",
+                  "description": "Id de US.",
+                  "pattern": "^US-[0-9]{2,}$"
+                },
+                "uniqueItems": true
+              },
+              "observacao": {
+                "type": "string",
+                "description": "Observação livre."
+              }
+            },
+            "required": [
+              "ordem",
+              "us",
+              "prioridade",
+              "valor",
+              "esforco"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 1
+        },
+        "rnf": {
+          "type": "array",
+          "description": "RNF do projeto.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "rnf": {
+                "type": "string",
+                "description": "Id do RNF.",
+                "pattern": "^RNF-[0-9]{2,}$"
+              },
+              "prioridade": {
+                "type": "string",
+                "description": "Prioridade.",
+                "enum": [
+                  "must",
+                  "should",
+                  "could"
+                ]
+              }
+            },
+            "required": [
+              "rnf",
+              "prioridade"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "suposicoes": {
+          "type": "array",
+          "description": "Suposições; obrigatório mesmo se vazio.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "description": "Id local.",
+                "pattern": "^S-[0-9]+$"
+              },
+              "descricao": {
+                "type": "string",
+                "description": "O que foi decidido sem o cliente.",
+                "minLength": 1
+              },
+              "motivo": {
+                "type": "string",
+                "description": "Por quê.",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "id",
+              "descricao",
+              "motivo"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "adiadas": {
+          "type": "array",
+          "description": "Histórias registradas e adiadas (Won't). Toda US wont fica aqui e só aqui; a checagem cruza com US.prioridade.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "us": {
+                "type": "string",
+                "description": "Id da US.",
+                "pattern": "^US-[0-9]{2,}$"
+              },
+              "motivo": {
+                "type": "string",
+                "description": "Por que foi adiada (Won't).",
+                "minLength": 1
+              },
+              "prioridade": {
+                "description": "Prioridade da US adiada: sempre wont (opcional; a US é a fonte).",
+                "const": "wont"
+              }
+            },
+            "required": [
+              "us",
+              "motivo"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "epicos": {
+          "type": "array",
+          "description": "Épicos do backlog (opcional). Agrupam histórias; o item de `historias` aponta o épico em `epico`.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "description": "Id do épico.",
+                "pattern": "^EP-[0-9]{2,}$"
+              },
+              "nome": {
+                "type": "string",
+                "description": "Nome do épico.",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "id",
+              "nome"
+            ],
+            "additionalProperties": false
+          },
+          "uniqueItems": true
+        },
+        "marcos": {
+          "type": "array",
+          "description": "Marcos de entrega (opcional): conjunto de histórias que fecha um resultado verificável.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "description": "Id do marco.",
+                "pattern": "^MARCO-[0-9]+$"
+              },
+              "nome": {
+                "type": "string",
+                "description": "Nome do marco.",
+                "minLength": 1
+              },
+              "criterio": {
+                "type": "string",
+                "description": "Como saber que o marco foi atingido.",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "id",
+              "nome"
+            ],
+            "additionalProperties": false
+          },
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "historias",
+        "rnf",
+        "suposicoes",
+        "adiadas"
+      ]
+    }
+  ],
+  "unevaluatedProperties": false
+}
