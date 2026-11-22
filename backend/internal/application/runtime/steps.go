@@ -8,7 +8,9 @@ import (
 	"context"
 	"encoding/json"
 
+	"easycode/internal/domain/permission"
 	"easycode/internal/domain/provider"
+	"easycode/internal/domain/sandbox"
 )
 
 // Step types (StepResult.Type).
@@ -42,6 +44,17 @@ type WaveContext struct {
 	WritablePaths []string
 	Outputs       []string            // artifact types the stage must deliver
 	Models        map[string]ModelRef // by role: the pair the wave started with (US-16 CA-4)
+	// Policy is the least-privilege policy of the agent (RNF-07); nil derives a write-only policy
+	// from WritablePaths (agents without sandbox of MARCO-1).
+	Policy *permission.Policy
+	// Base is the project repository at the start of the wave (path → text), read-only for the agent.
+	Base map[string]string
+	// Approved maps the path of every approved artifact to its author (US-30 CA-2, RN-1).
+	Approved map[string]string
+	Mode     string         // agent mode of the stage (DESENHO, MANUAL…)
+	Task     string         // T of an implementation wave (one wave per task, PL-20)
+	Image    string         // logical sandbox image of the project stack
+	Limits   sandbox.Limits // effective limits of the commands (min of agent and project, RNF-03)
 }
 
 // ModelRef is a model of the wave pair.
@@ -79,6 +92,22 @@ type ToolRecord struct {
 	RefusalReason string
 	Success       bool
 	Summary       string
+	Execution     *Execution // execute_command in the sandbox (US-41)
+}
+
+// Execution is the evidence of a command run in the sandbox (US-41 CA-1, CA-2, CA-3).
+type Execution struct {
+	ID       string
+	Category string
+	Command  string
+	Result   sandbox.ExecutionResult
+	Output   []byte // full output, kept as evidence
+}
+
+// TaskFailure is a build, test or lint failure of the task of the wave (wave.task_failed).
+type TaskFailure struct {
+	Cause       string // build | tests | lint
+	Consecutive int
 }
 
 // StepResult is the outcome of one step.
@@ -90,6 +119,8 @@ type StepResult struct {
 	Question []QuestionItem
 	Outputs  []Output
 	Failure  string // failure cause when Type = fail
+	// TaskFailed is set when the step was a failed build or test command of the task.
+	TaskFailed *TaskFailure
 }
 
 // Steps is implemented by the agent harness: one unit of work per Next, never touching the database.

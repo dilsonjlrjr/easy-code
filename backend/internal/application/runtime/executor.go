@@ -17,7 +17,9 @@ import (
 	domainartifact "easycode/internal/domain/artifact"
 	domainevent "easycode/internal/domain/event"
 	"easycode/internal/domain/failure"
+	"easycode/internal/domain/permission"
 	"easycode/internal/domain/provider"
+	"easycode/internal/domain/sandbox"
 )
 
 // ArtifactStore validates and records the outputs (US-29) and submits them for review.
@@ -32,10 +34,27 @@ type StageProgress interface {
 	WaveCompleted(ctx context.Context, projectID, stage, correlation string) error
 }
 
-// Agent is a runnable agent: its harness, writable paths and stage outputs.
+// Agent is a runnable agent: its harness, its least-privilege policy and the agent mode of its stage.
 type Agent struct {
 	Steps         Steps
-	WritablePaths []string
+	WritablePaths []string           // used when Policy is nil (write-only agents)
+	Policy        *permission.Policy // tools, paths and command categories (RNF-07)
+	Mode          string
+}
+
+// Repository is the git repository of the project (US-42): the base the agents read and the commit of
+// every completed wave (D-17), with the artifacts in docs/ and the code in app/.
+type Repository interface {
+	Files(ctx context.Context, projectID string) (map[string]string, error)
+	Commit(ctx context.Context, projectID string, commit Commit) (string, error)
+}
+
+// Commit is the content of one wave commit.
+type Commit struct {
+	Wave    string
+	Agent   string
+	Message string
+	Files   map[string][]byte
 }
 
 // Settings tune the executor.
@@ -45,6 +64,8 @@ type Settings struct {
 	MaxCorrections int           // rejected deliveries before the wave fails (US-29 CA-2)
 	RetryBackoff   time.Duration // first backoff of a transient provider error
 	Poll           time.Duration
+	Image          string         // logical sandbox image of the projects (stack of the Phase 1)
+	ProjectLimits  sandbox.Limits // project limits of RNF-03, combined with the agent ceiling (effective_limits)
 }
 
 // Executor runs the waves of the registered agents (ADR-04 Phase 1: PostgreSQL lease and fencing).
@@ -61,6 +82,16 @@ type Executor struct {
 	settings     Settings
 	logger       *slog.Logger
 	now          func() time.Time
+	repository   Repository
+	attachments  func(stage string) []string
+}
+
+// WithRepository makes the executor read the project repository as the wave base and commit every
+// completed wave (US-42, D-17). attachments gives, per stage, the output paths that are files of an
+// artifact and not artifacts themselves (openapi.yaml, estrutura.md).
+func (e *Executor) WithRepository(repository Repository, attachments func(stage string) []string) *Executor {
+	e.repository, e.attachments = repository, attachments
+	return e
 }
 
 // NewExecutor builds the executor. outputs gives the artifact types each stage must deliver.
@@ -209,6 +240,15 @@ func (e *Executor) execute(ctx context.Context, c Claimed) error {
 		ProjectID: c.ProjectID, WaveID: c.PublicID, Code: c.Code, Stage: c.Stage, Agent: c.Agent, Attempt: c.Attempt,
 		Instruction: text, BusinessNeed: inputs.BusinessNeed, Constraints: inputs.Constraints, Language: inputs.Language,
 		WritablePaths: agent.WritablePaths, Outputs: e.outputs(c.Stage), Models: inputs.Models, Feedback: inputs.Feedback,
+		Policy: agent.Policy, Approved: inputs.Approved, Mode: agent.Mode, Task: inputs.Task, Image: e.settings.Image,
+	}
+	if agent.Policy != nil {
+		wave.Limits = agent.Policy.Ceiling.Min(e.settings.ProjectLimits)
+	}
+	if e.repository != nil {
+		if wave.Base, err = e.repository.Files(ctx, c.ProjectID); err != nil {
+			return err
+		}
 	}
 	cp, err := e.ledger.LastCheckpoint(ctx, c.Lease, c.Attempt)
 	if err != nil {
@@ -263,7 +303,8 @@ func (e *Executor) loop(ctx context.Context, c Claimed, agent Agent, wave WaveCo
 			}
 			continue
 		}
-		write := StepWrite{Checkpointed: true, Checkpoint: result.New, StateHash: hash(result.New.State), Call: result.Call, Tool: result.Tool, DurationMs: duration}
+		write := StepWrite{Checkpointed: true, Checkpoint: result.New, StateHash: hash(result.New.State), Call: result.Call, Tool: result.Tool, DurationMs: duration,
+			Task: wave.Task, TaskFailed: result.TaskFailed}
 		switch result.Type {
 		case StepContinue:
 			if err := e.saveStep(ctx, c, write, nil); err != nil {
@@ -348,11 +389,21 @@ func (e *Executor) saveStep(ctx context.Context, c Claimed, write StepWrite, ext
 		}
 		if write.Tool != nil {
 			data := with(e.base(c), map[string]any{"actor": map[string]any{"type": "agent", "id": c.Agent}, "tool": write.Tool.Tool, "summary": clip(write.Tool.Summary, 120)})
+			if write.Task != "" {
+				data["task"] = write.Task
+			}
 			data["result"] = "allowed"
 			if !write.Tool.Allowed {
 				data["result"], data["refusal_reason"] = "refused", write.Tool.RefusalReason
 			}
 			if err := e.emit(ctx, c, "br.easycode.wave.tool_called.v1", "waves/"+c.Code, data); err != nil {
+				return err
+			}
+		}
+		if failed := write.TaskFailed; failed != nil && write.Task != "" {
+			if err := e.emit(ctx, c, "br.easycode.wave.task_failed.v1", "waves/"+c.Code, with(e.base(c), map[string]any{
+				"actor": orchestratorActor, "task": write.Task, "cause": failed.Cause, "consecutive_failures": failed.Consecutive,
+			})); err != nil {
 				return err
 			}
 		}
@@ -465,7 +516,8 @@ type schemaProblem struct {
 // deliver validates the outputs (artifact.schema_valid, guard of wave: complete) and either
 // completes the wave or returns the errors to the agent, failing after the correction limit.
 func (e *Executor) deliver(ctx context.Context, c Claimed, agent Agent, wave WaveContext, write StepWrite, result StepResult) (Checkpoint, bool, error) {
-	problems := e.validate(wave, result.Outputs)
+	artifacts := e.artifactOutputs(c.Stage, result.Outputs)
+	problems := e.validate(wave, artifacts)
 	if len(problems) > 0 {
 		evidence, _ := json.Marshal(problems)
 		if agent.Steps.Corrections(result.New) >= e.settings.MaxCorrections {
@@ -488,9 +540,21 @@ func (e *Executor) deliver(ctx context.Context, c Claimed, agent Agent, wave Wav
 		write.Checkpoint, write.StateHash = rejected, hash(rejected.State)
 		return rejected, false, e.saveStep(ctx, c, write, nil)
 	}
-	return Checkpoint{}, true, e.saveStep(ctx, c, write, func(ctx context.Context) error {
-		var refs []map[string]any
+	var sha string
+	if e.repository != nil && len(result.Outputs) > 0 {
+		files := make(map[string][]byte, len(result.Outputs))
 		for _, output := range result.Outputs {
+			files[output.Path] = output.Content
+		}
+		var err error
+		if sha, err = e.repository.Commit(ctx, c.ProjectID, Commit{Wave: c.Code, Agent: c.Agent, Message: commitMessage(c, wave), Files: files}); err != nil {
+			return Checkpoint{}, true, err
+		}
+	}
+	return Checkpoint{}, true, e.saveStep(ctx, c, write, func(ctx context.Context) error {
+		refs := []map[string]any{}
+		var versions []CommittedVersion
+		for _, output := range artifacts {
 			stored, err := e.artifacts.StoreVersion(ctx, artifact.Input{ProjectID: c.ProjectID, WaveCode: c.Code, Agent: c.Agent,
 				Path: output.Path, Content: output.Content, CorrelationID: correlation(c)})
 			if err != nil {
@@ -500,20 +564,30 @@ func (e *Executor) deliver(ctx context.Context, c Claimed, agent Agent, wave Wav
 				return err
 			}
 			refs = append(refs, map[string]any{"artifact": stored.Code, "version": stored.Version})
+			versions = append(versions, CommittedVersion{Code: stored.Code, Version: stored.Version})
 		}
 		if err := e.ledger.RecordWaveCheck(ctx, c.Lease, "artifact.schema_valid", true, nil); err != nil {
 			return err
+		}
+		if sha != "" {
+			if err := e.ledger.RecordCommit(ctx, c.Lease, sha, versions); err != nil {
+				return err
+			}
 		}
 		totals, executionMs, cycleMs, err := e.ledger.Complete(ctx, c.Lease)
 		if err != nil {
 			return err
 		}
-		if err := e.emit(ctx, c, "br.easycode.wave.completed.v1", "waves/"+c.Code, with(e.base(c), map[string]any{
+		completed := with(e.base(c), map[string]any{
 			"actor": orchestratorActor, "tokens": tokens(totals.Usage), "cost": money(totals.UsefulCost, totals.Currency),
 			"lost_cost": money(totals.LostCost, totals.Currency), "execution_duration_ms": executionMs, "cycle_duration_ms": cycleMs,
 			"artifacts": refs, "findings": []string{},
 			"transition": map[string]any{"machine": "wave", "from_state": "running", "to_state": "completed"},
-		})); err != nil {
+		})
+		if wave.Task != "" {
+			completed["task"] = wave.Task
+		}
+		if err := e.emit(ctx, c, "br.easycode.wave.completed.v1", "waves/"+c.Code, completed); err != nil {
 			return err
 		}
 		return e.progress.WaveCompleted(ctx, c.ProjectID, c.Stage, correlation(c))
@@ -550,4 +624,40 @@ func (e *Executor) validate(wave WaveContext, outputs []Output) []schemaProblem 
 		}
 	}
 	return problems
+}
+
+// artifactOutputs keeps the outputs that are artifacts (docs/**.md with a header): code in app/ and
+// the attachments of an artifact (openapi.yaml, estrutura.md) only go to the repository.
+func (e *Executor) artifactOutputs(stage string, outputs []Output) []Output {
+	if e.attachments == nil {
+		return outputs
+	}
+	attached := e.attachments(stage)
+	var artifacts []Output
+	for _, output := range outputs {
+		if !strings.HasPrefix(output.Path, "docs/") || !strings.HasSuffix(output.Path, ".md") {
+			continue
+		}
+		attachment := false
+		for _, a := range attached {
+			attachment = attachment || output.Path == a || (strings.HasSuffix(a, "/") && strings.HasPrefix(output.Path, a))
+		}
+		if !attachment {
+			artifacts = append(artifacts, output)
+		}
+	}
+	return artifacts
+}
+
+// commitMessage cites the wave and, in the implementation, the task (US-19 CA-1).
+func commitMessage(c Claimed, wave WaveContext) string {
+	subject := c.Code + ": " + map[string]string{"requirements": "requisitos", "architecture": "arquitetura", "implementation": "implementação"}[c.Stage]
+	if wave.Task != "" {
+		subject = wave.Task + ": implementação da tarefa (" + c.Code + ")"
+	}
+	trailer := "\n\nEasycode-Wave: " + c.Code + "\nEasycode-Agent: " + c.Agent
+	if wave.Task != "" {
+		trailer += "\nEasycode-Task: " + wave.Task
+	}
+	return subject + trailer + "\n"
 }

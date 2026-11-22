@@ -20,9 +20,10 @@ const (
 
 // Output is an artifact a stage produces.
 type Output struct {
-	Type     string `json:"type,omitempty"`
-	Path     string `json:"path"`
-	Required bool   `json:"required"`
+	Type       string `json:"type,omitempty"`
+	Path       string `json:"path"`
+	Required   bool   `json:"required"`
+	Attachment bool   `json:"attachment,omitempty"` // a file of the artifact folder, not an artifact (openapi.yaml, estrutura.md)
 }
 
 // Stage is a stage of the definition.
@@ -31,6 +32,7 @@ type Stage struct {
 	Name          string   `json:"name"`
 	ShortName     string   `json:"short_name"`
 	Agent         string   `json:"agent"`
+	AgentMode     string   `json:"agent_mode,omitempty"`
 	DependsOn     []string `json:"depends_on"`
 	ProjectInputs []string `json:"project_inputs,omitempty"`
 	Outputs       []Output `json:"outputs"`

@@ -2,9 +2,9 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"log/slog"
 	"os"
+	"path"
 	"strings"
 	"time"
 
@@ -16,15 +16,18 @@ import (
 	"easycode/internal/application/runtime"
 	appwave "easycode/internal/application/wave"
 	appworkflow "easycode/internal/application/workflow"
+	"easycode/internal/domain/sandbox"
 	"easycode/internal/infrastructure/config"
+	"easycode/internal/infrastructure/git"
 	"easycode/internal/infrastructure/postgres"
 	"easycode/internal/infrastructure/specs"
 	gatewayapi "easycode/internal/interfaces/gateway"
+	sandboxapi "easycode/internal/interfaces/sandbox"
 )
 
-// harnessAgents are the agents the runtime runs in MARCO-1 (Requisitos, D-E4-03); waves of other
-// agents stay queued until their harness exists.
-var harnessAgents = []string{"requirements-agent"}
+// harnessAgents are the agents of the Phase 1 workflow (Requisitos → Arquitetura → Implementação,
+// MARCO-3); waves of other agents stay queued until their harness exists.
+var harnessAgents = []string{"requirements-agent", "architect-agent", "developer-agent"}
 
 // runtimeParts is the agent runtime of the worker: executor, gate progress and the answer handler.
 type runtimeParts struct {
@@ -44,13 +47,18 @@ func newRuntime(cfg config.Config, pool *pgxpool.Pool, propagator propagation.Te
 	store := appartifact.NewStore(tx, specs.HeaderParser{}, validator, postgres.NewArtifacts(pool), outbox)
 	ledger := postgres.NewLedger(pool)
 	models := runtime.NewGatewayModels(gatewayapi.NewClient(cfg.Gateway.Socket, propagator), postgres.NewProviderKeys(pool), ledger, ledger)
+	runner := sandboxapi.NewClient(cfg.Sandbox.Socket)
 	agents := map[string]runtime.Agent{}
 	for _, name := range harnessAgents {
-		defaults, err := specs.DefaultAgent(name)
+		policy, err := specs.AgentPolicy(name)
 		if err != nil {
 			return runtimeParts{}, err
 		}
-		agents[name] = runtime.Agent{Steps: runtime.NewFileAgent(models, cfg.Worker.MaxOutputTokens), WritablePaths: writablePaths(defaults.Tools)}
+		steps := runtime.NewFileAgent(models, cfg.Worker.MaxOutputTokens)
+		if policy.Execute {
+			steps = runtime.NewToolAgent(models, cfg.Worker.MaxOutputTokens, runner)
+		}
+		agents[name] = runtime.Agent{Steps: steps, Policy: &policy, Mode: stageMode(wf, name)}
 	}
 	progress := appgate.NewProgress(tx, postgres.NewGates(pool), store, validator, stageFlow{workflows, orchestrator}, outbox, wf.Definition)
 	worker := cfg.Worker.ID
@@ -59,7 +67,9 @@ func newRuntime(cfg config.Config, pool *pgxpool.Pool, propagator propagation.Te
 	}
 	executor := runtime.NewExecutor(tx, ledger, agents, instruction, outbox, postgres.NewTelemetryNotifier(pool), store, progress,
 		stageOutputs(wf), runtime.Settings{Worker: worker, Lease: cfg.Worker.WaveLease, MaxCorrections: cfg.Worker.MaxArtifactCorrections,
-			RetryBackoff: 2 * time.Second, Poll: cfg.Worker.CommandPollInterval}, logger)
+			RetryBackoff: 2 * time.Second, Poll: cfg.Worker.CommandPollInterval, Image: cfg.Sandbox.Image,
+			ProjectLimits: sandbox.Limits{CPU: cfg.Sandbox.CPU, MemoryMiB: cfg.Sandbox.MemoryMiB, DiskMiB: cfg.Sandbox.DiskMiB, Time: cfg.Sandbox.CommandTime}}, logger).
+		WithRepository(git.New(cfg.ReposDir), stageAttachments(wf))
 	return runtimeParts{executor: executor, progress: progress, answers: appwave.NewAnswerHandler(postgres.NewWaves(pool, wf.Definition), outbox)}, nil
 }
 
@@ -78,17 +88,35 @@ func instruction(agent string) (string, string, error) {
 	return string(defaults.Instruction), defaults.InstructionHash, err
 }
 
-// writablePaths turns the write_file globs of permissoes.yaml into path prefixes.
-func writablePaths(tools json.RawMessage) []string {
-	var parsed struct {
-		WriteFile []string `json:"write_file"`
+// stageMode is the agent mode of the stage the agent runs in (agent_mode of the workflow).
+func stageMode(wf specs.Workflow, agent string) string {
+	for _, stage := range wf.Definition.Stages {
+		if stage.Agent == agent {
+			return stage.AgentMode
+		}
 	}
-	_ = json.Unmarshal(tools, &parsed)
-	var prefixes []string
-	for _, glob := range parsed.WriteFile {
-		prefixes = append(prefixes, strings.TrimSuffix(strings.TrimSuffix(glob, "**"), "/"))
+	return ""
+}
+
+// stageAttachments lists the output paths of a stage that are files of an artifact, not artifacts
+// (attachment: true in the workflow, such as openapi.yaml and estrutura.md); a folder ends with "/".
+func stageAttachments(wf specs.Workflow) func(string) []string {
+	return func(stage string) []string {
+		definition, ok := wf.Definition.Stage(stage)
+		if !ok {
+			return nil
+		}
+		var paths []string
+		for _, output := range definition.Outputs {
+			if output.Attachment {
+				paths = append(paths, output.Path)
+				if dir := path.Dir(output.Path); strings.HasSuffix(dir, "/api") {
+					paths = append(paths, dir+"/")
+				}
+			}
+		}
+		return paths
 	}
-	return prefixes
 }
 
 func stageOutputs(wf specs.Workflow) func(string) []string {

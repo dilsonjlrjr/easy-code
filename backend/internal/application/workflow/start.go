@@ -143,6 +143,7 @@ type NewWave struct {
 	Agent         string
 	Pair          ResolvedPair
 	Configuration AgentConfiguration
+	Task          string // T of an implementation wave (one wave per task, PL-20)
 }
 
 // AgentConfiguration is the default configuration of the stage agent (agent_configurations v1).
@@ -175,6 +176,8 @@ type Orchestration interface {
 	QueueWave(ctx context.Context, wave NewWave) (QueuedWave, error)
 	// StageStates returns the state of each stage of the project.
 	StageStates(ctx context.Context, projectID string) (map[string]string, error)
+	// ApprovedTasks lists the approved T of the project in number order (one implementation wave each).
+	ApprovedTasks(ctx context.Context, projectID string) ([]string, error)
 }
 
 // AgentDefaults gives the default configuration of an agent.

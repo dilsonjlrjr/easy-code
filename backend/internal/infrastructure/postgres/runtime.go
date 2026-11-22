@@ -43,6 +43,9 @@ SELECT w.id, w.public_id::text, w.code, pr.public_id::text, w.stage, w.agent, w.
   FROM easycode.waves w JOIN easycode.projects pr ON pr.id = w.project_id JOIN easycode.stages s ON s.id = w.stage_id
  WHERE w.agent = ANY($1::text[]) AND pr.state = 'in_progress'
    AND (w.state = 'queued' OR (w.state = 'running' AND (w.lease_owner IS NULL OR w.lease_until < now())))
+   -- waves of a stage run one at a time, in order (one implementation wave per task, PL-20)
+   AND NOT EXISTS (SELECT 1 FROM easycode.waves o WHERE o.project_id = w.project_id AND o.stage = w.stage AND o.id < w.id
+                     AND o.state NOT IN ('completed', 'canceled'))
  ORDER BY w.created_at
  LIMIT 1
  FOR UPDATE OF w SKIP LOCKED`, agents).Scan(&c.WaveID, &c.PublicID, &c.Code, &c.ProjectID, &c.Stage, &c.Agent, &c.Purpose, &c.Attempt,
@@ -122,14 +125,14 @@ func (l Ledger) Inputs(ctx context.Context, c runtime.Claimed) (runtime.Inputs, 
 	var in runtime.Inputs
 	var constraints []byte
 	err := q.QueryRow(WithOperation(ctx, "waves.inputs"), `
-SELECT pr.business_need, pr.artifact_language, ac.instruction_version, ac.instruction_hash,
+SELECT pr.business_need, pr.artifact_language, ac.instruction_version, ac.instruction_hash, coalesce(w.task, ''),
        (SELECT c.items FROM easycode.project_constraints c WHERE c.project_id = pr.id AND c.defined_at <= w.created_at
          ORDER BY c.version DESC LIMIT 1),
        coalesce((SELECT g.reason FROM easycode.gate_rounds g WHERE g.project_id = pr.id AND g.stage = w.stage AND g.state = 'rejected'
                   ORDER BY g.number DESC LIMIT 1), '')
   FROM easycode.waves w JOIN easycode.projects pr ON pr.id = w.project_id
   JOIN easycode.agent_configurations ac ON ac.id = w.agent_configuration_id
- WHERE w.id = $1`, c.WaveID).Scan(&in.BusinessNeed, &in.Language, &in.InstructionVersion, &in.InstructionHash, &constraints, &in.Feedback)
+ WHERE w.id = $1`, c.WaveID).Scan(&in.BusinessNeed, &in.Language, &in.InstructionVersion, &in.InstructionHash, &in.Task, &constraints, &in.Feedback)
 	if err != nil {
 		return in, fmt.Errorf("wave inputs: %w", classify(err))
 	}
@@ -142,6 +145,26 @@ SELECT pr.business_need, pr.artifact_language, ac.instruction_version, ac.instru
 			}
 			in.Constraints = text.String()
 		}
+	}
+	approved, err := q.Query(WithOperation(ctx, "artifacts.approved_paths"), `
+SELECT v.path, v.author FROM easycode.waves w JOIN easycode.artifacts a ON a.project_id = w.project_id
+  JOIN easycode.artifact_versions v ON v.artifact_id = a.id AND v.version = a.current_version
+ WHERE w.id = $1 AND a.state = 'approved'`, c.WaveID)
+	if err != nil {
+		return in, fmt.Errorf("approved artifacts: %w", classify(err))
+	}
+	in.Approved = map[string]string{}
+	for approved.Next() {
+		var path, author string
+		if err := approved.Scan(&path, &author); err != nil {
+			approved.Close()
+			return in, err
+		}
+		in.Approved[path] = author
+	}
+	approved.Close()
+	if err := approved.Err(); err != nil {
+		return in, err
 	}
 	rows, err := q.Query(WithOperation(ctx, "waves.models"), `
 SELECT wm.role, m.id, m.provider, m.name FROM easycode.wave_models wm JOIN easycode.models m ON m.id = wm.model_id WHERE wm.wave_id = $1`, c.WaveID)
@@ -239,12 +262,18 @@ UPDATE easycode.waves SET input_tokens = input_tokens + $2, output_tokens = outp
 		} else if !tool.Success {
 			status = "error"
 		}
-		_, err := q.Exec(WithOperation(ctx, "tool_executions.insert"), `
+		if tool.Execution != nil {
+			if err := l.recordExecution(ctx, lease, attempt, max(step.Checkpoint.Number, 1), tool, step.DurationMs); err != nil {
+				return runtime.Totals{}, err
+			}
+		} else {
+			_, err := q.Exec(WithOperation(ctx, "tool_executions.insert"), `
 INSERT INTO easycode.tool_executions (wave_id, attempt, step, tool, permission, refusal_reason, status, summary, duration_ms, finished_at)
 VALUES ($1, $2, $3, $4, $5, $6, nullif($7, ''), nullif(left($8, 200), ''), $9, now())`,
-			lease.WaveID, attempt, max(step.Checkpoint.Number, 1), tool.Tool, permission, refusal, status, tool.Summary, step.DurationMs)
-		if err != nil {
-			return runtime.Totals{}, fmt.Errorf("record tool: %w", classify(err))
+				lease.WaveID, attempt, max(step.Checkpoint.Number, 1), tool.Tool, permission, refusal, status, tool.Summary, step.DurationMs)
+			if err != nil {
+				return runtime.Totals{}, fmt.Errorf("record tool: %w", classify(err))
+			}
 		}
 	}
 	totals, err := l.totals(ctx, lease.WaveID)

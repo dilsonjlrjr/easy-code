@@ -5,9 +5,13 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"easycode/internal/application/runtime"
+	"easycode/internal/domain/permission"
 	"easycode/internal/domain/provider"
+	"easycode/internal/domain/sandbox"
+	"easycode/internal/infrastructure/specs"
 )
 
 type cannedModel struct{ answers []provider.Message }
@@ -99,5 +103,198 @@ func TestFileAgentStopsTextOnlyAnswers(t *testing.T) {
 	}
 	if result.Type != runtime.StepFail || result.Failure != runtime.CauseLimitViolation || result.New.After != runtime.AfterModelCall {
 		t.Fatalf("want limit_violation with a model_call checkpoint, got %+v", result)
+	}
+}
+
+type fakeRunner struct {
+	results  []sandbox.ExecutionResult
+	requests []sandbox.ExecutionRequest
+	files    map[string]string
+}
+
+func (r *fakeRunner) Run(_ context.Context, req sandbox.ExecutionRequest, _ map[string]string) (runtime.RunOutcome, error) {
+	r.requests = append(r.requests, req)
+	result := r.results[0]
+	r.results = r.results[1:]
+	return runtime.RunOutcome{Result: result, Output: []byte("--- PASS: TestX\n"), Files: r.files}, nil
+}
+
+func exit(code int) sandbox.ExecutionResult {
+	return sandbox.ExecutionResult{EndReason: sandbox.EndCompleted, ExitCode: &code, Duration: time.Second}
+}
+
+func policy(t *testing.T, agent string) *permission.Policy {
+	t.Helper()
+	p, err := specs.AgentPolicy(agent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &p
+}
+
+// steps runs the agent until it stops or the limit, returning every result.
+func steps(t *testing.T, agent *runtime.ToolAgent, w runtime.WaveContext, limit int) []runtime.StepResult {
+	t.Helper()
+	cp, _, err := agent.Start(context.Background(), w)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var results []runtime.StepResult
+	for i := 0; i < limit; i++ {
+		result, err := agent.Next(context.Background(), w, cp)
+		if err != nil {
+			t.Fatal(err)
+		}
+		results = append(results, result)
+		cp = result.New
+		if result.Type != runtime.StepContinue {
+			break
+		}
+	}
+	return results
+}
+
+func tool(results []runtime.StepResult, index int) *runtime.ToolRecord {
+	n := 0
+	for _, r := range results {
+		if r.Tool != nil {
+			if n == index {
+				return r.Tool
+			}
+			n++
+		}
+	}
+	return nil
+}
+
+// RNF-07, US-30: agent × tool matrix with one forbidden attempt per cell; each is refused in code and
+// recorded with its reason, and the model only gets the allowed tools.
+func TestForbiddenToolCallsAreRefusedPerAgent(t *testing.T) {
+	cases := []struct {
+		agent  string
+		call   provider.ToolCall
+		reason string
+	}{
+		{"requirements-agent", provider.ToolCall{ID: "1", Name: runtime.ToolExecuteCommand, Args: args(map[string]any{"category": "build", "argv": []string{"go", "build"}})}, "tool_not_allowed"}, // US-30 CA-1
+		{"requirements-agent", provider.ToolCall{ID: "2", Name: runtime.ToolWriteFile, Args: args(map[string]string{"path": "docs/arquitetura/ARQ.md", "content": "x"})}, "path_not_allowed"},
+		{"requirements-agent", provider.ToolCall{ID: "3", Name: runtime.ToolReadFile, Args: args(map[string]string{"path": "app/main.go"})}, "path_not_allowed"},
+		{"requirements-agent", provider.ToolCall{ID: "4", Name: "git", Args: args(map[string]string{})}, "tool_not_allowed"},
+		{"architect-agent", provider.ToolCall{ID: "5", Name: runtime.ToolWriteFile, Args: args(map[string]string{"path": "app/main.go", "content": "x"})}, "path_not_allowed"},
+		{"architect-agent", provider.ToolCall{ID: "6", Name: runtime.ToolExecuteCommand, Args: args(map[string]any{"category": "tests", "argv": []string{"go", "test"}})}, "command_not_allowed"},
+		{"architect-agent", provider.ToolCall{ID: "7", Name: runtime.ToolWriteFile, Args: args(map[string]string{"path": "docs/requisitos/US-01.md", "content": "x"})}, "foreign_artifact_write"}, // US-30 CA-2
+		{"developer-agent", provider.ToolCall{ID: "8", Name: runtime.ToolExecuteCommand, Args: args(map[string]any{"category": "build", "argv": []string{"curl", "http://postgres"}})}, "command_not_allowed"},
+		{"developer-agent", provider.ToolCall{ID: "9", Name: runtime.ToolExecuteCommand, Args: args(map[string]any{"category": "scanner", "argv": []string{"trivy"}})}, "command_not_allowed"},
+		{"developer-agent", provider.ToolCall{ID: "10", Name: runtime.ToolWriteFile, Args: args(map[string]string{"path": "docs/arquitetura/adr/ADR-01.md", "content": "x"})}, "path_not_allowed"},
+		{"developer-agent", provider.ToolCall{ID: "11", Name: runtime.ToolWriteFile, Args: args(map[string]string{"path": "docs/arquitetura/tarefas/T-01.md", "content": "x"})}, "foreign_artifact_write"},
+		{"developer-agent", provider.ToolCall{ID: "12", Name: runtime.ToolAskUser, Args: args(map[string]any{"items": []map[string]string{{"text": "a", "suggestion": "b"}}})}, ""},
+	}
+	for _, c := range cases {
+		w := runtime.WaveContext{Code: "X-01", Agent: c.agent, Instruction: "i", Policy: policy(t, c.agent),
+			Approved: map[string]string{"docs/requisitos/US-01.md": "requirements-agent", "docs/arquitetura/tarefas/T-01.md": "architect-agent"}}
+		model := &cannedModel{answers: []provider.Message{{Calls: []provider.ToolCall{c.call}}}}
+		results := steps(t, runtime.NewToolAgent(model, 1000, &fakeRunner{}), w, 2)
+		record := tool(results, 0)
+		if c.reason == "" {
+			if record == nil || record.Allowed == (c.call.Name == runtime.ToolAskUser && !policy(t, c.agent).AskUser) {
+				t.Errorf("%s %s: %+v", c.agent, c.call.Name, record)
+			}
+			continue
+		}
+		if record == nil || record.Allowed || record.RefusalReason != c.reason {
+			t.Errorf("%s %s: want %s, got %+v", c.agent, c.call.Name, c.reason, record)
+		}
+	}
+	requirements := definitionsOf(t, "requirements-agent")
+	if requirements[runtime.ToolExecuteCommand] || !requirements[runtime.ToolWriteFile] {
+		t.Fatalf("RNF-07: only allowed tools are offered: %v", requirements)
+	}
+}
+
+func definitionsOf(t *testing.T, agent string) map[string]bool {
+	t.Helper()
+	var seen provider.Request
+	model := &recordingModel{seen: &seen}
+	agentHarness := runtime.NewToolAgent(model, 1000, nil)
+	w := runtime.WaveContext{Code: "X-01", Agent: agent, Instruction: "i", Policy: policy(t, agent)}
+	cp, _, _ := agentHarness.Start(context.Background(), w)
+	_, _ = agentHarness.Next(context.Background(), w, cp)
+	names := map[string]bool{}
+	for _, d := range seen.Tools {
+		names[d.Name] = true
+	}
+	return names
+}
+
+type recordingModel struct{ seen *provider.Request }
+
+func (m *recordingModel) Call(_ context.Context, _ runtime.WaveContext, _ int, role string, req provider.Request) (provider.Response, runtime.CallRecord, error) {
+	*m.seen = req
+	return provider.Response{Message: provider.Message{Text: "ok"}}, runtime.CallRecord{Role: role, Result: "success"}, nil
+}
+
+// US-30 CA-3, US-41, US-19 CA-2: the developer runs commands (allowed and recorded with the evidence);
+// finish is refused until build and tests are green with nothing written after them.
+func TestDeveloperFinishesOnlyWithGreenBuildAndTests(t *testing.T) {
+	build := args(map[string]any{"category": "build", "argv": []string{"go", "build", "./..."}, "directory": "app"})
+	tests := args(map[string]any{"category": "tests", "argv": []string{"go", "test", "./..."}, "directory": "app"})
+	model := &cannedModel{answers: []provider.Message{
+		{Calls: []provider.ToolCall{
+			{ID: "w", Name: runtime.ToolWriteFile, Args: args(map[string]string{"path": "app/main.go", "content": "package main"})},
+			{ID: "b", Name: runtime.ToolExecuteCommand, Args: build},
+			{ID: "t", Name: runtime.ToolExecuteCommand, Args: tests},
+			{ID: "f", Name: runtime.ToolFinish, Args: args(map[string]any{})},
+		}},
+		{Calls: []provider.ToolCall{
+			{ID: "t2", Name: runtime.ToolExecuteCommand, Args: tests},
+			{ID: "f2", Name: runtime.ToolFinish, Args: args(map[string]any{})},
+		}},
+	}}
+	runner := &fakeRunner{results: []sandbox.ExecutionResult{exit(0), exit(1), exit(0)}, files: map[string]string{"app/main.go": "package main", "app/gen.txt": "x"}}
+	w := runtime.WaveContext{WaveID: "w1", Code: "DEV-01", Agent: "developer-agent", Attempt: 1, Instruction: "i", Task: "T-01", Image: "go",
+		Policy: policy(t, "developer-agent"), Limits: sandbox.Limits{CPU: 1}}
+	results := steps(t, runtime.NewToolAgent(model, 1000, runner), w, 20)
+	last := results[len(results)-1]
+	if last.Type != runtime.StepComplete {
+		t.Fatalf("want complete, got %+v", last)
+	}
+	refusedFinish, failed := false, false
+	for _, r := range results {
+		if r.Tool != nil && r.Tool.Tool == runtime.ToolFinish && !r.Tool.Success {
+			refusedFinish = true
+		}
+		if r.TaskFailed != nil && r.TaskFailed.Cause == "tests" && r.TaskFailed.Consecutive == 1 {
+			failed = true
+		}
+		if r.Tool != nil && r.Tool.Tool == runtime.ToolExecuteCommand && (!r.Tool.Allowed || r.Tool.Execution == nil || r.Tool.Execution.Category == "") {
+			t.Fatalf("US-30 CA-3: execution allowed and recorded: %+v", r.Tool)
+		}
+	}
+	if !refusedFinish || !failed {
+		t.Fatalf("US-19 CA-2: finish refused with red tests (%v), task failure recorded (%v)", refusedFinish, failed)
+	}
+	if len(runner.requests) != 3 || runner.requests[0].Directory != "app" || runner.requests[0].Image != "go" || runner.requests[0].ExecutionID == runner.requests[1].ExecutionID {
+		t.Fatalf("requests: %+v", runner.requests)
+	}
+	paths := map[string]bool{}
+	for _, o := range last.Outputs {
+		paths[o.Path] = true
+	}
+	if !paths["app/main.go"] || !paths["app/gen.txt"] {
+		t.Fatalf("collected files enter the working copy: %v", paths)
+	}
+}
+
+// dev.md: a task that fails the tests three times in a row stops the wave.
+func TestThreeFailuresInARowStopTheWave(t *testing.T) {
+	tests := args(map[string]any{"category": "tests", "argv": []string{"go", "test", "./..."}})
+	model := &cannedModel{answers: []provider.Message{{Calls: []provider.ToolCall{
+		{ID: "1", Name: runtime.ToolExecuteCommand, Args: tests}, {ID: "2", Name: runtime.ToolExecuteCommand, Args: tests}, {ID: "3", Name: runtime.ToolExecuteCommand, Args: tests},
+	}}}}
+	runner := &fakeRunner{results: []sandbox.ExecutionResult{exit(1), exit(1), exit(1)}}
+	w := runtime.WaveContext{WaveID: "w1", Code: "DEV-01", Agent: "developer-agent", Attempt: 1, Instruction: "i", Task: "T-01", Policy: policy(t, "developer-agent")}
+	results := steps(t, runtime.NewToolAgent(model, 1000, runner), w, 10)
+	last := results[len(results)-1]
+	if last.Type != runtime.StepFail || last.TaskFailed == nil || last.TaskFailed.Consecutive != 3 {
+		t.Fatalf("want fail after 3 red runs, got %+v", last)
 	}
 }

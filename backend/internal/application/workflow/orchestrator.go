@@ -144,7 +144,33 @@ func (o *Orchestrator) UnblockReady(ctx context.Context, projectID, correlation 
 		if err != nil {
 			return err
 		}
-		if _, err := o.queueWave(ctx, projectID, stage, emit, orchestrator); err != nil {
+		if err := o.queueStageWaves(ctx, projectID, stage, emit, orchestrator); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// TaskStage is the stage whose waves run one approved T each (PL-20).
+const TaskStage = "implementation"
+
+// queueStageWaves queues the first waves of a stage: one per approved T in the implementation, run in
+// order by the executor; one wave otherwise.
+func (o *Orchestrator) queueStageWaves(ctx context.Context, projectID string, stage domainworkflow.Stage,
+	emit func(string, string, string, map[string]any) error, orchestrator map[string]any) error {
+	if stage.ID != TaskStage {
+		_, err := o.queueWave(ctx, projectID, stage, "", emit, orchestrator)
+		return err
+	}
+	tasks, err := o.store.ApprovedTasks(ctx, projectID)
+	if err != nil {
+		return err
+	}
+	if len(tasks) == 0 {
+		tasks = []string{""}
+	}
+	for _, task := range tasks {
+		if _, err := o.queueWave(ctx, projectID, stage, task, emit, orchestrator); err != nil {
 			return err
 		}
 	}
@@ -157,16 +183,15 @@ func (o *Orchestrator) QueueRework(ctx context.Context, projectID, stageID, corr
 	if !ok {
 		return "", fmt.Errorf("unknown stage %s", stageID)
 	}
-	return o.queueWave(ctx, projectID, stage, o.emitter(ctx, projectID, correlation), map[string]any{"type": "orchestrator", "id": "orchestrator"})
+	return o.queueWave(ctx, projectID, stage, "", o.emitter(ctx, projectID, correlation), map[string]any{"type": "orchestrator", "id": "orchestrator"})
 }
 
 func (o *Orchestrator) queueFirstWave(ctx context.Context, cmd command.Command, stage domainworkflow.Stage,
 	emit func(string, string, string, map[string]any) error, orchestrator map[string]any) error {
-	_, err := o.queueWave(ctx, cmd.ProjectID, stage, emit, orchestrator)
-	return err
+	return o.queueStageWaves(ctx, cmd.ProjectID, stage, emit, orchestrator)
 }
 
-func (o *Orchestrator) queueWave(ctx context.Context, projectID string, stage domainworkflow.Stage,
+func (o *Orchestrator) queueWave(ctx context.Context, projectID string, stage domainworkflow.Stage, task string,
 	emit func(string, string, string, map[string]any) error, orchestrator map[string]any) (string, error) {
 	pair, err := o.store.ResolvePair(ctx, projectID, stage.ID)
 	if err != nil {
@@ -176,14 +201,18 @@ func (o *Orchestrator) queueWave(ctx context.Context, projectID string, stage do
 	if err != nil {
 		return "", err
 	}
-	wave, err := o.store.QueueWave(ctx, NewWave{ProjectID: projectID, Stage: stage.ID, Agent: stage.Agent, Pair: pair, Configuration: configuration})
+	wave, err := o.store.QueueWave(ctx, NewWave{ProjectID: projectID, Stage: stage.ID, Agent: stage.Agent, Pair: pair, Configuration: configuration, Task: task})
 	if err != nil {
 		return "", err
 	}
-	err = emit("br.easycode.wave.created.v1", "waves/"+wave.Code, wave.Code, map[string]any{
+	created := map[string]any{
 		"wave": wave.Code, "stage": stage.ID, "agent": stage.Agent, "purpose": "execution", "actor": orchestrator,
 		"transition": map[string]any{"machine": "wave", "from_state": nil, "to_state": "queued"},
-	})
+	}
+	if task != "" {
+		created["task"] = task
+	}
+	err = emit("br.easycode.wave.created.v1", "waves/"+wave.Code, wave.Code, created)
 	if err != nil {
 		return "", err
 	}

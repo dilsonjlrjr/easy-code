@@ -47,7 +47,9 @@ type Inputs struct {
 	InstructionVersion string
 	InstructionHash    string
 	Models             map[string]ModelRef
-	Feedback           string // reason of the last rejected gate round of the stage (rework)
+	Feedback           string            // reason of the last rejected gate round of the stage (rework)
+	Task               string            // T of an implementation wave (PL-20)
+	Approved           map[string]string // path → author of every approved artifact (US-30 CA-2)
 }
 
 // Totals are the accumulated tokens and costs of the wave (exact decimals, RNF-16).
@@ -67,6 +69,8 @@ type StepWrite struct {
 	Call         *CallRecord
 	Tool         *ToolRecord
 	DurationMs   int64
+	Task         string       // T of the wave, for the events
+	TaskFailed   *TaskFailure // failed build or test of the task (wave.task_failed)
 }
 
 // QuestionAnswer is an answered question waiting to be applied to the agent state.
@@ -92,6 +96,8 @@ type Ledger interface {
 	Fail(ctx context.Context, lease Lease, cause string) (Totals, error)
 	ScheduleRetry(ctx context.Context, lease Lease) (int, int, error) // retries used, max
 	RecordWaveCheck(ctx context.Context, lease Lease, check string, passed bool, evidence json.RawMessage) error
+	// RecordCommit stores the commit of the wave and of the artifact versions it wrote (US-42 CA-2).
+	RecordCommit(ctx context.Context, lease Lease, sha string, versions []CommittedVersion) error
 	// Release frees the lease without changing the state (worker shutting down).
 	Release(ctx context.Context, lease Lease) error
 	SetStageState(ctx context.Context, projectID, stage, state string) error
@@ -99,3 +105,9 @@ type Ledger interface {
 
 // InstructionSource returns the instruction text of an agent and its hash.
 type InstructionSource func(agent string) (text, hash string, err error)
+
+// CommittedVersion is an artifact version written by a wave commit.
+type CommittedVersion struct {
+	Code    string
+	Version int
+}

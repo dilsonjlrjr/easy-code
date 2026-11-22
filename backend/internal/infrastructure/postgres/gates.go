@@ -247,3 +247,24 @@ UPDATE easycode.gate_rounds SET state = $2, decided_by_type = 'human', decided_a
 	}
 	return nil
 }
+
+// LastExecution implements appgate.Store: the last sandbox execution of the category in the last
+// completed wave of the stage (code.build_green, tests.executed_green).
+func (g Gates) LastExecution(ctx context.Context, projectID, stage, category string) (*appgate.Execution, error) {
+	var e appgate.Execution
+	err := conn(ctx, g.pool).QueryRow(WithOperation(ctx, "tool_executions.last_of_stage"), `
+WITH last_wave AS (
+  SELECT w.id, w.code FROM easycode.waves w JOIN easycode.projects pr ON pr.id = w.project_id
+   WHERE pr.public_id = $1::uuid AND w.stage = $2 AND w.state = 'completed' ORDER BY w.finished_at DESC, w.id DESC LIMIT 1)
+SELECT lw.code, t.public_id::text, t.exit_code, coalesce(t.end_reason, ''), t.tests_total, t.tests_failed
+  FROM last_wave lw JOIN easycode.tool_executions t ON t.wave_id = lw.id
+ WHERE t.category = $3 AND t.permission = 'allowed'
+ ORDER BY t.started_at DESC, t.id DESC LIMIT 1`, projectID, stage, category).Scan(&e.Wave, &e.ID, &e.ExitCode, &e.EndReason, &e.TestsTotal, &e.TestsFailed)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("last execution: %w", classify(err))
+	}
+	return &e, nil
+}

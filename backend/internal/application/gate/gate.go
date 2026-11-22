@@ -14,11 +14,33 @@ import (
 	"easycode/internal/application/transaction"
 	domainartifact "easycode/internal/domain/artifact"
 	domainevent "easycode/internal/domain/event"
+	"easycode/internal/domain/failure"
 	domainworkflow "easycode/internal/domain/workflow"
 )
 
-// CheckSchemaValid is the only automatic check of gate.requirements in MARCO-1.
-const CheckSchemaValid = "artifact.schema_valid"
+// Automatic checks of the Phase 1 gates (checagens.yaml). gate.requirements runs artifact.schema_valid
+// (MARCO-1); MARCO-3 adds the traceability of the tasks to gate.architecture and the build and test
+// evidence of the sandbox to gate.implementation. The other checks of gates.yaml come with US-31.
+const (
+	CheckSchemaValid    = "artifact.schema_valid"
+	CheckTasksCoverUS   = "traceability.t_points_to_us"
+	CheckBuildGreen     = "code.build_green"
+	CheckTestsGreen     = "tests.executed_green"
+	categoryBuild       = "build"
+	categoryTests       = "tests"
+	stageArchitecture   = "architecture"
+	stageImplementation = "implementation"
+)
+
+// Execution is the last sandbox execution of a category in the stage (evidence of US-41).
+type Execution struct {
+	Wave        string
+	ID          string
+	ExitCode    *int
+	EndReason   string
+	TestsTotal  *int
+	TestsFailed *int
+}
 
 // Round states (machine gate).
 const (
@@ -46,6 +68,9 @@ type Store interface {
 	SetRoundState(ctx context.Context, projectID, stage string, round int, state string) error
 	// Decided lists stages in awaiting_gate whose last round is approved or rejected.
 	Decided(ctx context.Context) ([]Decided, error)
+	// LastExecution returns the last execution of the category in the last completed wave of the
+	// stage, or nil when the wave ran none.
+	LastExecution(ctx context.Context, projectID, stage, category string) (*Execution, error)
 }
 
 // HeaderValidator validates a stored header against the schema of its type.
@@ -161,37 +186,65 @@ func itoa(n int) string {
 	return string(b)
 }
 
-// evaluate runs artifact.schema_valid on every output and applies complete_checks.
+type checkOutcome struct {
+	check    string
+	evidence []map[string]any
+}
+
+// evaluate runs the automatic checks of the gate and applies complete_checks.
 func (p *Progress) evaluate(ctx context.Context, projectID string, stage domainworkflow.Stage, round int, outputs []artifact.Stored, correlation string) error {
-	var evidence []map[string]string
+	headers := map[string]map[string]any{}
+	schema := checkOutcome{check: CheckSchemaValid}
 	for _, output := range outputs {
 		header, err := p.artifacts.Header(ctx, projectID, output.Code)
 		if err != nil {
 			return err
 		}
+		headers[output.Code] = header
 		problems, err := p.validator.Validate(output.Type, header)
 		if err != nil {
 			return err
 		}
 		for _, problem := range problems {
-			evidence = append(evidence, map[string]string{"reference": output.Code, "path": problem.Path, "message": problem.Message})
+			schema.evidence = append(schema.evidence, map[string]any{"reference": output.Code, "path": problem.Path, "message": problem.Message})
 		}
 	}
-	passed := len(evidence) == 0
-	var raw json.RawMessage
-	if !passed {
-		raw, _ = json.Marshal(evidence)
+	outcomes := []checkOutcome{schema}
+	switch stage.ID {
+	case stageArchitecture:
+		tasks, err := p.tasksCoverStories(ctx, projectID, outputs, headers)
+		if err != nil {
+			return err
+		}
+		outcomes = append(outcomes, tasks)
+	case stageImplementation:
+		for _, c := range []struct{ check, category string }{{CheckBuildGreen, categoryBuild}, {CheckTestsGreen, categoryTests}} {
+			outcome, err := p.executionGreen(ctx, projectID, stage.ID, c.check, c.category)
+			if err != nil {
+				return err
+			}
+			outcomes = append(outcomes, outcome)
+		}
 	}
-	if err := p.store.RecordRoundCheck(ctx, projectID, stage.ID, round, CheckSchemaValid, passed, raw); err != nil {
-		return err
+	var failed []string
+	for _, outcome := range outcomes {
+		passed := len(outcome.evidence) == 0
+		var raw json.RawMessage
+		if !passed {
+			failed = append(failed, outcome.check)
+			raw, _ = json.Marshal(outcome.evidence)
+		}
+		if err := p.store.RecordRoundCheck(ctx, projectID, stage.ID, round, outcome.check, passed, raw); err != nil {
+			return err
+		}
 	}
 	subject := roundSubject(stage.Gate, round)
-	if !passed {
+	if len(failed) > 0 {
 		if err := p.store.SetRoundState(ctx, projectID, stage.ID, round, StateRejected); err != nil {
 			return err
 		}
 		return p.emit(ctx, projectID, correlation, "br.easycode.gate.rejected.v1", subject, map[string]any{
-			"gate": stage.Gate, "round": round, "stage": stage.ID, "actor": orchestrator, "failed_checks": []string{CheckSchemaValid},
+			"gate": stage.Gate, "round": round, "stage": stage.ID, "actor": orchestrator, "failed_checks": failed,
 			"blocking_findings": []string{}, "transition": transition("gate", StateEvaluating, StateRejected),
 		})
 	}
@@ -199,9 +252,80 @@ func (p *Progress) evaluate(ctx context.Context, projectID string, stage domainw
 		return err
 	}
 	return p.emit(ctx, projectID, correlation, "br.easycode.gate.awaiting_approval.v1", subject, map[string]any{
-		"gate": stage.Gate, "round": round, "stage": stage.ID, "actor": orchestrator, "ok_checks": 1, "notices": 0,
+		"gate": stage.Gate, "round": round, "stage": stage.ID, "actor": orchestrator, "ok_checks": len(outcomes), "notices": 0,
 		"non_blocking_findings": []string{}, "transition": transition("gate", StateEvaluating, StateAwaitingHuman),
 	})
+}
+
+// tasksCoverStories is traceability.t_points_to_us (RAS-08, US-18 CA-1): every functional T covers
+// at least one US, and each US and criterion it cites exists in the project.
+func (p *Progress) tasksCoverStories(ctx context.Context, projectID string, outputs []artifact.Stored, headers map[string]map[string]any) (checkOutcome, error) {
+	outcome := checkOutcome{check: CheckTasksCoverUS}
+	stories := map[string]map[string]bool{}
+	for _, output := range outputs {
+		if output.Type != "T" {
+			continue
+		}
+		header := headers[output.Code]
+		nature, _ := header["natureza"].(string)
+		covers, _ := header["cobre"].([]any)
+		if len(covers) == 0 && (nature == "" || nature == "funcional") {
+			outcome.evidence = append(outcome.evidence, map[string]any{"reference": output.Code, "path": "/cobre", "message": "functional task covers no US"})
+		}
+		for _, item := range covers {
+			entry, _ := item.(map[string]any)
+			us, _ := entry["us"].(string)
+			criteria, known := stories[us]
+			if !known {
+				story, err := p.artifacts.Header(ctx, projectID, us)
+				if err != nil && failure.From(err).Kind != failure.KindNotFound {
+					return outcome, err
+				}
+				criteria = map[string]bool{}
+				if story != nil {
+					list, _ := story["criterios_aceite"].([]any)
+					for _, ca := range list {
+						if m, ok := ca.(map[string]any); ok {
+							id, _ := m["id"].(string)
+							criteria[id] = true
+						}
+					}
+				}
+				stories[us] = criteria
+			}
+			if len(criteria) == 0 {
+				outcome.evidence = append(outcome.evidence, map[string]any{"reference": output.Code, "path": "/cobre", "message": "unknown US " + us})
+				continue
+			}
+			cited, _ := entry["criterios"].([]any)
+			for _, ca := range cited {
+				if id, _ := ca.(string); !criteria[id] {
+					outcome.evidence = append(outcome.evidence, map[string]any{"reference": output.Code, "path": "/cobre", "message": us + " has no " + id})
+				}
+			}
+		}
+	}
+	return outcome, nil
+}
+
+// executionGreen is code.build_green and tests.executed_green: the last command of the category in the
+// last wave of the stage ran in the sandbox with exit code 0 and, for tests, at least one test run and
+// none failed (US-19 CA-1, US-41).
+func (p *Progress) executionGreen(ctx context.Context, projectID, stage, check, category string) (checkOutcome, error) {
+	outcome := checkOutcome{check: check}
+	last, err := p.store.LastExecution(ctx, projectID, stage, category)
+	if err != nil {
+		return outcome, err
+	}
+	switch {
+	case last == nil:
+		outcome.evidence = []map[string]any{{"message": category + " not executed in the sandbox"}}
+	case last.ExitCode == nil || *last.ExitCode != 0:
+		outcome.evidence = []map[string]any{{"reference": last.Wave, "execution": last.ID, "end_reason": last.EndReason, "message": category + " not green"}}
+	case category == categoryTests && (last.TestsTotal == nil || *last.TestsTotal == 0 || (last.TestsFailed != nil && *last.TestsFailed > 0)):
+		outcome.evidence = []map[string]any{{"reference": last.Wave, "execution": last.ID, "message": "no test executed or a test failed"}}
+	}
+	return outcome, nil
 }
 
 // Reconcile applies the effect of decided rounds (stage approved or returned). It is idempotent:

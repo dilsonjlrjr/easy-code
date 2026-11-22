@@ -226,9 +226,9 @@ ON CONFLICT (project_id, name) DO UPDATE SET value = project_counters.value + 1 
 	queued := appworkflow.QueuedWave{Code: domainworkflow.WaveCode(wave.Stage, number)}
 	var waveID int64
 	err = q.QueryRow(WithOperation(ctx, "waves.insert"), `
-INSERT INTO easycode.waves (project_id, stage, stage_id, code, agent, agent_configuration_id, max_retries, execution_timeout, call_timeout, currency)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8::interval, $9::interval, $10) RETURNING id, public_id::text`,
-		projectID, wave.Stage, stageID, queued.Code, wave.Agent, configurationID, defaultMaxRetries, defaultExecutionTimeout, defaultCallTimeout, currency).
+INSERT INTO easycode.waves (project_id, stage, stage_id, code, agent, agent_configuration_id, max_retries, execution_timeout, call_timeout, currency, task)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8::interval, $9::interval, $10, nullif($11, '')) RETURNING id, public_id::text`,
+		projectID, wave.Stage, stageID, queued.Code, wave.Agent, configurationID, defaultMaxRetries, defaultExecutionTimeout, defaultCallTimeout, currency, wave.Task).
 		Scan(&waveID, &queued.ID)
 	if err != nil {
 		return appworkflow.QueuedWave{}, fmt.Errorf("insert wave: %w", classify(err))
@@ -358,4 +358,16 @@ SELECT s.stage, s.state FROM easycode.stages s JOIN easycode.projects pr ON pr.i
 		states[stage] = state
 	}
 	return states, rows.Err()
+}
+
+// ApprovedTasks implements appworkflow.Orchestration: the approved T of the project in number order.
+func (w Workflow) ApprovedTasks(ctx context.Context, projectID string) ([]string, error) {
+	rows, err := conn(ctx, w.pool).Query(WithOperation(ctx, "artifacts.approved_tasks"), `
+SELECT a.code FROM easycode.artifacts a JOIN easycode.projects pr ON pr.id = a.project_id
+ WHERE pr.public_id = $1::uuid AND a.type = 'T' AND a.state = 'approved'
+ ORDER BY length(a.code), a.code`, projectID)
+	if err != nil {
+		return nil, fmt.Errorf("approved tasks: %w", classify(err))
+	}
+	return pgx.CollectRows(rows, pgx.RowTo[string])
 }
