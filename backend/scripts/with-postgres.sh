@@ -15,7 +15,13 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-docker network create "$network" >/dev/null
+# Optional fixed subnet (EASYCODE_CI_SUBNET, e.g. 10.250.7.0/24) for hosts where Docker's automatic
+# pool hands out a range the host cannot route (seen with 172.22.0.0/16 next to a k8s CNI bridge).
+if [ -n "${EASYCODE_CI_SUBNET:-}" ]; then
+	docker network create --subnet "$EASYCODE_CI_SUBNET" "$network" >/dev/null
+else
+	docker network create "$network" >/dev/null
+fi
 docker run -d --name "$container" --network "$network" --tmpfs /var/lib/postgresql/data \
 	-e POSTGRES_USER=easycode -e POSTGRES_PASSWORD=easycode -e POSTGRES_DB=easycode \
 	"$image" >/dev/null
