@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"easycode/internal/domain/health"
@@ -25,6 +26,7 @@ func NewPool(ctx context.Context, settings PoolSettings, logger *slog.Logger) (*
 	}
 	poolConfig.MaxConns = settings.MaxConns
 	poolConfig.ConnConfig.Tracer = NewQueryTracer(logger)
+	SetSchemaSearchPath(poolConfig.ConnConfig)
 
 	pool, err := pgxpool.NewWithConfig(ctx, poolConfig)
 	if err != nil {
@@ -38,6 +40,17 @@ func NewPool(ctx context.Context, settings PoolSettings, logger *slog.Logger) (*
 		slog.Int("max_conns", int(poolConfig.MaxConns)),
 	)
 	return pool, nil
+}
+
+// schemaSearchPath is the search_path every session needs: the schema's trigger functions
+// name their tables without the schema (migration 0001 runs with the same path).
+const schemaSearchPath = "easycode, public"
+
+// SetSchemaSearchPath sets the search_path runtime parameter unless the URL already sets one.
+func SetSchemaSearchPath(config *pgx.ConnConfig) {
+	if _, ok := config.RuntimeParams["search_path"]; !ok {
+		config.RuntimeParams["search_path"] = schemaSearchPath
+	}
 }
 
 // DatabaseProbe reports whether PostgreSQL answers a trivial query.
