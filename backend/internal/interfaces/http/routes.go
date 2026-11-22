@@ -57,6 +57,8 @@ func (a *api) register(router *Router) {
 		router.Handle(fasthttp.MethodPost, p+"/{waveId}/questions/{questionId}/answer", auth(a.answerQuestion))
 		router.Handle(fasthttp.MethodGet, p+"/{waveId}/checkpoints", auth(a.listCheckpoints))
 		router.Handle(fasthttp.MethodGet, p+"/{waveId}/calls", auth(a.listWaveCalls))
+		router.Handle(fasthttp.MethodGet, p+"/{waveId}/sandbox-executions", auth(a.listSandboxExecutions))
+		router.Handle(fasthttp.MethodGet, p+"/{waveId}/sandbox-executions/{executionId}/output", auth(a.downloadExecutionOutput))
 	}
 	if a.deps.Gates != nil {
 		p := APIPrefix + "/projects/{projectId}/gates/{gateId}/rounds"
@@ -64,6 +66,12 @@ func (a *api) register(router *Router) {
 		router.Handle(fasthttp.MethodGet, p+"/{round}", auth(a.getGateRound))
 		router.Handle(fasthttp.MethodPost, p+"/{round}/approval", auth(a.approveGate))
 		router.Handle(fasthttp.MethodPost, p+"/{round}/rejection", auth(a.rejectGate))
+	}
+	if a.deps.Repository != nil {
+		router.Handle(fasthttp.MethodGet, APIPrefix+"/projects/{projectId}/repository", auth(a.getRepository))
+		// Git smart HTTP, read-only (outside openapi.yaml): HTTP Basic with the session token.
+		router.Handle(fasthttp.MethodGet, "/git/{repository}/info/refs", a.gitReferences)
+		router.Handle(fasthttp.MethodPost, "/git/{repository}/git-upload-pack", a.gitUploadPack)
 	}
 	if a.deps.Pending != nil {
 		router.Handle(fasthttp.MethodGet, APIPrefix+"/pending-items", auth(a.listPendingItems))

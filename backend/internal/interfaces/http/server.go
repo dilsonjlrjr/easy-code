@@ -41,6 +41,8 @@ type Dependencies struct {
 	Waves         WaveUseCases
 	Gates         GateUseCases
 	Pending       PendingUseCases
+	// Repository serves getRepository and the git clone (US-42).
+	Repository RepositoryUseCases
 	// Notices serves watchNotices (/me/events) together with Events.
 	Notices NoticeHistory
 	// Events, History and Access serve the SSE stream; Shutdown closes when the api stops.

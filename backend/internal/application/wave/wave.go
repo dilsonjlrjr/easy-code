@@ -40,6 +40,7 @@ type Summary struct {
 	StartedAt     *time.Time
 	EndedAt       *time.Time
 	Cost          Cost
+	Task          string // T of an implementation wave (PL-20)
 }
 
 // View is getWave.
@@ -56,6 +57,33 @@ type View struct {
 	LastCheckpoint       *int
 	QuestionOpen         string
 	Outputs              []ExpectedOutput
+	GitCommit            string // commit of the project repository written when the wave completed (D-17)
+}
+
+// SandboxExecution is a command run in the sandbox with its evidence (US-41).
+type SandboxExecution struct {
+	ID           string
+	Command      string
+	Category     string
+	Profile      string
+	Start        time.Time
+	DurationMs   int64
+	ExitCode     *int
+	EndReason    string
+	TestsTotal   *int
+	TestsPassed  *int
+	TestsFailed  *int
+	TestsSkipped *int
+	OutputStart  string
+	OutputBytes  int64
+	OutputSHA256 string
+	ImageDigest  string
+}
+
+// ExecutionOutput is the full output of a command (gzip as stored).
+type ExecutionOutput struct {
+	Compressed []byte
+	FileName   string
 }
 
 // ExpectedOutput is an output of the stage and its situation in the wave (PL-22).
@@ -125,6 +153,8 @@ type Reader interface {
 	Questions(ctx context.Context, projectID, code string) ([]QuestionView, error)
 	Checkpoints(ctx context.Context, projectID, code string) ([]CheckpointView, error)
 	Calls(ctx context.Context, projectID, code, kind string) ([]CallView, error)
+	SandboxExecutions(ctx context.Context, projectID, code string, limit int, after string) ([]SandboxExecution, error)
+	ExecutionOutput(ctx context.Context, projectID, code, executionID string) (ExecutionOutput, error)
 }
 
 // Answers stores the answers of a question (api: question_items.answer, wave_questions.answered_*).
@@ -194,6 +224,22 @@ func (s *Service) Calls(ctx context.Context, principal identity.Principal, proje
 		return nil, failure.Invalid(failure.FieldError{Field: "type", Message: "enum"})
 	}
 	return s.reader.Calls(ctx, projectID, code, kind)
+}
+
+// SandboxExecutions is listSandboxExecutions (US-41 CA-1, CA-2, CA-3): oldest first, after the cursor.
+func (s *Service) SandboxExecutions(ctx context.Context, principal identity.Principal, projectID, code string, limit int, after string) ([]SandboxExecution, error) {
+	if err := s.access(ctx, principal, projectID); err != nil {
+		return nil, err
+	}
+	return s.reader.SandboxExecutions(ctx, projectID, code, limit, after)
+}
+
+// ExecutionOutput is downloadExecutionOutput (US-41 CA-1).
+func (s *Service) ExecutionOutput(ctx context.Context, principal identity.Principal, projectID, code, executionID string) (ExecutionOutput, error) {
+	if err := s.access(ctx, principal, projectID); err != nil {
+		return ExecutionOutput{}, err
+	}
+	return s.reader.ExecutionOutput(ctx, projectID, code, executionID)
 }
 
 // Answer is answerQuestion (US-10 CA-1, RN-1): every item answered, recorded with who, when and

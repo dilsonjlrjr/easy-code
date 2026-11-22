@@ -23,6 +23,8 @@ type WaveUseCases interface {
 	Checkpoints(ctx context.Context, principal identity.Principal, projectID, code string) ([]appwave.CheckpointView, error)
 	Calls(ctx context.Context, principal identity.Principal, projectID, code, kind string) ([]appwave.CallView, error)
 	Answer(ctx context.Context, principal identity.Principal, projectID, waveCode, questionCode string, answers map[int]string, key, bodyHash string) (appworkflow.CommandView, error)
+	SandboxExecutions(ctx context.Context, principal identity.Principal, projectID, code string, limit int, after string) ([]appwave.SandboxExecution, error)
+	ExecutionOutput(ctx context.Context, principal identity.Principal, projectID, code, executionID string) (appwave.ExecutionOutput, error)
 }
 
 type tokensJSON struct {
@@ -69,7 +71,7 @@ type waveSummaryJSON struct {
 }
 
 func waveSummaryOf(s appwave.Summary) waveSummaryJSON {
-	return waveSummaryJSON{ID: s.Code, Stage: s.Stage, Agent: s.Agent, State: s.State, Purpose: s.Purpose, Attempt: s.Attempt,
+	return waveSummaryJSON{ID: s.Code, Stage: s.Stage, Agent: s.Agent, State: s.State, Purpose: s.Purpose, Attempt: s.Attempt, Task: optional(s.Task),
 		ConfigVersion: s.ConfigVersion, CreatedAt: s.CreatedAt, StartedAt: s.StartedAt, EndedAt: s.EndedAt,
 		CostTotal: moneyJSON{addDecimal(s.Cost.Useful, s.Cost.Lost), s.Cost.Currency}}
 }
@@ -95,6 +97,7 @@ type waveJSON struct {
 	LastCheckpoint   *int                 `json:"last_checkpoint"`
 	QuestionOpen     *string              `json:"question_open"`
 	ExpectedOutputs  []expectedOutputJSON `json:"expected_outputs"`
+	GitCommit        *string              `json:"git_commit"`
 	Attempts         []any                `json:"attempts"`
 	AvailableActions []string             `json:"available_actions"`
 }
@@ -109,6 +112,7 @@ func waveOf(v appwave.View) waveJSON {
 		Time:         map[string]int64{"execution_ms": v.ExecutionMs, "cycle_ms": v.CycleMs},
 		FailureCause: optional(v.FailureCause), ArtifactErrors: v.ArtifactErrors, LastCheckpoint: v.LastCheckpoint,
 		QuestionOpen: optional(v.QuestionOpen), ExpectedOutputs: []expectedOutputJSON{}, Attempts: []any{}, AvailableActions: []string{},
+		GitCommit: optional(v.GitCommit),
 	}
 	if v.PriceTable != "" {
 		out.Versions["price_table"] = v.PriceTable

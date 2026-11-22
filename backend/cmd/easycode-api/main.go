@@ -21,10 +21,12 @@ import (
 	apppricing "easycode/internal/application/pricing"
 	appproject "easycode/internal/application/project"
 	"easycode/internal/application/providerkey"
+	apprepository "easycode/internal/application/repository"
 	appsession "easycode/internal/application/session"
 	appwave "easycode/internal/application/wave"
 	appworkflow "easycode/internal/application/workflow"
 	"easycode/internal/infrastructure/config"
+	"easycode/internal/infrastructure/git"
 	"easycode/internal/infrastructure/i18n"
 	"easycode/internal/infrastructure/logging"
 	"easycode/internal/infrastructure/oidc"
@@ -192,6 +194,7 @@ func productDependencies(cfg config.Config, pool *pgxpool.Pool, logger *slog.Log
 		Pending:       apppending.NewService(postgres.NewPending(pool, definition)),
 		Waves:         waves,
 		Access:        waves,
+		Repository:    apprepository.NewService(projects, git.New(cfg.ReposDir), cfg.GitBaseURL, git.MainBranch),
 	}
 	if cfg.Providers.SealingPublicKeyFile == "" {
 		logger.Warn("provider key routes disabled: no sealing public key", slog.String("variable", config.EnvSealingPublicKey))

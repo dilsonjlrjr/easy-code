@@ -42,11 +42,11 @@ const waveSummary = `w.code, w.stage, w.agent, w.state, w.purpose, w.attempt, co
   CASE WHEN w.state IN ('completed','canceled') THEN w.finished_at
        WHEN w.state = 'failed' THEN (SELECT max(e.occurred_at) FROM easycode.events e WHERE e.project_id = w.project_id AND e.waveid = w.code AND e.type = 'br.easycode.wave.failed.v1')
   END,
-  w.useful_cost::text, w.lost_cost::text, w.currency, w.estimated_lost_cost`
+  w.useful_cost::text, w.lost_cost::text, w.currency, w.estimated_lost_cost, coalesce(w.task, '')`
 
 func scanSummary(row pgx.Row, s *appwave.Summary, extra ...any) error {
 	args := append([]any{&s.Code, &s.Stage, &s.Agent, &s.State, &s.Purpose, &s.Attempt, &s.ConfigVersion, &s.CreatedAt, &s.StartedAt, &s.EndedAt,
-		&s.Cost.Useful, &s.Cost.Lost, &s.Cost.Currency, &s.Cost.EstimatedLost}, extra...)
+		&s.Cost.Useful, &s.Cost.Lost, &s.Cost.Currency, &s.Cost.EstimatedLost, &s.Task}, extra...)
 	if err := row.Scan(args...); err != nil {
 		return err
 	}
@@ -84,15 +84,19 @@ func (w Waves) Get(ctx context.Context, projectID, code string) (appwave.View, e
 	var waveID int64
 	var digest, cause, question, instruction *string
 	var step int
+	var buildOrTestFailed bool
 	err := scanSummary(q.QueryRow(WithOperation(ctx, "waves.get"), `
 SELECT `+waveSummary+`, w.id, w.inputs_digest, w.failure_cause, w.input_tokens, w.output_tokens, w.read_cache_tokens, w.write_cache_tokens,
        w.execution_duration_ms, (extract(epoch FROM coalesce(w.finished_at, now()) - coalesce(w.started_at, w.created_at)) * 1000)::bigint,
        w.current_step, ac.instruction_version,
-       (SELECT q.code FROM easycode.wave_questions q WHERE q.wave_id = w.id AND q.answered_at IS NULL ORDER BY q.opened_at DESC LIMIT 1)
+       (SELECT q.code FROM easycode.wave_questions q WHERE q.wave_id = w.id AND q.answered_at IS NULL ORDER BY q.opened_at DESC LIMIT 1),
+       coalesce(w.git_commit, ''),
+       EXISTS (SELECT 1 FROM easycode.tool_executions t WHERE t.wave_id = w.id AND t.category IN ('build','tests') AND t.status <> 'success')
   FROM easycode.waves w JOIN easycode.projects pr ON pr.id = w.project_id
   LEFT JOIN easycode.agent_configurations ac ON ac.id = w.agent_configuration_id
  WHERE pr.public_id = $1::uuid AND w.code = $2`, projectID, code), &v.Summary, &waveID, &digest, &cause,
-		&v.Tokens.Input, &v.Tokens.Output, &v.Tokens.CacheRead, &v.Tokens.CacheWrite, &v.ExecutionMs, &v.CycleMs, &step, &instruction, &question)
+		&v.Tokens.Input, &v.Tokens.Output, &v.Tokens.CacheRead, &v.Tokens.CacheWrite, &v.ExecutionMs, &v.CycleMs, &step, &instruction, &question,
+		&v.GitCommit, &buildOrTestFailed)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return v, failure.New(failure.KindNotFound, failure.CodeNotFound, nil)
 	}
@@ -102,6 +106,9 @@ SELECT `+waveSummary+`, w.id, w.inputs_digest, w.failure_cause, w.input_tokens, 
 	v.InputsDigest, v.InstructionVersion, v.QuestionOpen = deref(digest), deref(instruction), deref(question)
 	if cause != nil {
 		v.FailureCause = *cause
+		if *cause == "unrecoverable_error" && buildOrTestFailed {
+			v.FailureCause = "build_or_test_failed" // US-19 CA-2: the failure keeps the command output
+		}
 	}
 	if step > 0 || v.State != "queued" {
 		v.LastCheckpoint = &step
@@ -362,4 +369,49 @@ UPDATE easycode.waves w SET state = 'running' FROM easycode.projects pr WHERE pr
 		return ref, err
 	}
 	return ref, nil
+}
+
+// SandboxExecutions implements appwave.Reader (US-41): the commands of the wave in order, after the
+// cursor (execution id).
+func (w Waves) SandboxExecutions(ctx context.Context, projectID, code string, limit int, after string) ([]appwave.SandboxExecution, error) {
+	if _, err := w.Get(ctx, projectID, code); err != nil {
+		return nil, err
+	}
+	rows, err := conn(ctx, w.pool).Query(WithOperation(ctx, "tool_executions.sandbox_list"), `
+SELECT t.public_id::text, coalesce(t.command, ''), t.category, coalesce(t.profile, ''), t.started_at, coalesce(t.duration_ms, 0), t.exit_code,
+       coalesce(t.end_reason, 'executor_error'), t.tests_total, t.tests_passed, t.tests_failed, t.tests_skipped, coalesce(t.output_start, ''),
+       coalesce(t.output_bytes, 0), coalesce(t.output_sha256, ''), coalesce(t.image_digest, '')
+  FROM easycode.tool_executions t JOIN easycode.waves w ON w.id = t.wave_id JOIN easycode.projects pr ON pr.id = w.project_id
+ WHERE pr.public_id = $1::uuid AND w.code = $2 AND t.category IS NOT NULL
+   AND ($3 = '' OR (t.started_at, t.id) > (SELECT c.started_at, c.id FROM easycode.tool_executions c WHERE c.public_id::text = $3 AND c.wave_id = w.id))
+ ORDER BY t.started_at, t.id LIMIT $4`, projectID, code, after, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list sandbox executions: %w", classify(err))
+	}
+	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (appwave.SandboxExecution, error) {
+		var e appwave.SandboxExecution
+		err := row.Scan(&e.ID, &e.Command, &e.Category, &e.Profile, &e.Start, &e.DurationMs, &e.ExitCode, &e.EndReason, &e.TestsTotal,
+			&e.TestsPassed, &e.TestsFailed, &e.TestsSkipped, &e.OutputStart, &e.OutputBytes, &e.OutputSHA256, &e.ImageDigest)
+		return e, err
+	})
+}
+
+// ExecutionOutput implements appwave.Reader: the stored output (gzip) of one execution of the wave.
+func (w Waves) ExecutionOutput(ctx context.Context, projectID, code, executionID string) (appwave.ExecutionOutput, error) {
+	var out appwave.ExecutionOutput
+	var number int
+	err := conn(ctx, w.pool).QueryRow(WithOperation(ctx, "tool_executions.output"), `
+SELECT t.output, (SELECT count(*) FROM easycode.tool_executions o WHERE o.wave_id = t.wave_id AND o.category IS NOT NULL
+                   AND (o.started_at, o.id) <= (t.started_at, t.id))
+  FROM easycode.tool_executions t JOIN easycode.waves w ON w.id = t.wave_id JOIN easycode.projects pr ON pr.id = w.project_id
+ WHERE pr.public_id = $1::uuid AND w.code = $2 AND t.public_id::text = $3 AND t.category IS NOT NULL`, projectID, code, executionID).
+		Scan(&out.Compressed, &number)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return out, failure.New(failure.KindNotFound, failure.CodeNotFound, nil)
+	}
+	if err != nil {
+		return out, fmt.Errorf("execution output: %w", classify(err))
+	}
+	out.FileName = fmt.Sprintf("%s-exec-%d.txt", code, number)
+	return out, nil
 }
