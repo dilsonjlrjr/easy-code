@@ -61,3 +61,16 @@ func TestNumberConstraintsNeverReusesIDs(t *testing.T) {
 		t.Fatalf("got %+v %v", numbered, fields)
 	}
 }
+
+// US-54 CA-3: the audit of a new version names the items added, changed and removed.
+func TestConstraintChangesListsAddedChangedAndRemovedItems(t *testing.T) {
+	previous := []project.Constraint{{ID: "RESTR-01", Category: "language", Description: "Go"}, {ID: "RESTR-02", Category: "database", Description: "PostgreSQL"}}
+	next := []project.Constraint{{ID: "RESTR-01", Category: "language", Description: "Go 1.26"}, {ID: "RESTR-03", Category: "standard", Description: "LGPD"}}
+	got := project.ConstraintChanges(previous, next)
+	if len(got) != 3 || got[0] != "RESTR-01" || got[1] != "RESTR-02" || got[2] != "RESTR-03" {
+		t.Fatalf("changes: %v", got)
+	}
+	if same := project.ConstraintChanges(previous, previous); len(same) != 0 {
+		t.Fatalf("no change: %v", same)
+	}
+}

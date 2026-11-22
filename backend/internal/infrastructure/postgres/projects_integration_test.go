@@ -23,12 +23,8 @@ type projectFixture struct {
 func newProjectFixture(t *testing.T) projectFixture {
 	t.Helper()
 	db := postgrestest.New(t)
-	seedDev(t, db)
 	api := db.PoolAs("easycode_api")
-	dev, err := postgres.NewUsers(api).DevPrincipal(context.Background(), "dev")
-	if err != nil {
-		t.Fatal(err)
-	}
+	dev := seedDev(t, db)
 	repo := postgres.NewProjects(api, "workflow-basico", 3)
 	service := appproject.NewService(postgres.NewTxRunner(api), repo, postgres.NewOutbox(api), postgres.NewAuditTrail(api), "workflow-basico", 1)
 	return projectFixture{db: db, dev: dev, service: service, repo: repo}

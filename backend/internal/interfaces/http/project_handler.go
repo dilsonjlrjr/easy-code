@@ -17,6 +17,37 @@ type ProjectUseCases interface {
 	Create(ctx context.Context, principal identity.Principal, input project.NewProject) (appproject.View, error)
 	Get(ctx context.Context, principal identity.Principal, projectID string) (appproject.View, error)
 	List(ctx context.Context, principal identity.Principal, filter appproject.Filter) (appproject.Page, error)
+	GetAsAdministrator(ctx context.Context, projectID string) (appproject.View, error)
+}
+
+// projectMetadataJSON is what the administrator sees of a project without a role in it: no
+// content nor summary (US-02 CA-6, listProjects scope=organization).
+type projectMetadataJSON struct {
+	ID        string          `json:"id"`
+	Name      string          `json:"name"`
+	State     string          `json:"state"`
+	Workflow  string          `json:"workflow"`
+	CreatedAt time.Time       `json:"created_at"`
+	CreatedBy userRefJSON     `json:"created_by"`
+	UpdatedAt time.Time       `json:"updated_at"`
+	MyRoles   []identity.Role `json:"my_roles"`
+	Lead      userRefJSON     `json:"lead"`
+}
+
+func projectMetadataOf(v appproject.View) projectMetadataJSON {
+	return projectMetadataJSON{
+		ID: v.ID, Name: v.Name, State: v.State, Workflow: v.Workflow, CreatedAt: v.CreatedAt, UpdatedAt: v.UpdatedAt,
+		CreatedBy: userRefJSON{ID: v.CreatedBy.Subject, Name: v.CreatedBy.Name}, MyRoles: []identity.Role{},
+		Lead: userRefJSON{ID: v.Lead.Subject, Name: v.Lead.Name},
+	}
+}
+
+// projectBody is the full project, or only the metadata for the administrator without a role.
+func projectBody(v appproject.View) any {
+	if v.MetadataOnly {
+		return projectMetadataOf(v)
+	}
+	return projectOf(v)
 }
 
 type moneyJSON struct {
@@ -100,7 +131,7 @@ type projectJSON struct {
 }
 
 type projectsPageJSON struct {
-	Items        []projectJSON  `json:"items"`
+	Items        []any          `json:"items"`
 	NextCursor   *string        `json:"next_cursor"`
 	CountByState map[string]int `json:"count_by_state"`
 }
@@ -187,35 +218,40 @@ func (a *api) getProject(rc *fasthttp.RequestCtx, principal identity.Principal) 
 	if err != nil {
 		return err
 	}
-	view, err := a.deps.Projects.Get(RequestContext(rc), principal, projectID)
+	ctx := RequestContext(rc)
+	view, err := a.deps.Projects.Get(ctx, principal, projectID)
+	if err != nil && a.administratorWithoutRole(ctx, principal, projectID, err) {
+		view, err = a.deps.Projects.GetAsAdministrator(ctx, projectID)
+	}
 	if err != nil {
 		return err
 	}
-	a.responder.JSON(rc, fasthttp.StatusOK, projectOf(view))
+	a.responder.JSON(rc, fasthttp.StatusOK, projectBody(view))
 	return nil
 }
 
 func (a *api) listProjects(rc *fasthttp.RequestCtx, principal identity.Principal) error {
-	if scope := string(rc.QueryArgs().Peek("scope")); scope != "" && scope != "my" {
-		if scope != "organization" {
-			return failure.Invalid(failure.FieldError{Field: "scope", Message: "enum"})
-		}
-		// The organization scope of the administrator (US-02 CA-5, US-51) arrives with MARCO-2.
-		return failure.New(failure.KindForbidden, failure.CodeForbidden, nil)
+	organization := false
+	switch scope := string(rc.QueryArgs().Peek("scope")); scope {
+	case "", "my":
+	case "organization":
+		organization = true
+	default:
+		return failure.Invalid(failure.FieldError{Field: "scope", Message: "enum"})
 	}
 	limit, err := queryLimit(rc)
 	if err != nil {
 		return err
 	}
 	page, err := a.deps.Projects.List(RequestContext(rc), principal, appproject.Filter{
-		States: queryList(rc, "state"), Limit: limit, Cursor: string(rc.QueryArgs().Peek("cursor")),
+		Organization: organization, States: queryList(rc, "state"), Limit: limit, Cursor: string(rc.QueryArgs().Peek("cursor")),
 	})
 	if err != nil {
 		return err
 	}
-	out := projectsPageJSON{Items: []projectJSON{}, CountByState: page.CountByState}
+	out := projectsPageJSON{Items: []any{}, CountByState: page.CountByState}
 	for _, view := range page.Items {
-		out.Items = append(out.Items, projectOf(view))
+		out.Items = append(out.Items, projectBody(view))
 	}
 	if page.NextCursor != "" {
 		out.NextCursor = &page.NextCursor

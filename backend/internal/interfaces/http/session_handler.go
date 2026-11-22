@@ -1,10 +1,13 @@
 package http
 
 import (
+	"strconv"
 	"time"
 
 	"github.com/valyala/fasthttp"
 
+	"easycode/internal/application/session"
+	"easycode/internal/domain/failure"
 	"easycode/internal/domain/identity"
 )
 
@@ -26,16 +29,56 @@ type currentUserJSON struct {
 	AttachmentLimitBytes int              `json:"attachment_limit_bytes"`
 }
 
-// devSession issues the cookie of the fixed "dev" user. The route exists only in the marco1
-// profile and is not part of openapi.yaml (ADR-12, ARQ section 9).
-func (a *api) devSession(rc *fasthttp.RequestCtx) error {
-	current, token, err := a.deps.Sessions.IssueDev(RequestContext(rc))
+// startWebLogin redirects to the SSO with state, nonce and PKCE in the ec_login cookie (US-01 CA-1;
+// reauthenticate=true is the step-up of ADR-19).
+func (a *api) startWebLogin(rc *fasthttp.RequestCtx) error {
+	reauthenticate := false
+	if raw := string(rc.QueryArgs().Peek("reauthenticate")); raw != "" {
+		parsed, err := strconv.ParseBool(raw)
+		if err != nil {
+			return failure.Invalid(failure.FieldError{Field: "reauthenticate", Message: "invalid"})
+		}
+		reauthenticate = parsed
+	}
+	login, err := a.deps.Sessions.BeginLogin(string(rc.QueryArgs().Peek("callback")), reauthenticate)
 	if err != nil {
 		return err
 	}
-	SetUserID(rc, current.Subject)
-	setSessionCookie(rc, token, current.ExpiresAt())
-	a.responder.NoContent(rc)
+	setLoginFlowCookie(rc, login.FlowCookie, login.ExpiresAt)
+	rc.Response.Header.Set(fasthttp.HeaderCacheControl, "no-store")
+	rc.Response.Header.Set(headerLocation, login.RedirectURL)
+	rc.SetStatusCode(fasthttp.StatusFound)
+	return nil
+}
+
+// completeWebLogin checks the return of the SSO, creates the session and goes back to the page
+// asked (or to /access-denied without a session, US-01 CA-2).
+func (a *api) completeWebLogin(rc *fasthttp.RequestCtx) error {
+	args := rc.QueryArgs()
+	done, err := a.deps.Sessions.CompleteLogin(RequestContext(rc), session.Callback{
+		Code: string(args.Peek("code")), State: string(args.Peek("state")), Error: string(args.Peek("error")),
+		FlowCookie: string(rc.Request.Header.Cookie(LoginFlowCookie)),
+	})
+	setLoginFlowCookie(rc, "", time.Time{})
+	if err != nil {
+		if failure.From(err).Kind != failure.KindInvalidInput {
+			return err
+		}
+		// The browser is on the api route: an invalid or expired return goes to the login page of
+		// the web with the reason, never to a JSON answer (ESP-02 "Erro no retorno do SSO").
+		rc.Response.Header.Set(fasthttp.HeaderCacheControl, "no-store")
+		rc.Response.Header.Set(headerLocation, session.LoginFailedPath)
+		rc.SetStatusCode(fasthttp.StatusFound)
+		return nil
+	}
+	if done.Token != "" {
+		SetUserID(rc, done.Session.Subject)
+		setSessionCookie(rc, done.Token, done.Session.ExpiresAt())
+	}
+	rc.Response.Header.Set(fasthttp.HeaderCacheControl, "no-store")
+	// Relative Location: the browser stays on the platform origin (callback is a same-origin path).
+	rc.Response.Header.Set(headerLocation, done.Redirect)
+	rc.SetStatusCode(fasthttp.StatusFound)
 	return nil
 }
 
@@ -59,9 +102,12 @@ func (a *api) currentUser(rc *fasthttp.RequestCtx, principal identity.Principal)
 	return nil
 }
 
-// endSession is endSession: the cookie is deleted. The marco1 cookie is stateless, so a copy
-// kept elsewhere stays valid until it expires; the server-side session of MARCO-2 revokes it.
+// endSession is endSession: the session ends on the server (a copy of the cookie stops working at
+// once) and on the SSO, and the cookie is deleted (US-01 CA-3).
 func (a *api) endSession(rc *fasthttp.RequestCtx, _ identity.Principal) error {
+	if err := a.deps.Sessions.End(RequestContext(rc), currentSession(rc)); err != nil {
+		return err
+	}
 	setSessionCookie(rc, "", time.Time{})
 	a.responder.NoContent(rc)
 	return nil

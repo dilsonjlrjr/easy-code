@@ -5,33 +5,45 @@ import (
 	"testing"
 
 	"easycode/internal/application/idempotency"
+	"easycode/internal/application/session"
 	"easycode/internal/domain/failure"
+	"easycode/internal/domain/identity"
 	"easycode/internal/infrastructure/postgres"
 	"easycode/internal/infrastructure/postgres/postgrestest"
 )
 
-func seedDev(t *testing.T, db *postgrestest.Database) {
+const testIssuer = "https://sso.example/realms/easycode"
+
+// seedDev signs the test administrator in (test identity: organization of the issuer and person).
+func seedDev(t *testing.T, db *postgrestest.Database) identity.Principal {
 	t.Helper()
-	if err := postgres.SeedDevIdentity(context.Background(), db.Admin, "dev", "Dev"); err != nil {
+	ctx := context.Background()
+	if err := postgres.EnsureOrganization(ctx, db.Admin, testIssuer, "Test organization"); err != nil {
 		t.Fatal(err)
 	}
-}
-
-func TestSeedDevIdentityCreatesTheAdministratorDevUserOnce(t *testing.T) {
-	db := postgrestest.New(t)
-	seedDev(t, db)
-	seedDev(t, db) // idempotent
-	users := postgres.NewUsers(db.PoolAs("easycode_api"))
-	ctx := context.Background()
-	dev, err := users.DevPrincipal(ctx, "dev")
+	dev, err := postgres.NewUsers(db.PoolAs("easycode_api")).SignIn(ctx, testIssuer, session.Claims{Subject: "dev", Name: "Dev", Administrator: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !dev.Administrator || dev.Name != "Dev" || dev.OrganizationName != postgres.DevOrganizationName {
-		t.Fatalf("unexpected dev principal: %+v", dev)
+	return dev
+}
+
+// US-01: signing in records the person of the issuer's organization, refreshes name and role on
+// each login, and refuses an unknown issuer or a deactivated person (CA-2, D-31).
+func TestSignInRecordsThePersonOfTheIssuer(t *testing.T) {
+	db := postgrestest.New(t)
+	dev := seedDev(t, db)
+	users := postgres.NewUsers(db.PoolAs("easycode_api"))
+	ctx := context.Background()
+	if !dev.Administrator || dev.Name != "Dev" || dev.OrganizationName != "Test organization" {
+		t.Fatalf("unexpected principal: %+v", dev)
+	}
+	again, err := users.SignIn(ctx, testIssuer, session.Claims{Subject: "dev", Name: "Dev Renamed"})
+	if err != nil || again.Name != "Dev Renamed" || again.Administrator || again.OrganizationID != dev.OrganizationID {
+		t.Fatalf("second login refreshes name and role: %+v %v", again, err)
 	}
 	same, err := users.Principal(ctx, dev.OrganizationID, "dev")
-	if err != nil || same != dev {
+	if err != nil || same != again {
 		t.Fatalf("principal by organization: %+v %v", same, err)
 	}
 	if _, err := users.Principal(ctx, dev.OrganizationID, "someone"); failure.From(err).Kind != failure.KindNotFound {
@@ -40,17 +52,22 @@ func TestSeedDevIdentityCreatesTheAdministratorDevUserOnce(t *testing.T) {
 	if lead, err := users.LeadInAnyProject(ctx, dev); err != nil || lead {
 		t.Fatalf("dev leads nothing yet: %v %v", lead, err)
 	}
+	if _, err := users.SignIn(ctx, "https://other.example/realms/x", session.Claims{Subject: "dev", Name: "Dev"}); failure.From(err).Kind != failure.KindNotFound {
+		t.Fatalf("issuer without organization: %v", err)
+	}
+	if _, err := db.Admin.Exec(ctx, "UPDATE easycode.users SET active = false WHERE sub = 'dev'"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := users.SignIn(ctx, testIssuer, session.Claims{Subject: "dev", Name: "Dev"}); failure.From(err).Code != session.CodeAccountWithoutAccess {
+		t.Fatalf("deactivated person: %v", err)
+	}
 }
 
 func TestIdempotencyKeysReplayAndRefuseRace(t *testing.T) {
 	db := postgrestest.New(t)
-	seedDev(t, db)
+	dev := seedDev(t, db)
 	api := db.PoolAs("easycode_api")
 	ctx := context.Background()
-	dev, err := postgres.NewUsers(api).DevPrincipal(ctx, "dev")
-	if err != nil {
-		t.Fatal(err)
-	}
 	keys := postgres.NewIdempotencyKeys(api)
 	req := idempotency.Request{Principal: dev, Key: "0193a5c0-44aa-7e01-b2c9-7f3d1e6a9b31", Operation: "createProject", BodyHash: idempotency.HashBody([]byte("{}"))}
 	if found, err := keys.Find(ctx, dev, req.Key); err != nil || found != nil {

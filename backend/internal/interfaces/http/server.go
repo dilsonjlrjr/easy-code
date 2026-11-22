@@ -32,12 +32,17 @@ type Dependencies struct {
 	Providers ProviderUseCases
 	Pricing   PricingUseCases
 	Projects  ProjectUseCases
+	// Members is required with Projects for the role routes (US-02).
+	Members MemberUseCases
 	// Configuration is required with Projects.
 	Configuration ConfigurationUseCases
 	Workflow      WorkflowUseCases
 	Artifacts     ArtifactUseCases
 	Waves         WaveUseCases
 	Gates         GateUseCases
+	Pending       PendingUseCases
+	// Notices serves watchNotices (/me/events) together with Events.
+	Notices NoticeHistory
 	// Events, History and Access serve the SSE stream; Shutdown closes when the api stops.
 	Events   EventFeed
 	History  EventHistory
@@ -67,6 +72,22 @@ func NewHandler(deps Dependencies) fasthttp.RequestHandler {
 		AccessLog(deps.Logger),
 		Recover(responder, deps.Logger),
 	)
+}
+
+// RouteTemplates lists "METHOD template" of every route the dependencies enable (authorization
+// tests walk all of them, RNF-04 and RNF-06).
+func RouteTemplates(deps Dependencies) []string {
+	responder := NewResponder(deps.Translator, deps.Logger)
+	router := NewRouter(responder)
+	registerRoutes(router, NewHealthHandler(deps.Health, responder))
+	if deps.Sessions != nil {
+		(&api{deps: deps, responder: responder, auth: authenticator{sessions: deps.Sessions, publicOrigin: deps.PublicOrigin}}).register(router)
+	}
+	templates := make([]string, 0, len(router.routes))
+	for _, r := range router.routes {
+		templates = append(templates, r.method+" "+r.template)
+	}
+	return templates
 }
 
 func registerRoutes(router *Router, health *HealthHandler) {

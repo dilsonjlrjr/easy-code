@@ -61,5 +61,17 @@
   "problem.pending-human-check.title": "Human check pending",
   "problem.pending-human-check.detail": "Confirm every human check of the gate.",
   "problem.artifact-invalid.title": "Artifact out of schema",
-  "problem.artifact-invalid.detail": "The artifact failed the schema validation of its type."
+  "problem.artifact-invalid.detail": "The artifact failed the schema validation of its type.",
+  "problem.revoked-session.title": "Session revoked",
+  "problem.revoked-session.detail": "The session was ended in the SSO. Sign in again.",
+  "problem.account-without-access.title": "Account without access",
+  "problem.account-without-access.detail": "Your account has no access to the platform. Talk to the organization administrator.",
+  "problem.last-approver.title": "The project needs at least one approver",
+  "problem.last-approver.detail": "Give the approver role to someone else before removing this one.",
+  "problem.lead-required.title": "The project needs a lead",
+  "problem.lead-required.detail": "Only the organization administrator transfers the lead role.",
+  "problem.separation-of-duties.title": "Role assigned less than 24 hours ago",
+  "problem.separation-of-duties.detail": "Whoever assigned the approver role to themselves waits 24 hours before approving a gate of the project; the administrator does not assign roles to themselves.",
+  "pending.gate.title": "Gate {gate} (round {round}) awaiting decision",
+  "pending.question.title": "Questions of the {agent} agent in wave {wave}"
 }

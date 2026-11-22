@@ -1,0 +1,147 @@
+{
+  "realm": "easycode",
+  "displayName": "Easy Code (desenvolvimento)",
+  "enabled": true,
+  "sslRequired": "none",
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "resetPasswordAllowed": false,
+  "bruteForceProtected": true,
+  "ssoSessionIdleTimeout": 1800,
+  "ssoSessionMaxLifespan": 28800,
+  "eventsEnabled": true,
+  "eventsExpiration": 604800,
+  "enabledEventTypes": ["LOGIN", "LOGIN_ERROR", "LOGOUT", "CODE_TO_TOKEN"],
+  "adminEventsEnabled": false,
+  "internationalizationEnabled": true,
+  "supportedLocales": ["pt-BR", "en"],
+  "defaultLocale": "pt-BR",
+  "roles": {
+    "realm": [
+      {
+        "name": "easycode-administrator",
+        "description": "Administrador da organização na Easy Code (chaves de provedor, preços, skills; US-15, US-37, US-44)."
+      }
+    ]
+  },
+  "clients": [
+    {
+      "clientId": "easycode-api",
+      "name": "Easy Code api (login web)",
+      "description": "Cliente confidencial da api: authorization code + PKCE (ADR-12). DEV ONLY: segredo fixo de desenvolvimento.",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "dev-only-easycode-api-secret",
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true,
+      "redirectUris": ["http://localhost:8080/api/v1/session/oidc/callback"],
+      "webOrigins": ["http://localhost:8080"],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "http://localhost:8080/login"
+      },
+      "defaultClientScopes": ["profile", "roles", "web-origins", "basic"],
+      "optionalClientScopes": [],
+      "protocolMappers": [
+        {
+          "name": "realm roles in the id token",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-realm-role-mapper",
+          "consentRequired": false,
+          "config": {
+            "claim.name": "roles",
+            "multivalued": "true",
+            "jsonType.label": "String",
+            "id.token.claim": "true",
+            "access.token.claim": "false",
+            "userinfo.token.claim": "false",
+            "introspection.token.claim": "false"
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "easycode-events",
+      "name": "Easy Code worker (leitura de eventos e diretório)",
+      "description": "Conta de serviço só de leitura do worker: eventos de login (PL-36) e desligamento (D-31). DEV ONLY: segredo fixo de desenvolvimento.",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "dev-only-easycode-events-secret",
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true
+    }
+  ],
+  "users": [
+    {
+      "username": "service-account-easycode-api",
+      "enabled": true,
+      "serviceAccountClientId": "easycode-api",
+      "clientRoles": { "realm-management": ["view-users"] }
+    },
+    {
+      "username": "service-account-easycode-events",
+      "enabled": true,
+      "serviceAccountClientId": "easycode-events",
+      "clientRoles": { "realm-management": ["view-events", "view-users"] }
+    },
+    {
+      "username": "admin.dev",
+      "firstName": "Alice",
+      "lastName": "Administradora",
+      "email": "admin.dev@easycode.invalid",
+      "emailVerified": true,
+      "enabled": true,
+      "realmRoles": ["default-roles-easycode", "easycode-administrator"],
+      "credentials": [{ "type": "password", "value": "dev-only-password", "temporary": false }]
+    },
+    {
+      "username": "lead.dev",
+      "firstName": "Ana",
+      "lastName": "Responsável",
+      "email": "lead.dev@easycode.invalid",
+      "emailVerified": true,
+      "enabled": true,
+      "realmRoles": ["default-roles-easycode"],
+      "credentials": [{ "type": "password", "value": "dev-only-password", "temporary": false }]
+    },
+    {
+      "username": "approver.dev",
+      "firstName": "Bruno",
+      "lastName": "Aprovador",
+      "email": "approver.dev@easycode.invalid",
+      "emailVerified": true,
+      "enabled": true,
+      "realmRoles": ["default-roles-easycode"],
+      "credentials": [{ "type": "password", "value": "dev-only-password", "temporary": false }]
+    },
+    {
+      "username": "member.dev",
+      "firstName": "Carla",
+      "lastName": "Membro",
+      "email": "member.dev@easycode.invalid",
+      "emailVerified": true,
+      "enabled": true,
+      "realmRoles": ["default-roles-easycode"],
+      "credentials": [{ "type": "password", "value": "dev-only-password", "temporary": false }]
+    },
+    {
+      "username": "disabled.dev",
+      "firstName": "Davi",
+      "lastName": "Desativado",
+      "email": "disabled.dev@easycode.invalid",
+      "emailVerified": true,
+      "enabled": false,
+      "realmRoles": ["default-roles-easycode"],
+      "credentials": [{ "type": "password", "value": "dev-only-password", "temporary": false }]
+    }
+  ]
+}

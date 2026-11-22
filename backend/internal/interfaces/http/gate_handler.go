@@ -39,6 +39,10 @@ func roundOf(r appgate.RoundView) map[string]any {
 		checks = append(checks, check)
 	}
 	out["checks"] = checks
+	out["rework_wave"] = nil
+	if r.ReworkWave != "" {
+		out["rework_wave"] = r.ReworkWave
+	}
 	if r.State == appgate.StateAwaitingHuman {
 		out["available_actions"] = []string{"approve", "reject"}
 	}

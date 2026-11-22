@@ -243,11 +243,16 @@ func (r Projects) List(ctx context.Context, p identity.Principal, filter appproj
 		page.CountByState[state] = 0
 	}
 	q := conn(ctx, r.pool)
-	const mine = `FROM easycode.projects pr
+	mine := fmt.Sprintf(`FROM easycode.projects pr
  WHERE pr.deletion_requested_at IS NULL
-   AND EXISTS (SELECT 1 FROM easycode.project_members m WHERE m.project_id = pr.id AND m.user_id = ` + "%s" + `)`
+   AND EXISTS (SELECT 1 FROM easycode.project_members m WHERE m.project_id = pr.id AND m.user_id = %s)`, principalUserIDSQL)
+	if filter.Organization {
+		// scope=organization of the administrator (US-02 CA-6): every project of the organization.
+		mine = `FROM easycode.projects pr JOIN easycode.organizations oo ON oo.id = pr.organization_id
+ WHERE pr.deletion_requested_at IS NULL AND oo.public_id = $1::uuid AND $2::text IS NOT NULL`
+	}
 	rows, err := q.Query(WithOperation(ctx, "projects.count_by_state"),
-		"SELECT pr.state, count(*) "+fmt.Sprintf(mine, principalUserIDSQL)+" GROUP BY pr.state", p.OrganizationID, p.Subject)
+		"SELECT pr.state, count(*) "+mine+" GROUP BY pr.state", p.OrganizationID, p.Subject)
 	if err != nil {
 		return page, fmt.Errorf("count projects: %w", classify(err))
 	}
@@ -267,7 +272,7 @@ func (r Projects) List(ctx context.Context, p identity.Principal, filter appproj
 	}
 	rows, err = q.Query(WithOperation(ctx, "projects.list"), `
 SELECT id, updated_at FROM (
-  SELECT pr.public_id::text AS id, `+updatedAtSQL+` AS updated_at, pr.state `+fmt.Sprintf(mine, principalUserIDSQL)+`
+  SELECT pr.public_id::text AS id, `+updatedAtSQL+` AS updated_at, pr.state `+mine+`
 ) x
  WHERE (coalesce(cardinality($3::text[]), 0) = 0 OR x.state = ANY($3::text[]))
    AND ($4::timestamptz IS NULL OR (x.updated_at, x.id) < ($4::timestamptz, $5::text))
@@ -293,7 +298,13 @@ SELECT id, updated_at FROM (
 		keys = keys[:filter.Limit]
 	}
 	for _, k := range keys {
-		view, err := r.Get(ctx, p, k.id)
+		get := r.Get
+		if filter.Organization {
+			get = func(ctx context.Context, _ identity.Principal, projectID string) (appproject.View, error) {
+				return r.Overview(ctx, projectID)
+			}
+		}
+		view, err := get(ctx, p, k.id)
 		if err != nil {
 			return page, err
 		}
@@ -323,4 +334,25 @@ func decodeCursor(cursor string) (*time.Time, string, error) {
 		return nil, "", err
 	}
 	return &parsed, id, nil
+}
+
+// Overview implements appproject.Repository: metadata only (id, name, state, lead, dates), what
+// the administrator sees of a project without a role in it (US-02 CA-6, scope=organization).
+func (r Projects) Overview(ctx context.Context, projectID string) (appproject.View, error) {
+	view := appproject.View{ID: projectID, Workflow: r.workflowID, MyRoles: []identity.Role{}, MetadataOnly: true}
+	err := conn(ctx, r.pool).QueryRow(WithOperation(ctx, "projects.overview"), `
+SELECT pr.name, pr.state, pr.created_at, cr.sub, cr.display_name, `+updatedAtSQL+`, ld.sub, ld.display_name
+  FROM easycode.projects pr
+  JOIN easycode.users cr ON cr.id = pr.created_by
+  JOIN easycode.project_members lm ON lm.project_id = pr.id AND lm.role = 'lead'
+  JOIN easycode.users ld ON ld.id = lm.user_id
+ WHERE pr.public_id = $1::uuid AND pr.deletion_requested_at IS NULL`, projectID).Scan(&view.Name, &view.State, &view.CreatedAt,
+		&view.CreatedBy.Subject, &view.CreatedBy.Name, &view.UpdatedAt, &view.Lead.Subject, &view.Lead.Name)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return view, failure.New(failure.KindNotFound, failure.CodeNotFound, nil)
+	}
+	if err != nil {
+		return view, fmt.Errorf("project overview: %w", classify(err))
+	}
+	return view, nil
 }

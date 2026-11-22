@@ -47,7 +47,7 @@ func TestStreamSendsGapThenReplayInOrder(t *testing.T) {
 		history.events = append(history.events, event.Envelope{Sequence: seq, Type: "br.easycode.wave.started.v1", Data: []byte(`{}`)})
 	}
 	shutdown := make(chan struct{})
-	h := productHarness(t, "dev", func(d *httpapi.Dependencies) {
+	h := productHarness(t, func(d *httpapi.Dependencies) {
 		d.Events, d.History, d.Access, d.Shutdown = appevent.NewBroker(), history, allowAll{}, shutdown
 	})
 	rc := h.do(fasthttp.MethodGet, "/api/v1/projects/0193a5c0-44aa-7e01-b2c9-7f3d1e6a9b30/events?since=1",

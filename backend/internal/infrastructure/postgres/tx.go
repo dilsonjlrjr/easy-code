@@ -40,9 +40,15 @@ func (r TxRunner) InTx(ctx context.Context, fn func(ctx context.Context) error) 
 	if _, ok := ctx.Value(txKey{}).(pgx.Tx); ok {
 		return fn(ctx)
 	}
-	return pgx.BeginTxFunc(ctx, r.pool, pgx.TxOptions{}, func(tx pgx.Tx) error {
+	err := pgx.BeginTxFunc(ctx, r.pool, pgx.TxOptions{}, func(tx pgx.Tx) error {
 		return fn(context.WithValue(ctx, txKey{}, tx))
 	})
+	var typed *failure.Error
+	if err == nil || errors.As(err, &typed) {
+		return err
+	}
+	// Deferred constraint triggers fail at commit: classify them like any statement.
+	return classify(err)
 }
 
 // conn returns the transaction in ctx, or the pool outside a transaction.
@@ -59,11 +65,35 @@ const (
 	CodeDuplicate          = "duplicate"
 )
 
+// ruleCodes maps database rules (constraint triggers) to the problem codes of the contract.
+var ruleCodes = map[string]string{
+	"project_members_require_approver": "last-approver",        // US-02 CA-4, RN-2
+	"project_require_lead":             "lead-required",        // US-02 RN-3
+	"gate_confirmations_recent_role":   "separation-of-duties", // US-02 CA-8, RN-4
+	"gate_confirmations_separation":    "separation-of-duties", // US-08 CA-5
+}
+
+// separationReasons tell the separation-of-duties cases apart (problem member reason).
+var separationReasons = map[string]string{
+	"gate_confirmations_recent_role": "approver_grace_period",
+	"gate_confirmations_separation":  "risk_acceptance_same_cycle",
+}
+
 // classify turns constraint violations into typed failures; other errors stay internal.
 func classify(err error) error {
 	var pgErr *pgconn.PgError
 	if !errors.As(err, &pgErr) {
 		return err
+	}
+	if code, ok := ruleCodes[pgErr.ConstraintName]; ok {
+		typed := failure.New(failure.KindConflict, code, err)
+		if reason, ok := separationReasons[pgErr.ConstraintName]; ok {
+			typed = typed.With("reason", reason)
+		}
+		return typed
+	}
+	if pgErr.ConstraintName == "gate_confirmations_require_approver" && pgErr.Code == "42501" {
+		return failure.New(failure.KindForbidden, failure.CodeForbidden, err) // US-02 CA-2
 	}
 	switch pgErr.Code {
 	case "23505":

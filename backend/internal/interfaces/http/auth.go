@@ -11,15 +11,20 @@ import (
 	"easycode/internal/domain/identity"
 )
 
-// SessionCookie is the web session cookie (openapi securitySchemes.webSession).
-const SessionCookie = "ec_session"
+// Cookies of the web session (openapi securitySchemes.webSession and startWebLogin).
+const (
+	SessionCookie   = "ec_session"
+	LoginFlowCookie = "ec_login"
+)
 
 // SessionUseCases are the session use cases the handlers call.
 type SessionUseCases interface {
-	DevEnabled() bool
-	IssueDev(ctx context.Context) (identity.Session, string, error)
-	Authenticate(ctx context.Context, token string) (identity.Principal, identity.Session, string, error)
-	Current(ctx context.Context, principal identity.Principal, session identity.Session) (session.CurrentUser, error)
+	BeginLogin(callback string, reauthenticate bool) (session.Login, error)
+	CompleteLogin(ctx context.Context, callback session.Callback) (session.Completed, error)
+	Authenticate(ctx context.Context, token string) (identity.Principal, identity.Session, error)
+	Active(ctx context.Context, current identity.Session) (bool, error)
+	End(ctx context.Context, current identity.Session) error
+	Current(ctx context.Context, principal identity.Principal, current identity.Session) (session.CurrentUser, error)
 }
 
 type authenticated struct {
@@ -43,7 +48,7 @@ type authenticator struct {
 func (a authenticator) require(next AuthedHandler) HandlerFunc {
 	return func(rc *fasthttp.RequestCtx) error {
 		token := string(rc.Request.Header.Cookie(SessionCookie))
-		principal, current, renewed, err := a.sessions.Authenticate(RequestContext(rc), token)
+		principal, current, err := a.sessions.Authenticate(RequestContext(rc), token)
 		if err != nil {
 			return err
 		}
@@ -51,8 +56,9 @@ func (a authenticator) require(next AuthedHandler) HandlerFunc {
 			return failure.New(failure.KindForbidden, failure.CodeForbidden, nil)
 		}
 		rc.SetUserValue(authValue, authenticated{principal: principal, session: current})
+		setRequestContext(identity.WithSession(RequestContext(rc), current), rc)
 		SetUserID(rc, principal.Subject)
-		setSessionCookie(rc, renewed, current.ExpiresAt())
+		setSessionCookie(rc, token, current.ExpiresAt())
 		return next(rc, principal)
 	}
 }
@@ -68,14 +74,24 @@ func isWrite(rc *fasthttp.RequestCtx) bool {
 }
 
 func setSessionCookie(rc *fasthttp.RequestCtx, value string, expires time.Time) {
+	setCookie(rc, SessionCookie, "/", fasthttp.CookieSameSiteStrictMode, value, expires)
+}
+
+// setLoginFlowCookie writes ec_login: SameSite=Lax, because the return from the SSO is a
+// navigation from another site (ADR-12); only the session routes receive it.
+func setLoginFlowCookie(rc *fasthttp.RequestCtx, value string, expires time.Time) {
+	setCookie(rc, LoginFlowCookie, APIPrefix+"/session", fasthttp.CookieSameSiteLaxMode, value, expires)
+}
+
+func setCookie(rc *fasthttp.RequestCtx, name, path string, sameSite fasthttp.CookieSameSite, value string, expires time.Time) {
 	cookie := fasthttp.AcquireCookie()
 	defer fasthttp.ReleaseCookie(cookie)
-	cookie.SetKey(SessionCookie)
+	cookie.SetKey(name)
 	cookie.SetValue(value)
-	cookie.SetPath("/")
+	cookie.SetPath(path)
 	cookie.SetHTTPOnly(true)
 	cookie.SetSecure(true)
-	cookie.SetSameSite(fasthttp.CookieSameSiteStrictMode)
+	cookie.SetSameSite(sameSite)
 	if value == "" {
 		cookie.SetExpire(fasthttp.CookieExpireDelete)
 	} else {

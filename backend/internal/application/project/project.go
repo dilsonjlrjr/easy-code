@@ -69,13 +69,18 @@ type View struct {
 	AvailableActions []string
 	Summary          Summary
 	LastSequence     int64
+	// MetadataOnly marks the administrator view of a project without a role: id, name, state,
+	// lead and dates, no content nor summary (US-02 CA-6).
+	MetadataOnly bool
 }
 
 // Filter narrows listProjects.
 type Filter struct {
-	States []string
-	Limit  int
-	Cursor string
+	// Organization is scope=organization (administrator only): every project, metadata only.
+	Organization bool
+	States       []string
+	Limit        int
+	Cursor       string
 }
 
 // Page is one page of projects.
@@ -101,6 +106,8 @@ type Repository interface {
 	Get(ctx context.Context, principal identity.Principal, projectID string) (View, error)
 	List(ctx context.Context, principal identity.Principal, filter Filter) (Page, error)
 	Access(ctx context.Context, principal identity.Principal, projectID string) (Access, error)
+	// Overview returns the metadata of a project (administrator without a role, US-02 CA-6).
+	Overview(ctx context.Context, projectID string) (View, error)
 	// BudgetRules returns the organization currency and stop limit ceiling (nil = none).
 	BudgetRules(ctx context.Context, organizationID string) (string, *string, error)
 }
@@ -190,8 +197,17 @@ func (s *Service) Get(ctx context.Context, principal identity.Principal, project
 	return s.repo.Get(ctx, principal, projectID)
 }
 
-// List is listProjects (scope "my"; the organization scope of the administrator is MARCO-2).
+// GetAsAdministrator is getProject for the administrator without a role in the project: only
+// the metadata, after the access is authorized and recorded by the member service (US-02 CA-6).
+func (s *Service) GetAsAdministrator(ctx context.Context, projectID string) (View, error) {
+	return s.repo.Overview(ctx, projectID)
+}
+
+// List is listProjects; scope=organization is only for the administrator (US-02 CA-6, US-51).
 func (s *Service) List(ctx context.Context, principal identity.Principal, filter Filter) (Page, error) {
+	if filter.Organization && !principal.Administrator {
+		return Page{}, failure.New(failure.KindForbidden, failure.CodeForbidden, nil)
+	}
 	for _, state := range filter.States {
 		if !slices.Contains(project.States, state) {
 			return Page{}, failure.Invalid(failure.FieldError{Field: "state", Message: "enum"})

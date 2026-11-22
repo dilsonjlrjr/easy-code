@@ -4,9 +4,12 @@
 # Development shortcuts, not for production:
 # - every service connects as the database superuser; production uses the per-process roles
 #   that the first migration creates (ADR-18);
-# - no reverse proxy, TLS or Keycloak yet: the api runs the marco1 profile, with the fixed development
-#   identity (user "dev", administrator, lead and approver of the projects it creates) and its session
-#   cookie issued by POST /api/v1/dev/session (ADR-12; outside openapi.yaml, refused outside marco1);
+# - no reverse proxy or TLS yet: Keycloak (start-dev, in-memory H2, realm imported from
+#   infra/keycloak/easycode-realm.json) is published on http://localhost:8180/auth; the api reaches it
+#   as http://keycloak:8080/auth (backchannel). Every secret and password here is a DEV ONLY value,
+#   public in the repository: dev users admin.dev (administrator), lead.dev, approver.dev,
+#   member.dev and disabled.dev (account disabled), all with password "dev-only-password". Project
+#   roles are given in the platform (US-02), not in Keycloak;
 # - easycode-gateway has no network (the egress proxy of ADR-16 is not in the stack yet), so it serves
 #   the deterministic fake under the name "anthropic" (EASYCODE_GATEWAY_PROVIDERS=anthropic=fake): any key
 #   but "invalid" passes the test. Set EASYCODE_GATEWAY_PROVIDERS=anthropic and give the gateway a route
@@ -16,12 +19,12 @@
 
 name: easycode
 
-# Fixed development identity of the marco1 profile (ADR-12). The secret only signs dev cookies.
-x-marco1: &marco1
-  EASYCODE_PROFILE: marco1
-  EASYCODE_DEV_USER_SUB: ${EASYCODE_DEV_USER_SUB:-dev}
-  EASYCODE_DEV_USER_NAME: ${EASYCODE_DEV_USER_NAME:-Dev}
-  EASYCODE_DEV_SESSION_SECRET: ${EASYCODE_DEV_SESSION_SECRET:-marco1-development-only-session-secret}
+# Keycloak realm of the development stack (ADR-12). DEV ONLY values; production mounts the
+# secrets as files (EASYCODE_*_FILE, ARQ section 8.1).
+x-sso: &sso
+  EASYCODE_OIDC_ISSUER: ${EASYCODE_OIDC_ISSUER:-http://localhost:8180/auth/realms/easycode}
+  EASYCODE_OIDC_INTERNAL_URL: http://keycloak:8080/auth/realms/easycode
+  EASYCODE_ORGANIZATION_NAME: ${EASYCODE_ORGANIZATION_NAME:-Easy Code (desenvolvimento)}
 
 x-backend: &backend
   build:
@@ -51,6 +54,30 @@ services:
       timeout: 3s
       retries: 30
 
+  # SSO of the development stack (ADR-12). Pinned by tag and digest (ADR-16).
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.4.7@sha256:9409c59bdfb65dbffa20b11e6f18b8abb9281d480c7ca402f51ed3d5977e6007
+    command: ["start-dev", "--import-realm"]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: dev-only-admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: dev-only-admin-password
+      KC_HTTP_RELATIVE_PATH: /auth
+      KC_HOSTNAME: ${EASYCODE_SSO_PUBLIC_URL:-http://localhost:8180/auth}
+      KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "true"
+      KC_HEALTH_ENABLED: "true"
+    volumes:
+      - ./infra/keycloak:/opt/keycloak/data/import:ro
+    ports:
+      - "127.0.0.1:8180:8080"
+    healthcheck:
+      # The image has no curl: plain HTTP over bash on the management port.
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/9000 && printf 'GET /auth/health/ready HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n' >&3 && grep -q UP <&3"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      # start-dev builds the server on first boot (minutes on a slow host).
+      start_period: 15m
+
   migrate:
     build:
       context: ./backend
@@ -58,7 +85,7 @@ services:
         BINARY: easycode-api
     command: ["migrate"]
     environment:
-      <<: *marco1
+      <<: *sso
       EASYCODE_MIGRATION_DATABASE_URL: postgres://easycode:easycode@postgres:5432/easycode?sslmode=disable
       EASYCODE_DATABASE_URL: postgres://easycode:easycode@postgres:5432/easycode?sslmode=disable
       EASYCODE_LOG_LEVEL: info
@@ -85,10 +112,13 @@ services:
       args:
         BINARY: easycode-api
     environment:
-      <<: [*backend-env, *marco1]
+      <<: [*backend-env, *sso]
       EASYCODE_HTTP_ADDR: ":8080"
       EASYCODE_PUBLIC_ORIGIN: ${EASYCODE_PUBLIC_ORIGIN:-http://localhost:8080}
       EASYCODE_SEALING_PUBLIC_KEY_FILE: /run/easycode-sealing/public.pem
+      EASYCODE_OIDC_CLIENT_ID: easycode-api
+      EASYCODE_OIDC_CLIENT_SECRET: dev-only-easycode-api-secret
+      EASYCODE_SESSION_SECRET: dev-only-session-key-not-for-production-0001
     volumes:
       - sealing-public:/run/easycode-sealing:ro
     depends_on:
@@ -96,6 +126,8 @@ services:
         condition: service_completed_successfully
       gateway-keys:
         condition: service_completed_successfully
+      keycloak:
+        condition: service_healthy
     ports:
       - "127.0.0.1:8081:8080"
 
@@ -105,6 +137,10 @@ services:
       context: ./backend
       args:
         BINARY: easycode-worker
+    environment:
+      <<: [*backend-env, *sso]
+      EASYCODE_SSO_EVENTS_CLIENT_ID: easycode-events
+      EASYCODE_SSO_EVENTS_CLIENT_SECRET: dev-only-easycode-events-secret
     volumes:
       - gateway-socket:/run/easycode-gateway
 
@@ -132,8 +168,6 @@ services:
       context: ./frontend
     environment:
       API_BASE_URL: /api/v1
-      # marco1: the login page offers the fixed dev identity (POST /api/v1/dev/session).
-      DEV_SIGN_IN: "true"
     depends_on:
       - api
     ports:

@@ -17,6 +17,7 @@ import (
 	"easycode/internal/domain/health"
 	"easycode/internal/infrastructure/i18n"
 	"easycode/internal/infrastructure/logging"
+	"easycode/internal/infrastructure/oidc/oidctest"
 	httpapi "easycode/internal/interfaces/http"
 )
 
@@ -39,6 +40,8 @@ type harness struct {
 	handler fasthttp.RequestHandler
 	logs    *bytes.Buffer
 	logText *strings.Builder
+	idp     *oidctest.Server
+	users   *fakeUsers
 }
 
 func newHarness(t *testing.T, useCases httpapi.HealthUseCases) harness {

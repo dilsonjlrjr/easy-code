@@ -6,6 +6,8 @@ import (
 
 	"github.com/valyala/fasthttp"
 
+	appartifact "easycode/internal/application/artifact"
+	appwave "easycode/internal/application/wave"
 	appworkflow "easycode/internal/application/workflow"
 	"easycode/internal/domain/failure"
 	"easycode/internal/domain/identity"
@@ -16,6 +18,7 @@ type WorkflowUseCases interface {
 	Start(ctx context.Context, principal identity.Principal, projectID, key, bodyHash string) (appworkflow.CommandView, error)
 	Command(ctx context.Context, principal identity.Principal, projectID, commandID string) (appworkflow.CommandView, error)
 	Workflow(ctx context.Context, principal identity.Principal, projectID string) (appworkflow.View, error)
+	WorkflowAsAdministrator(ctx context.Context, projectID string) (appworkflow.View, error)
 }
 
 type commandTargetJSON struct {
@@ -128,11 +131,21 @@ func (a *api) getWorkflow(rc *fasthttp.RequestCtx, principal identity.Principal)
 	if err != nil {
 		return err
 	}
-	view, err := a.deps.Workflow.Workflow(RequestContext(rc), principal, projectID)
+	ctx := RequestContext(rc)
+	view, err := a.deps.Workflow.Workflow(ctx, principal, projectID)
+	if err != nil && a.administratorWithoutRole(ctx, principal, projectID, err) {
+		view, err = a.deps.Workflow.WorkflowAsAdministrator(ctx, projectID)
+	}
 	if err != nil {
 		return err
 	}
-	out := workflowJSON{ID: view.ID, Version: view.Version, Mode: view.Mode, Stages: []stageSummaryJSON{}}
+	out := workflowJSON{ID: view.ID, Version: view.Version, Mode: view.Mode, Stages: a.stageSummaries(view)}
+	a.responder.JSON(rc, fasthttp.StatusOK, out)
+	return nil
+}
+
+func (a *api) stageSummaries(view appworkflow.View) []stageSummaryJSON {
+	stages := []stageSummaryJSON{}
 	for _, stage := range view.Stages {
 		item := stageSummaryJSON{
 			ID: stage.ID, Name: stage.Name, ShortName: stage.ShortName, Type: "stage", Agent: stage.Agent, DependsOn: stage.DependsOn,
@@ -143,8 +156,101 @@ func (a *api) getWorkflow(rc *fasthttp.RequestCtx, principal identity.Principal)
 		if stage.State == "approved" {
 			item.ApprovedInGate = item.Gate
 		}
-		out.Stages = append(out.Stages, item)
+		stages = append(stages, item)
+	}
+	return stages
+}
+
+type stageApprovalJSON struct {
+	Mode         string `json:"mode"`
+	RequiredRole string `json:"required_role"`
+}
+
+type stageJSON struct {
+	stageSummaryJSON
+	Waves         []waveSummaryJSON     `json:"waves"`
+	Artifacts     []artifactSummaryJSON `json:"artifacts"`
+	Findings      []any                 `json:"findings"`
+	VersionInputs []any                 `json:"version_inputs"`
+	Tokens        tokensJSON            `json:"tokens"`
+	DetailedCost  detailedCostJSON      `json:"detailed_cost"`
+	Time          map[string]int64      `json:"time"`
+	Approval      stageApprovalJSON     `json:"approval"`
+}
+
+// maxStageItems bounds the waves and artifacts of the stage view (a stage has a handful of each).
+const maxStageItems = 100
+
+// getStage is getStage: agent, waves (rework included), artifacts, time, tokens, cost and the
+// approval the stage needs (US-49 CA-2). Findings join with the governance engine (US-31, Phase 2).
+func (a *api) getStage(rc *fasthttp.RequestCtx, principal identity.Principal) error {
+	projectID, err := pathUUID(rc, "projectId")
+	if err != nil {
+		return err
+	}
+	stageID := PathParam(rc, "stage")
+	ctx := RequestContext(rc)
+	view, err := a.deps.Workflow.Workflow(ctx, principal, projectID)
+	if err != nil {
+		return err
+	}
+	summary, found := stageSummaryJSON{}, false
+	for _, item := range a.stageSummaries(view) {
+		if item.ID == stageID {
+			summary, found = item, true
+		}
+	}
+	if !found {
+		return failure.New(failure.KindNotFound, failure.CodeNotFound, nil)
+	}
+	out := stageJSON{stageSummaryJSON: summary, Waves: []waveSummaryJSON{}, Artifacts: []artifactSummaryJSON{}, Findings: []any{},
+		VersionInputs: []any{}, Approval: stageApprovalJSON{Mode: "human", RequiredRole: "approver"}}
+	waves, err := a.deps.Waves.List(ctx, principal, projectID, stageID, "", nil, maxStageItems)
+	if err != nil {
+		return err
+	}
+	cost := appwave.Cost{Useful: "0", Lost: "0", Currency: summary.Cost.Currency}
+	var executionMs, cycleMs int64
+	for _, w := range waves {
+		out.Waves = append(out.Waves, waveSummaryOf(w))
+		detail, err := a.deps.Waves.Get(ctx, principal, projectID, w.Code)
+		if err != nil {
+			return err
+		}
+		out.Tokens.Input += int64(detail.Tokens.Input)
+		out.Tokens.Output += int64(detail.Tokens.Output)
+		out.Tokens.ReadCache += int64(detail.Tokens.CacheRead)
+		out.Tokens.WriteCache += int64(detail.Tokens.CacheWrite)
+		cost.Useful, cost.Lost = addDecimal(cost.Useful, detail.Cost.Useful), addDecimal(cost.Lost, detail.Cost.Lost)
+		cost.EstimatedLost = cost.EstimatedLost || detail.Cost.EstimatedLost
+		if detail.Cost.Currency != "" {
+			cost.Currency = detail.Cost.Currency
+		}
+		executionMs += detail.ExecutionMs
+		cycleMs += detail.CycleMs
+	}
+	out.DetailedCost = costOf(cost)
+	out.Time = map[string]int64{"execution_ms": executionMs, "cycle_ms": cycleMs}
+	if a.deps.Artifacts != nil {
+		page, err := a.deps.Artifacts.List(ctx, principal, projectID, appartifact.Filter{Stage: stageID, Limit: maxStageItems})
+		if err != nil {
+			return err
+		}
+		for _, item := range page.Items {
+			out.Artifacts = append(out.Artifacts, artifactSummaryOf(item))
+		}
 	}
 	a.responder.JSON(rc, fasthttp.StatusOK, out)
 	return nil
+}
+
+// administratorWithoutRole reports whether a not-found read comes from the organization
+// administrator without a role in the project; the access is then authorized and recorded once
+// per session by the member service (US-02 CA-6).
+func (a *api) administratorWithoutRole(ctx context.Context, principal identity.Principal, projectID string, err error) bool {
+	if !principal.Administrator || a.deps.Members == nil || failure.From(err).Kind != failure.KindNotFound {
+		return false
+	}
+	_, openErr := a.deps.Members.Open(ctx, principal, projectID)
+	return openErr == nil
 }

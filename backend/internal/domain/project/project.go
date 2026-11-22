@@ -220,3 +220,24 @@ func compare(a, b string) int {
 	}
 	return left.Cmp(right)
 }
+
+// ConstraintChanges lists the ids of the items added, changed or removed between two versions of
+// the constraints, sorted (audit of constraints.modify, US-54 CA-3).
+func ConstraintChanges(previous, next []Constraint) []string {
+	before := map[string]Constraint{}
+	for _, c := range previous {
+		before[c.ID] = c
+	}
+	changed := []string{}
+	for _, c := range next {
+		if old, ok := before[c.ID]; !ok || old != c {
+			changed = append(changed, c.ID)
+		}
+		delete(before, c.ID)
+	}
+	for id := range before {
+		changed = append(changed, id)
+	}
+	slices.Sort(changed)
+	return changed
+}

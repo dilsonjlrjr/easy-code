@@ -61,5 +61,17 @@
   "problem.pending-human-check.title": "Checagem humana pendente",
   "problem.pending-human-check.detail": "Confirme todas as checagens humanas do gate.",
   "problem.artifact-invalid.title": "Artefato fora do esquema",
-  "problem.artifact-invalid.detail": "O artefato não passou na validação do esquema do seu tipo."
+  "problem.artifact-invalid.detail": "O artefato não passou na validação do esquema do seu tipo.",
+  "problem.revoked-session.title": "Sessão revogada",
+  "problem.revoked-session.detail": "A sessão foi encerrada no SSO. Entre de novo.",
+  "problem.account-without-access.title": "Conta sem acesso",
+  "problem.account-without-access.detail": "Sua conta não tem acesso à plataforma. Fale com o administrador da organização.",
+  "problem.last-approver.title": "O projeto precisa de ao menos um aprovador",
+  "problem.last-approver.detail": "Dê o papel de aprovador a outra pessoa antes de remover este.",
+  "problem.lead-required.title": "O projeto precisa de um responsável",
+  "problem.lead-required.detail": "Só o administrador da organização transfere o papel de responsável.",
+  "problem.separation-of-duties.title": "Papel atribuído há menos de 24 horas",
+  "problem.separation-of-duties.detail": "Quem atribuiu a si mesmo o papel de aprovador espera 24 horas para aprovar gate do projeto; o administrador não atribui papel a si mesmo.",
+  "pending.gate.title": "Gate {gate} (rodada {round}) aguardando decisão",
+  "pending.question.title": "Perguntas do agente {agent} na onda {wave}"
 }

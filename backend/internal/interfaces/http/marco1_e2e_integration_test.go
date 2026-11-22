@@ -24,10 +24,12 @@ import (
 	appevent "easycode/internal/application/event"
 	appgate "easycode/internal/application/gate"
 	appgateway "easycode/internal/application/gateway"
+	apppending "easycode/internal/application/pending"
 	"easycode/internal/application/runtime"
 	appwave "easycode/internal/application/wave"
 	appworkflow "easycode/internal/application/workflow"
 	"easycode/internal/domain/provider"
+	"easycode/internal/infrastructure/oidc/oidctest"
 	"easycode/internal/infrastructure/postgres"
 	"easycode/internal/infrastructure/postgres/postgrestest"
 	"easycode/internal/infrastructure/sealing"
@@ -214,6 +216,8 @@ func liveRuntimeDeps(broker *appevent.Broker, shutdown chan struct{}) func(*http
 		d.Waves, d.Access = waves, waves
 		d.Gates = appgate.NewDecisions(tx, projects, postgres.NewGates(pool), postgres.NewOutbox(pool), trail)
 		d.Events, d.History, d.Shutdown = broker, postgres.NewOutbox(pool), shutdown
+		d.Pending = apppending.NewService(postgres.NewPending(pool, wf.Definition))
+		d.Notices = postgres.NewOutbox(pool)
 	}
 }
 
@@ -284,17 +288,29 @@ SELECT organization_id, 'anthropic', $1, $2, '0000', id FROM easycode.users WHER
 		t.Fatal(err)
 	}
 	body, _ := json.Marshal(map[string]any{"name": "Reserva de salas", "business_need": need, "provider_submission_acknowledgment": true,
-		"budget": map[string]any{"stop_limit": map[string]string{"value": "200.00", "currency": "BRL"}}})
+		"budget":      map[string]any{"stop_limit": map[string]string{"value": "200.00", "currency": "BRL"}},
+		"constraints": map[string]any{"items": []map[string]string{{"category": "language", "description": "Backend em Go"}}}})
 	projectID := live.json(t, "POST", "/api/v1/projects", string(body), key(), 201)["id"].(string)
 	base := "/api/v1/projects/" + projectID
 	live.json(t, "PATCH", base+"/configuration", `{"model_pair":{"reasoning":{"provider":"anthropic","model":"reasoning-model"},"execution":{"provider":"anthropic","model":"execution-model"}}}`,
 		map[string]string{"If-Match": `"1"`}, 200)
 	live.json(t, "POST", base+"/start", "", key(), 202)
 	work.drain(t)
+	// US-54 CA-3: a version recorded after the wave was created is not used by it; the change is
+	// audited with the difference.
+	live.json(t, "PATCH", base+"/configuration", `{"constraints":{"items":[{"id":"RESTR-01","category":"language","description":"Backend em Rust"}]}}`,
+		map[string]string{"If-Match": `"2"`}, 200)
+	if n := count(t, db, `SELECT count(*) FROM easycode.audit_records WHERE action = 'constraints.modify' AND decision = 'version 2'
+   AND reference_list = '["RESTR-01"]'::jsonb AND actor_id = 'dev'`); n != 1 {
+		t.Fatal("US-54 CA-3: who, when and the difference")
+	}
 
 	// First run: the agent asks (US-17 CA-2, US-10).
 	if ran, err := work.executor("worker-1").RunOnce(ctx); err != nil || !ran {
 		t.Fatalf("first run: %v %v", ran, err)
+	}
+	if system := provider.requests[0].System; !strings.Contains(system, "RESTR-01 (language): Backend em Go") || strings.Contains(system, "Rust") {
+		t.Fatalf("US-54 CA-2, CA-3: the wave uses the constraints in force when it was created")
 	}
 	wave := live.json(t, "GET", base+"/waves/REQ-01", "", nil, 200)
 	if wave["state"] != "awaiting_user" || wave["question_open"] != "PERG-1" {
@@ -304,6 +320,17 @@ SELECT organization_id, 'anthropic', $1, $2, '0000', id FROM easycode.users WHER
 	items := questions[0].(map[string]any)["items"].([]any)
 	if len(items) != 2 || items[0].(map[string]any)["suggestion"] != "Não no MVP" {
 		t.Fatalf("numbered items with suggestion: %v", questions)
+	}
+	// US-10 CA-2, US-48 CA-1: the question is in Pendências with project, stage, agent and age.
+	inbox := live.json(t, "GET", "/api/v1/pending-items", "", map[string]string{"Accept-Language": "en"}, 200)
+	if inbox["total"] != float64(1) {
+		t.Fatalf("pending: %v", inbox)
+	}
+	question := inbox["items"].([]any)[0].(map[string]any)
+	if question["type"] != "question" || question["stage"] != "requirements" || question["agent"] != "requirements-agent" ||
+		question["target"].(map[string]any)["id"] != "REQ-01/PERG-1" || question["project"].(map[string]any)["id"] != projectID ||
+		question["opened_at"] == nil || question["summary"].(map[string]any)["questions"] != float64(2) || question["title"] == "pending.question.title" {
+		t.Fatalf("US-10 CA-2: %v", question)
 	}
 	live.json(t, "POST", base+"/waves/REQ-01/questions/PERG-1/answer", `{"answers":[{"number":1,"text":"Não"},{"number":2,"text":"30 minutos"}]}`, key(), 202)
 	work.drain(t)
@@ -387,17 +414,74 @@ SELECT organization_id, 'anthropic', $1, $2, '0000', id FROM easycode.users WHER
 	if workflow[0].(map[string]any)["state"] != "awaiting_gate" {
 		t.Fatalf("US-17 CA-3: %v", workflow[0])
 	}
+	// US-49 CA-1, CA-2: stages in process order; the stage shows agent, waves, artifacts, time,
+	// tokens, cost and the approval it needs.
+	if workflow[1].(map[string]any)["id"] != "architecture" || workflow[2].(map[string]any)["id"] != "implementation" {
+		t.Fatalf("US-49 CA-1: %v", workflow)
+	}
+	stage := live.json(t, "GET", base+"/stages/requirements", "", nil, 200)
+	if stage["agent"] != "requirements-agent" || len(stage["waves"].([]any)) != 1 || len(stage["artifacts"].([]any)) != 7 ||
+		stage["tokens"].(map[string]any)["input"].(float64) <= 0 || stage["time"].(map[string]any)["execution_ms"] == nil ||
+		stage["detailed_cost"].(map[string]any)["total"] == nil || stage["approval"].(map[string]any)["required_role"] != "approver" {
+		t.Fatalf("US-49 CA-2: %v", stage)
+	}
+	live.json(t, "GET", base+"/stages/unknown", "", nil, 404)
 	round := live.json(t, "GET", base+"/gates/gate.requirements/rounds/1", "", nil, 200)
 	checks := round["checks"].([]any)
 	if round["state"] != "awaiting_human" || len(checks) != 1 || checks[0].(map[string]any)["check"] != "artifact.schema_valid" || checks[0].(map[string]any)["status"] != "passed" {
 		t.Fatalf("gate round: %v", round)
 	}
+	// US-02 CA-5, CA-8: the administrator transfers the lead to Bruno, who gives himself the approver
+	// role and cannot approve within 24 h; CA-2: a member cannot approve.
+	bruno := live.as(t, oidctest.User{Subject: "bruno", Name: "Bruno Lima"})
+	carla := live.as(t, oidctest.User{Subject: "carla", Name: "Carla Dias"})
+	live.json(t, "PUT", base+"/members/bruno", `{"roles":["lead"]}`, nil, 200)
+	bruno.json(t, "PUT", base+"/members/bruno", `{"roles":["lead","approver"]}`, nil, 200)
+	bruno.json(t, "PUT", base+"/members/carla", `{"roles":["member"]}`, nil, 200)
+	for name, who := range map[string]liveAPI{"member": carla, "self-assigned approver": bruno} {
+		csrf := who.json(t, "GET", "/api/v1/me", "", nil, 200)["csrf_token"].(string)
+		rc := who.send("POST", base+"/gates/gate.requirements/rounds/1/approval", `{"confirmed_human_checks":[]}`,
+			mergeHeaders(key(), map[string]string{"X-CSRF-Token": csrf}))
+		want := map[string]int{"member": 403, "self-assigned approver": 409}[name]
+		if rc.Response.StatusCode() != want || (want == 409 && (decode(t, rc)["type"] != "urn:easycode:problem:separation-of-duties" || decode(t, rc)["reason"] != "approver_grace_period")) {
+			t.Fatalf("%s approving: %d %s", name, rc.Response.StatusCode(), rc.Response.Body())
+		}
+	}
+	if state := live.json(t, "GET", base+"/gates/gate.requirements/rounds/1", "", nil, 200)["state"]; state != "awaiting_human" {
+		t.Fatalf("US-02 CA-2, CA-8: the gate must not change, got %v", state)
+	}
+	// US-48 CA-1, CA-3: the gate is pending for who decides, not for a member only.
+	gateItem := live.json(t, "GET", "/api/v1/pending-items?type=gate", "", nil, 200)["items"].([]any)
+	if len(gateItem) != 1 || gateItem[0].(map[string]any)["target"].(map[string]any)["id"] != "gate.requirements/1" ||
+		gateItem[0].(map[string]any)["summary"].(map[string]any)["you_decide"] != true {
+		t.Fatalf("US-48 CA-1: %v", gateItem)
+	}
+	if n := carla.json(t, "GET", "/api/v1/pending-items", "", nil, 200)["total"]; n != float64(0) {
+		t.Fatalf("US-48 CA-3: a member does not see the gate, got %v", n)
+	}
+
+	// US-06 CA-5, ADR-19: an SSO authentication older than 10 min asks for a new one before approving;
+	// CA-2: rejecting needs the reason.
+	stale := live
+	stale.cookie = login(t, live.harness, devUser, time.Now().Add(-11*time.Minute))
+	staleCSRF := stale.json(t, "GET", "/api/v1/me", "", nil, 200)["csrf_token"].(string)
+	rc := stale.send("POST", base+"/gates/gate.requirements/rounds/1/approval", `{"confirmed_human_checks":[]}`,
+		mergeHeaders(key(), map[string]string{"X-CSRF-Token": staleCSRF}))
+	if rc.Response.StatusCode() != 401 || decode(t, rc)["type"] != "urn:easycode:problem:reauthentication-required" {
+		t.Fatalf("US-06 CA-5: %d %s", rc.Response.StatusCode(), rc.Response.Body())
+	}
+	stale.json(t, "POST", base+"/gates/gate.requirements/rounds/1/rejection", `{"reason":"  "}`,
+		mergeHeaders(key(), map[string]string{"X-CSRF-Token": staleCSRF}), 400)
+
 	me := live.json(t, "GET", "/api/v1/me", "", nil, 200)
 	live.json(t, "POST", base+"/gates/gate.requirements/rounds/1/approval", `{"confirmed_human_checks":[]}`, mergeHeaders(key(), nil), 403)
 	approved := live.json(t, "POST", base+"/gates/gate.requirements/rounds/1/approval", `{"confirmed_human_checks":[]}`,
 		mergeHeaders(key(), map[string]string{"X-CSRF-Token": me["csrf_token"].(string)}), 200)
 	if approved["state"] != "approved" {
 		t.Fatalf("approval: %v", approved)
+	}
+	if n := live.json(t, "GET", "/api/v1/pending-items", "", nil, 200)["total"]; n != float64(0) {
+		t.Fatalf("US-48 CA-2: the decided gate leaves the inbox, got %v", n)
 	}
 	if _, err := work.progress.Reconcile(ctx); err != nil {
 		t.Fatal(err)

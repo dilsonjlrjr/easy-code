@@ -14,6 +14,7 @@ const Redacted = "[REDACTED]"
 var sensitiveKeyParts = []string{
 	"password", "passwd", "secret", "token", "authorization", "cookie", "api_key", "apikey",
 	"private_key", "credential", "session", "prompt", "completion", "dsn", "database_url",
+	"nonce", "verifier", "csrf",
 }
 
 // sensitiveKeys mark content fields: prompts, model answers, artifact bodies and raw payloads.
@@ -34,6 +35,8 @@ var secretPatterns = []struct {
 	{regexp.MustCompile(`(?i)\b(password|passwd|pwd|secret|token|api[_-]?key)\s*([=:])\s*("[^"]*"|'[^']*'|[^\s,;&]+)`), "$1$2" + Redacted},
 	{regexp.MustCompile(`\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+`), Redacted},
 	{regexp.MustCompile(`\bsk-[A-Za-z0-9_-]{16,}`), Redacted},
+	// OIDC values in a URL or form (login flow of ADR-12): authorization code, state, nonce, PKCE.
+	{regexp.MustCompile(`(?i)([?&\s]|^)(code|state|session_state|nonce|code_verifier|code_challenge)=[^&\s]+`), "$1$2=" + Redacted},
 }
 
 // IsSensitiveKey reports whether a log attribute key names a secret or content field.

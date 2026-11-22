@@ -48,14 +48,10 @@ type keyFixture struct {
 func newKeyFixture(t *testing.T, timeout time.Duration, withWorker bool) keyFixture {
 	t.Helper()
 	db := postgrestest.New(t)
-	seedDev(t, db)
 	ctx := context.Background()
 	api := db.PoolAs("easycode_api")
 	worker := db.PoolAs("easycode_worker")
-	dev, err := postgres.NewUsers(api).DevPrincipal(ctx, "dev")
-	if err != nil {
-		t.Fatal(err)
-	}
+	dev := seedDev(t, db)
 	dir := t.TempDir()
 	if _, err := sealing.GenerateKeyPair(filepath.Join(dir, "private.pem"), filepath.Join(dir, "public.pem")); err != nil {
 		t.Fatal(err)

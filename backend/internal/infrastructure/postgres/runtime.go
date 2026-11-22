@@ -123,7 +123,8 @@ func (l Ledger) Inputs(ctx context.Context, c runtime.Claimed) (runtime.Inputs, 
 	var constraints []byte
 	err := q.QueryRow(WithOperation(ctx, "waves.inputs"), `
 SELECT pr.business_need, pr.artifact_language, ac.instruction_version, ac.instruction_hash,
-       (SELECT c.items FROM easycode.project_constraints c WHERE c.project_id = pr.id ORDER BY c.version DESC LIMIT 1),
+       (SELECT c.items FROM easycode.project_constraints c WHERE c.project_id = pr.id AND c.defined_at <= w.created_at
+         ORDER BY c.version DESC LIMIT 1),
        coalesce((SELECT g.reason FROM easycode.gate_rounds g WHERE g.project_id = pr.id AND g.stage = w.stage AND g.state = 'rejected'
                   ORDER BY g.number DESC LIMIT 1), '')
   FROM easycode.waves w JOIN easycode.projects pr ON pr.id = w.project_id

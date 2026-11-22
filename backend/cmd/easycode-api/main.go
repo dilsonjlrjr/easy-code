@@ -17,6 +17,7 @@ import (
 	appgate "easycode/internal/application/gate"
 	apphealth "easycode/internal/application/health"
 	"easycode/internal/application/idempotency"
+	apppending "easycode/internal/application/pending"
 	apppricing "easycode/internal/application/pricing"
 	appproject "easycode/internal/application/project"
 	"easycode/internal/application/providerkey"
@@ -26,6 +27,7 @@ import (
 	"easycode/internal/infrastructure/config"
 	"easycode/internal/infrastructure/i18n"
 	"easycode/internal/infrastructure/logging"
+	"easycode/internal/infrastructure/oidc"
 	"easycode/internal/infrastructure/postgres"
 	"easycode/internal/infrastructure/process"
 	"easycode/internal/infrastructure/sealing"
@@ -93,19 +95,23 @@ func migrate(ctx context.Context, proc process.Process) error {
 		return err
 	}
 	identity := proc.Config.Identity
-	if !identity.DevIdentity() {
+	if identity.Issuer == "" || identity.OrganizationName == "" {
 		return nil
 	}
-	// marco1 only: the fixed development identity (ADR-12). The migration role owns the tables.
-	if err := postgres.SeedDevIdentity(ctx, pool, identity.DevUserSubject, identity.DevUserName); err != nil {
+	// The organization of the realm of this deployment (ADR-12): people of that issuer sign in to it.
+	if err := postgres.EnsureOrganization(ctx, pool, identity.Issuer, identity.OrganizationName); err != nil {
 		return err
 	}
-	proc.Logger.Info("development identity seeded", slog.String("profile", identity.Profile))
+	proc.Logger.Info("organization of the sso realm ensured")
 	return nil
 }
 
 func serve(ctx context.Context, proc process.Process) error {
 	cfg := proc.Config
+	if err := cfg.RequireIdentity(); err != nil {
+		proc.Logger.Error("invalid configuration", logging.ErrorAttr(err))
+		return err
+	}
 	tracing, err := telemetry.Setup(ctx, telemetry.Settings{
 		Enabled: cfg.Telemetry.Enabled, Endpoint: cfg.Telemetry.Endpoint, Insecure: cfg.Telemetry.Insecure,
 		SampleRatio: cfg.Telemetry.SampleRatio, Service: serviceName, Version: version,
@@ -142,9 +148,6 @@ func serve(ctx context.Context, proc process.Process) error {
 	deps.Health = apphealth.NewService(version, cfg.Database.ProbeTimeout, postgres.NewDatabaseProbe(pool))
 	deps.Tracer = tracing.Provider.Tracer(serviceName)
 	deps.Propagator = tracing.Propagator
-	if cfg.Identity.DevIdentity() {
-		proc.Logger.Warn("development identity enabled: fixed dev user, not for production", slog.String("profile", cfg.Identity.Profile))
-	}
 	handler := httpapi.NewHandler(deps)
 	server := httpapi.NewServer(handler, httpapi.ServerSettings{
 		ReadTimeout: cfg.HTTP.ReadTimeout, WriteTimeout: cfg.HTTP.WriteTimeout, IdleTimeout: cfg.HTTP.IdleTimeout,
@@ -155,11 +158,13 @@ func serve(ctx context.Context, proc process.Process) error {
 // productDependencies wires the use cases of the product routes over PostgreSQL.
 func productDependencies(cfg config.Config, pool *pgxpool.Pool, logger *slog.Logger) (httpapi.Dependencies, error) {
 	tx := postgres.NewTxRunner(pool)
-	devSubject := ""
-	if cfg.Identity.DevIdentity() {
-		devSubject = cfg.Identity.DevUserSubject
+	id := cfg.Identity
+	realm := oidc.Settings{
+		Issuer: id.Issuer, InternalURL: id.InternalURL, ClientID: id.ClientID, ClientSecret: id.ClientSecret,
+		RedirectURL: id.PublicOrigin + httpapi.APIPrefix + "/session/oidc/callback", AdministratorRole: id.AdministratorRole,
 	}
-	sessions := appsession.NewService(postgres.NewUsers(pool), websession.NewCodec(cfg.Identity.DevSessionSecret), devSubject)
+	sessions := appsession.NewService(postgres.NewUsers(pool), postgres.NewWebSessions(pool), oidc.NewProvider(realm),
+		websession.NewTokenSealer(id.SessionSecret), websession.NewFlowCodec(id.SessionSecret))
 	trail := postgres.NewAuditTrail(pool)
 	wf, err := specs.BasicWorkflow()
 	if err != nil {
@@ -177,13 +182,16 @@ func productDependencies(cfg config.Config, pool *pgxpool.Pool, logger *slog.Log
 		AttachmentLimitBytes: cfg.Providers.AttachmentLimitBytes,
 		Pricing:              apppricing.NewService(tx, postgres.NewCatalog(pool), trail),
 		Projects:             appproject.NewService(tx, projects, postgres.NewOutbox(pool), trail, definition.ID, definition.Version),
-		Configuration:        appproject.NewConfigurationService(tx, projects, projects, postgres.NewCatalog(pool), trail, definition),
-		Workflow:             appworkflow.NewService(tx, projects, workflows, workflows, workflows, trail),
-		Artifacts:            appartifact.NewQueries(projects, postgres.NewArtifacts(pool)),
-		Gates:                appgate.NewDecisions(tx, projects, postgres.NewGates(pool), postgres.NewOutbox(pool), trail),
-		History:              postgres.NewOutbox(pool),
-		Waves:                waves,
-		Access:               waves,
+		Members: appproject.NewMemberService(tx, projects, postgres.NewMembers(pool), oidc.NewPeopleDirectory(oidc.NewAdmin(realm)),
+			postgres.NewOutbox(pool), trail),
+		Configuration: appproject.NewConfigurationService(tx, projects, projects, postgres.NewCatalog(pool), trail, definition),
+		Workflow:      appworkflow.NewService(tx, projects, workflows, workflows, workflows, trail),
+		Artifacts:     appartifact.NewQueries(projects, postgres.NewArtifacts(pool)),
+		Gates:         appgate.NewDecisions(tx, projects, postgres.NewGates(pool), postgres.NewOutbox(pool), trail),
+		History:       postgres.NewOutbox(pool),
+		Pending:       apppending.NewService(postgres.NewPending(pool, definition)),
+		Waves:         waves,
+		Access:        waves,
 	}
 	if cfg.Providers.SealingPublicKeyFile == "" {
 		logger.Warn("provider key routes disabled: no sealing public key", slog.String("variable", config.EnvSealingPublicKey))

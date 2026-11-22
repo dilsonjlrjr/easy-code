@@ -142,6 +142,10 @@ func (a *api) watchProjectEvents(rc *fasthttp.RequestCtx, principal identity.Pri
 					stream.ended("session_expired")
 					return
 				}
+				if reason := a.streamEnd(ctx, principal, session, projectID); reason != "" {
+					stream.ended(reason)
+					return
+				}
 				stream.raw(": hb " + time.Now().Format(time.RFC3339) + "\n\n")
 			case n, open := <-subscription.C():
 				if !open {
@@ -160,6 +164,19 @@ func (a *api) watchProjectEvents(rc *fasthttp.RequestCtx, principal identity.Pri
 		}
 	})
 	return nil
+}
+
+// streamEnd tells why a stream must end now: the session ended (logout in another tab, SSO
+// revocation) or the person lost the role in the project (sse.md 5.4). A failed check keeps the
+// stream; the next heartbeat tries again.
+func (a *api) streamEnd(ctx context.Context, principal identity.Principal, current identity.Session, projectID string) string {
+	if active, err := a.deps.Sessions.Active(ctx, current); err == nil && !active {
+		return "session_revoked"
+	}
+	if err := a.deps.Access.Authorize(ctx, principal, projectID); err != nil && failure.From(err).Kind == failure.KindNotFound {
+		return "access_removed"
+	}
+	return ""
 }
 
 // startingPoint resolves Last-Event-ID, then since, then "now" (sse.md 5.1) and the gap frame.

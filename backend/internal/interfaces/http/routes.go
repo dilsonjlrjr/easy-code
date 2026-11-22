@@ -5,9 +5,8 @@ import "github.com/valyala/fasthttp"
 // register adds the product routes of openapi.yaml implemented so far.
 func (a *api) register(router *Router) {
 	auth := a.auth.require
-	if a.deps.Sessions.DevEnabled() {
-		router.Handle(fasthttp.MethodPost, APIPrefix+"/dev/session", a.devSession)
-	}
+	router.Handle(fasthttp.MethodGet, APIPrefix+"/session/login", a.startWebLogin)
+	router.Handle(fasthttp.MethodGet, APIPrefix+"/session/oidc/callback", a.completeWebLogin)
 	router.Handle(fasthttp.MethodGet, APIPrefix+"/me", auth(a.currentUser))
 	router.Handle(fasthttp.MethodPost, APIPrefix+"/session/logout", auth(a.endSession))
 
@@ -30,10 +29,19 @@ func (a *api) register(router *Router) {
 		router.Handle(fasthttp.MethodGet, APIPrefix+"/projects/{projectId}/configuration", auth(a.getProjectConfiguration))
 		router.Handle(fasthttp.MethodPatch, APIPrefix+"/projects/{projectId}/configuration", auth(a.modifyProjectConfiguration))
 	}
+	if a.deps.Members != nil {
+		router.Handle(fasthttp.MethodGet, APIPrefix+"/users", auth(a.searchUsers))
+		router.Handle(fasthttp.MethodGet, APIPrefix+"/projects/{projectId}/members", auth(a.listMembers))
+		router.Handle(fasthttp.MethodPut, APIPrefix+"/projects/{projectId}/members/{userId}", auth(a.setMemberRoles))
+		router.Handle(fasthttp.MethodDelete, APIPrefix+"/projects/{projectId}/members/{userId}", auth(a.removeMember))
+	}
 	if a.deps.Workflow != nil {
 		router.Handle(fasthttp.MethodPost, APIPrefix+"/projects/{projectId}/start", auth(a.startWorkflow))
 		router.Handle(fasthttp.MethodGet, APIPrefix+"/projects/{projectId}/commands/{commandId}", auth(a.getCommand))
 		router.Handle(fasthttp.MethodGet, APIPrefix+"/projects/{projectId}/workflow", auth(a.getWorkflow))
+		if a.deps.Waves != nil {
+			router.Handle(fasthttp.MethodGet, APIPrefix+"/projects/{projectId}/stages/{stage}", auth(a.getStage))
+		}
 	}
 	if a.deps.Artifacts != nil {
 		router.Handle(fasthttp.MethodGet, APIPrefix+"/projects/{projectId}/artifacts", auth(a.listArtifacts))
@@ -56,6 +64,12 @@ func (a *api) register(router *Router) {
 		router.Handle(fasthttp.MethodGet, p+"/{round}", auth(a.getGateRound))
 		router.Handle(fasthttp.MethodPost, p+"/{round}/approval", auth(a.approveGate))
 		router.Handle(fasthttp.MethodPost, p+"/{round}/rejection", auth(a.rejectGate))
+	}
+	if a.deps.Pending != nil {
+		router.Handle(fasthttp.MethodGet, APIPrefix+"/pending-items", auth(a.listPendingItems))
+	}
+	if a.deps.Events != nil && a.deps.Notices != nil {
+		router.Handle(fasthttp.MethodGet, APIPrefix+"/me/events", auth(a.watchNotices))
 	}
 	if a.deps.Events != nil {
 		router.Handle(fasthttp.MethodGet, APIPrefix+"/projects/{projectId}/events", auth(a.watchProjectEvents))

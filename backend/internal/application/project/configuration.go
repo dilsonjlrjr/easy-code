@@ -2,6 +2,7 @@ package project
 
 import (
 	"context"
+	"fmt"
 	"slices"
 	"time"
 
@@ -152,7 +153,18 @@ func (s *ConfigurationService) Modify(ctx context.Context, principal identity.Pr
 			return err
 		}
 		if change.Constraints != nil {
-			return s.record(ctx, principal, projectID, "constraints.modify", "constraints")
+			// US-54 CA-3: who, when and the difference (ids added, changed or removed) of the new version.
+			next := 1
+			var previous []project.Constraint
+			if stored.Constraints != nil {
+				next, previous = stored.Constraints.Version+1, stored.Constraints.Items
+			}
+			_, err := s.trail.Append(ctx, domainaudit.Record{
+				ProjectID: projectID, Actor: domainaudit.Actor{Type: domainaudit.ActorHuman, ID: principal.Subject},
+				Origin: domainaudit.OriginWeb, Action: "constraints.modify", Target: "constraints",
+				Decision: fmt.Sprintf("version %d", next), References: project.ConstraintChanges(previous, *change.Constraints),
+			})
+			return err
 		}
 		return nil
 	})

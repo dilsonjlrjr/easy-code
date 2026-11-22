@@ -21,10 +21,9 @@ import (
 
 // Failure codes of decisions (openapi Problem).
 const (
-	CodeInvalidCSRF        = "invalid-csrf"
-	CodeReauthentication   = "reauthentication-required"
-	CodePendingHumanCheck  = "pending-human-check"
-	criticalDecisionWindow = 10 * time.Minute
+	CodeInvalidCSRF       = "invalid-csrf"
+	CodeReauthentication  = "reauthentication-required"
+	CodePendingHumanCheck = "pending-human-check"
 )
 
 // CheckView is a check result of a round.
@@ -57,6 +56,8 @@ type RoundView struct {
 	Outputs      []OutputRef
 	Checks       []CheckView
 	Decision     *DecisionView
+	// ReworkWave is the code of the rework wave a rejection created (ER-12-14), "" when none.
+	ReworkWave string
 }
 
 // OutputRef is an output version of the round.
@@ -147,7 +148,7 @@ func (d *Decisions) Decide(ctx context.Context, principal identity.Principal, se
 	if session.CSRFToken == "" || subtle.ConstantTimeCompare([]byte(session.CSRFToken), []byte(decision.CSRFToken)) != 1 {
 		return RoundView{}, failure.New(failure.KindForbidden, CodeInvalidCSRF, nil)
 	}
-	if decision.Approve && d.now().Sub(session.AuthenticatedAt) > criticalDecisionWindow {
+	if decision.Approve && !session.RecentlyAuthenticated(d.now()) {
 		return RoundView{}, failure.New(failure.KindUnauthenticated, CodeReauthentication, nil)
 	}
 	if !decision.Approve && strings.TrimSpace(decision.Reason) == "" {
@@ -160,9 +161,12 @@ func (d *Decisions) Decide(ctx context.Context, principal identity.Principal, se
 	if current.State != StateAwaitingHuman {
 		return RoundView{}, failure.New(failure.KindConflict, failure.CodeStateConflict, nil).With("current_state", current.State).With("available_actions", []string{})
 	}
-	// MARCO-1: gate.requirements has no human check configured yet; any confirmed check is unknown.
-	if decision.Approve && len(decision.ConfirmedChecks) > 0 {
-		return RoundView{}, failure.New(failure.KindInvalidInput, CodePendingHumanCheck, nil).With("checks", decision.ConfirmedChecks)
+	if decision.Approve {
+		if missing, unknown := humanChecks(current.Checks, decision.ConfirmedChecks); len(missing) > 0 || len(unknown) > 0 {
+			// missing_checks: human checks of the round still to confirm; checks: confirmed ids the round does not have.
+			return RoundView{}, failure.New(failure.KindInvalidInput, CodePendingHumanCheck, nil).
+				With("missing_checks", missing).With("checks", unknown)
+		}
 	}
 	err = d.tx.InTx(ctx, func(ctx context.Context) error {
 		if err := d.store.Decide(ctx, principal, decision.ProjectID, stage, decision.Round, decision.Approve, decision.Reason); err != nil {
@@ -209,4 +213,29 @@ func deterministicUUID(key string) string {
 	b[8] = (b[8] & 0x3f) | 0x80
 	h := hex.EncodeToString(b)
 	return h[0:8] + "-" + h[8:12] + "-" + h[12:16] + "-" + h[16:20] + "-" + h[20:32]
+}
+
+// humanChecks compares the human checks of the round with the confirmed ones: the human checks
+// not confirmed and the confirmed ids that are not human checks of the round (US-06 RN-3).
+func humanChecks(checks []CheckView, confirmed []string) (missing, unknown []string) {
+	human := map[string]bool{}
+	missing, unknown = []string{}, []string{}
+	for _, c := range checks {
+		if c.Type == "human" {
+			human[c.Check] = true
+		}
+	}
+	given := map[string]bool{}
+	for _, id := range confirmed {
+		given[id] = true
+		if !human[id] {
+			unknown = append(unknown, id)
+		}
+	}
+	for _, c := range checks {
+		if c.Type == "human" && !given[c.Check] {
+			missing = append(missing, c.Check)
+		}
+	}
+	return missing, unknown
 }

@@ -115,6 +115,12 @@ func (s *Service) Workflow(ctx context.Context, principal identity.Principal, pr
 	return s.views.Workflow(ctx, projectID)
 }
 
+// WorkflowAsAdministrator is getWorkflow for the organization administrator without a role, after
+// the member service authorized and recorded the access (US-02 CA-6): stage states only.
+func (s *Service) WorkflowAsAdministrator(ctx context.Context, projectID string) (View, error) {
+	return s.views.Workflow(ctx, projectID)
+}
+
 // ---------------------------------------------------------------- worker side
 
 // ResolvedPair is the model pair a wave starts with (US-16 CA-1, CA-3, CA-4).

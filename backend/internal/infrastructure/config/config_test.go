@@ -2,6 +2,9 @@ package config_test
 
 import (
 	"log/slog"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -60,22 +63,37 @@ func TestLoadReportsInvalidValues(t *testing.T) {
 	}
 }
 
-func TestDevIdentityExistsOnlyInMarco1Profile(t *testing.T) {
-	secret := "0123456789abcdef0123456789abcdef"
-	if _, err := config.Load(lookupFrom(map[string]string{config.EnvDevSessionSecret: secret})); err == nil {
-		t.Fatal("dev session secret outside marco1 must be refused (ADR-12)")
+// The marco1 profile no longer exists (PLANO MARCO-2): its variables are refused, never ignored.
+func TestMarco1ProfileIsRefused(t *testing.T) {
+	for _, key := range []string{"EASYCODE_PROFILE", "EASYCODE_DEV_SESSION_SECRET", "EASYCODE_DEV_USER_SUB"} {
+		if _, err := config.Load(lookupFrom(map[string]string{key: "marco1"})); err == nil {
+			t.Errorf("%s must be refused", key)
+		}
 	}
-	if _, err := config.Load(lookupFrom(map[string]string{config.EnvProfile: config.ProfileMarco1})); err == nil {
-		t.Fatal("marco1 without a session secret must be refused")
+}
+
+// The api needs the realm and both secrets; a secret may come from a file (NAME_FILE).
+func TestIdentityNeedsTheRealmAndReadsSecretFiles(t *testing.T) {
+	cfg, err := config.Load(lookupFrom(map[string]string{}))
+	if err != nil || cfg.RequireIdentity() == nil {
+		t.Fatalf("identity without realm must be refused at serve: %v", err)
 	}
-	if _, err := config.Load(lookupFrom(map[string]string{config.EnvProfile: "prod"})); err == nil {
-		t.Fatal("unknown profile must be refused")
+	if _, err := config.Load(lookupFrom(map[string]string{config.EnvSessionSecret: "short"})); err == nil {
+		t.Fatal("a short session secret must be refused")
 	}
-	cfg, err := config.Load(lookupFrom(map[string]string{config.EnvProfile: config.ProfileMarco1, config.EnvDevSessionSecret: secret}))
-	if err != nil {
+	file := filepath.Join(t.TempDir(), "client-secret")
+	if err := os.WriteFile(file, []byte("from-file\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if !cfg.Identity.DevIdentity() || cfg.Identity.DevUserSubject != "dev" {
-		t.Fatalf("unexpected identity: %+v", cfg.Identity)
+	cfg, err = config.Load(lookupFrom(map[string]string{
+		config.EnvPublicOrigin: "https://easycode.test/", config.EnvOIDCIssuer: "https://sso.test/realms/easycode/",
+		config.EnvOIDCClientSecret + config.SecretFileSuffix: file, config.EnvSessionSecret: strings.Repeat("s", 32),
+	}))
+	if err != nil || cfg.RequireIdentity() != nil {
+		t.Fatalf("complete identity: %v %v", err, cfg.RequireIdentity())
+	}
+	if cfg.Identity.ClientSecret != "from-file" || cfg.Identity.Issuer != "https://sso.test/realms/easycode" ||
+		cfg.Identity.PublicOrigin != "https://easycode.test" || cfg.Identity.ClientID != "easycode-api" {
+		t.Fatalf("identity: %+v", cfg.Identity)
 	}
 }

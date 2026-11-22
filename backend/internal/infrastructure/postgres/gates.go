@@ -153,12 +153,17 @@ func (g Gates) Round(ctx context.Context, projectID, stage string, round int) (a
 	var sub, name *string
 	var decidedAt *time.Time
 	err := q.QueryRow(WithOperation(ctx, "gate_rounds.get"), `
-SELECT r.id, r.state, r.approval_mode, r.opened_at, r.decided_by_type, r.decided_at, r.reason, u.sub, u.display_name
+SELECT r.id, r.state, r.approval_mode, r.opened_at, r.decided_by_type, r.decided_at, r.reason, u.sub, u.display_name,
+       coalesce((SELECT w.code FROM easycode.waves w WHERE w.project_id = r.project_id AND w.stage = r.stage AND w.purpose = 'rework'
+                    AND r.state = 'rejected' AND w.created_at >= r.decided_at
+                    AND NOT EXISTS (SELECT 1 FROM easycode.gate_rounds n WHERE n.project_id = r.project_id AND n.stage = r.stage
+                                      AND n.number > r.number AND n.opened_at <= w.created_at)
+                  ORDER BY w.created_at LIMIT 1), '')
   FROM easycode.gate_rounds r JOIN easycode.projects pr ON pr.id = r.project_id
   LEFT JOIN LATERAL (SELECT gc.user_id FROM easycode.gate_confirmations gc WHERE gc.round_id = r.id ORDER BY gc.decided_at DESC LIMIT 1) c ON true
   LEFT JOIN easycode.users u ON u.id = c.user_id
  WHERE pr.public_id = $1::uuid AND r.stage = $2 AND r.number = $3`, projectID, stage, round).Scan(&roundID, &view.State, &view.ApprovalMode,
-		&view.OpenedAt, &byType, &decidedAt, &reason, &sub, &name)
+		&view.OpenedAt, &byType, &decidedAt, &reason, &sub, &name, &view.ReworkWave)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return view, failure.New(failure.KindNotFound, failure.CodeNotFound, nil)
 	}

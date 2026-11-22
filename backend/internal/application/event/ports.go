@@ -21,6 +21,12 @@ type Store interface {
 	ProjectEvents(ctx context.Context, projectID string, afterSequence int64, limit int) ([]event.Envelope, error)
 }
 
+// Notice is a published domain event with its global outbox position (watchNotices, sse.md 3).
+type Notice struct {
+	Position int64
+	Envelope event.Envelope
+}
+
 // TelemetryEmitter sends best-effort telemetry (agent progress, model call cost): no sequence,
 // no replay, lost if nobody listens.
 type TelemetryEmitter interface {

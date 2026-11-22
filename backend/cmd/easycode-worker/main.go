@@ -17,9 +17,11 @@ import (
 	"easycode/internal/application/command"
 	apphealth "easycode/internal/application/health"
 	"easycode/internal/application/providerkey"
+	"easycode/internal/application/ssosync"
 	appworkflow "easycode/internal/application/workflow"
 	"easycode/internal/infrastructure/config"
 	"easycode/internal/infrastructure/logging"
+	"easycode/internal/infrastructure/oidc"
 	"easycode/internal/infrastructure/postgres"
 	"easycode/internal/infrastructure/process"
 	"easycode/internal/infrastructure/specs"
@@ -124,6 +126,7 @@ func work(ctx context.Context, proc process.Process) error {
 	commandListener := postgres.NewListener(pool, proc.Logger, func(context.Context) { commandSignal() }, postgres.ChannelCommands)
 	go func() { _ = commandListener.Run(ctx, func(string, string) { commandSignal() }) }()
 	go runCommandQueue(ctx, jobs, dispatcher, commandWake, cfg.Worker.CommandPollInterval)
+	startSSOSync(ctx, cfg, pool, jobs, proc.Logger)
 
 	runHeartbeat(ctx, jobs, health, cfg.Worker.HeartbeatInterval)
 	return nil
@@ -286,4 +289,31 @@ func runHeartbeat(ctx context.Context, jobs jobRunner, health *apphealth.Service
 		case <-ticker.C:
 		}
 	}
+}
+
+// startSSOSync runs the SSO trail and offboarding job (interno.md section 7) when the read-only
+// service account of the realm is configured.
+func startSSOSync(ctx context.Context, cfg config.Config, pool *pgxpool.Pool, jobs jobRunner, logger *slog.Logger) {
+	id := cfg.Identity
+	if id.Issuer == "" || id.EventsClientID == "" || id.EventsClientSecret == "" {
+		logger.Warn("sso sync disabled: no read-only service account of the realm", slog.String("variable", config.EnvEventsClientID))
+		return
+	}
+	admin := oidc.NewAdmin(oidc.Settings{Issuer: id.Issuer, InternalURL: id.InternalURL, ClientID: id.EventsClientID, ClientSecret: id.EventsClientSecret})
+	job := ssosync.NewJob(id.Issuer, oidc.NewSSODirectory(admin), postgres.NewSSOSync(pool), postgres.NewAuditTrail(pool))
+	go func() {
+		ticker := time.NewTicker(cfg.Worker.SSOPollInterval)
+		defer ticker.Stop()
+		for {
+			jobs.run(ctx, "sso_sync", true, func(ctx context.Context) ([]slog.Attr, error) {
+				result, err := job.Run(ctx)
+				return []slog.Attr{slog.Int("recorded", result.Recorded), slog.Int("offboarded", result.Offboarded)}, err
+			})
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+			}
+		}
+	}()
 }

@@ -23,12 +23,8 @@ type pricingFixture struct {
 func newPricingFixture(t *testing.T) pricingFixture {
 	t.Helper()
 	db := postgrestest.New(t)
-	seedDev(t, db)
 	api := db.PoolAs("easycode_api")
-	dev, err := postgres.NewUsers(api).DevPrincipal(context.Background(), "dev")
-	if err != nil {
-		t.Fatal(err)
-	}
+	dev := seedDev(t, db)
 	catalog := postgres.NewCatalog(api)
 	return pricingFixture{db: db, dev: dev, catalog: catalog, service: apppricing.NewService(postgres.NewTxRunner(api), catalog, postgres.NewAuditTrail(api))}
 }

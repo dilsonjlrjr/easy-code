@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -37,11 +38,17 @@ const (
 	EnvAnthropicBaseURL     = "EASYCODE_ANTHROPIC_BASE_URL"
 	EnvAnthropicTestModel   = "EASYCODE_ANTHROPIC_TEST_MODEL"
 	EnvProviderCallTimeout  = "EASYCODE_PROVIDER_CALL_TIMEOUT"
-	EnvProfile              = "EASYCODE_PROFILE"
-	EnvDevUserSubject       = "EASYCODE_DEV_USER_SUB"
-	EnvDevUserName          = "EASYCODE_DEV_USER_NAME"
-	EnvDevSessionSecret     = "EASYCODE_DEV_SESSION_SECRET"
 	EnvPublicOrigin         = "EASYCODE_PUBLIC_ORIGIN"
+	EnvOIDCIssuer           = "EASYCODE_OIDC_ISSUER"
+	EnvOIDCInternalURL      = "EASYCODE_OIDC_INTERNAL_URL"
+	EnvOIDCClientID         = "EASYCODE_OIDC_CLIENT_ID"
+	EnvOIDCClientSecret     = "EASYCODE_OIDC_CLIENT_SECRET"
+	EnvOIDCAdminRole        = "EASYCODE_OIDC_ADMINISTRATOR_ROLE"
+	EnvSessionSecret        = "EASYCODE_SESSION_SECRET"
+	EnvOrganizationName     = "EASYCODE_ORGANIZATION_NAME"
+	EnvEventsClientID       = "EASYCODE_SSO_EVENTS_CLIENT_ID"
+	EnvEventsClientSecret   = "EASYCODE_SSO_EVENTS_CLIENT_SECRET"
+	EnvWorkerSSOPoll        = "EASYCODE_WORKER_SSO_POLL_INTERVAL"
 	EnvSealingPublicKey     = "EASYCODE_SEALING_PUBLIC_KEY_FILE"
 	EnvKeyTestTimeout       = "EASYCODE_PROVIDER_KEY_TEST_TIMEOUT"
 	EnvAttachmentLimit      = "EASYCODE_ATTACHMENT_LIMIT_BYTES"
@@ -52,8 +59,13 @@ const (
 	EnvWorkerID             = "EASYCODE_WORKER_ID"
 )
 
-// ProfileMarco1 is the development profile of Marco 1: fixed "dev" identity, no Keycloak (ARQ section 9).
-const ProfileMarco1 = "marco1"
+// removedVariables belonged to the marco1 development profile (fixed "dev" identity), which no
+// longer exists since MARCO-2: setting them is a configuration error, never a silent fallback.
+var removedVariables = []string{"EASYCODE_PROFILE", "EASYCODE_DEV_USER_SUB", "EASYCODE_DEV_USER_NAME", "EASYCODE_DEV_SESSION_SECRET"}
+
+// SecretFileSuffix marks the file form of a secret: a secret variable may instead name a file with the value (NAME_FILE), the
+// production form (ARQ section 8.1: secret files mounted in the service).
+const SecretFileSuffix = "_FILE"
 
 // LookupFunc reads one environment variable. os.LookupEnv satisfies it.
 type LookupFunc func(key string) (string, bool)
@@ -70,21 +82,28 @@ type Config struct {
 	Providers Providers
 }
 
-// Identity configures who may use the api. Until Keycloak (MARCO-2) only the fixed development
-// identity of the marco1 profile exists.
+// Identity configures the SSO (Keycloak realm, ADR-12) and the web session.
 type Identity struct {
-	Profile string
-	// DevUserSubject and DevUserName describe the fixed "dev" user (marco1 only).
-	DevUserSubject string
-	DevUserName    string
-	// DevSessionSecret signs the development session cookie (marco1 only, at least 32 bytes).
-	DevSessionSecret string
-	// PublicOrigin is the web origin; writes with the session cookie must send it in Origin.
+	// PublicOrigin is the web origin; writes with the session cookie must send it in Origin and
+	// the SSO returns to PublicOrigin + /api/v1/session/oidc/callback.
 	PublicOrigin string
+	// Issuer is the public issuer of the realm; InternalURL reaches the same realm from the
+	// containers ("" = Issuer).
+	Issuer       string
+	InternalURL  string
+	ClientID     string
+	ClientSecret string
+	// AdministratorRole is the realm role of the organization administrator.
+	AdministratorRole string
+	// SessionSecret derives the keys of the login flow cookie and of the sealed refresh token.
+	SessionSecret string
+	// OrganizationName names the organization of the issuer, created at migrate when missing.
+	OrganizationName string
+	// EventsClientID and EventsClientSecret are the read-only service account of the worker
+	// (login events PL-36 and offboarding D-31).
+	EventsClientID     string
+	EventsClientSecret string
 }
-
-// DevIdentity reports whether the fixed development identity is enabled.
-func (i Identity) DevIdentity() bool { return i.Profile == ProfileMarco1 }
 
 // Providers configures provider keys and limits seen by the api and the worker.
 type Providers struct {
@@ -136,6 +155,9 @@ type Worker struct {
 	MaxOutputTokens int
 	// ID names this worker in leases and checkpoints ("" = host name).
 	ID string
+	// SSOPollInterval is how often the worker reads the login events and the offboarded people of
+	// the realm (interno.md section 7).
+	SSOPollInterval time.Duration
 }
 
 // Gateway configures easycode-gateway (interno.md section 3).
@@ -187,6 +209,7 @@ func Load(lookup LookupFunc) (Config, error) {
 			MaxArtifactCorrections: r.integer(EnvWorkerCorrections, 3),
 			MaxOutputTokens:        r.integer(EnvWorkerMaxTokens, 16000),
 			ID:                     r.text(EnvWorkerID, ""),
+			SSOPollInterval:        r.duration(EnvWorkerSSOPoll, 60*time.Second),
 		},
 		Gateway: Gateway{
 			Socket:             r.text(EnvGatewaySocket, "/run/easycode-gateway/gateway.sock"),
@@ -198,11 +221,16 @@ func Load(lookup LookupFunc) (Config, error) {
 			CallTimeout:        r.duration(EnvProviderCallTimeout, 10*time.Minute),
 		},
 		Identity: Identity{
-			Profile:          r.text(EnvProfile, ""),
-			DevUserSubject:   r.text(EnvDevUserSubject, "dev"),
-			DevUserName:      r.text(EnvDevUserName, "Dev"),
-			DevSessionSecret: r.text(EnvDevSessionSecret, ""),
-			PublicOrigin:     r.text(EnvPublicOrigin, ""),
+			PublicOrigin:       strings.TrimRight(r.text(EnvPublicOrigin, ""), "/"),
+			Issuer:             strings.TrimRight(r.text(EnvOIDCIssuer, ""), "/"),
+			InternalURL:        strings.TrimRight(r.text(EnvOIDCInternalURL, ""), "/"),
+			ClientID:           r.text(EnvOIDCClientID, "easycode-api"),
+			ClientSecret:       r.secret(EnvOIDCClientSecret),
+			AdministratorRole:  r.text(EnvOIDCAdminRole, "easycode-administrator"),
+			SessionSecret:      r.secret(EnvSessionSecret),
+			OrganizationName:   r.text(EnvOrganizationName, ""),
+			EventsClientID:     r.text(EnvEventsClientID, ""),
+			EventsClientSecret: r.secret(EnvEventsClientSecret),
 		},
 		Providers: Providers{
 			SealingPublicKeyFile: r.text(EnvSealingPublicKey, ""),
@@ -223,16 +251,43 @@ func (c Config) RequireDatabase() error {
 	return nil
 }
 
-// checkIdentity refuses the development identity outside the marco1 profile (ADR-12).
+// checkIdentity refuses the variables of the removed marco1 profile and a short session key.
 func (r *reader) checkIdentity(identity Identity) {
-	switch {
-	case identity.Profile != "" && identity.Profile != ProfileMarco1:
-		r.fail(EnvProfile, identity.Profile, errors.New("unknown profile (available: marco1)"))
-	case !identity.DevIdentity() && identity.DevSessionSecret != "":
-		r.problems = append(r.problems, fmt.Errorf("%s is only accepted with %s=%s", EnvDevSessionSecret, EnvProfile, ProfileMarco1))
-	case identity.DevIdentity() && len(identity.DevSessionSecret) < 32:
-		r.problems = append(r.problems, fmt.Errorf("%s must have at least 32 characters in the %s profile", EnvDevSessionSecret, ProfileMarco1))
+	for _, key := range removedVariables {
+		if _, set := r.raw(key); set {
+			r.problems = append(r.problems, fmt.Errorf("%s belongs to the removed marco1 profile: sign in through the SSO (EASYCODE_OIDC_*)", key))
+		}
 	}
+	if identity.SessionSecret != "" && len(identity.SessionSecret) < 32 {
+		r.problems = append(r.problems, fmt.Errorf("%s must have at least 32 characters", EnvSessionSecret))
+	}
+}
+
+// RequireIdentity checks what the api needs to sign people in (serve only).
+func (c Config) RequireIdentity() error {
+	var problems []error
+	for key, value := range map[string]string{
+		EnvPublicOrigin: c.Identity.PublicOrigin, EnvOIDCIssuer: c.Identity.Issuer,
+		EnvOIDCClientSecret: c.Identity.ClientSecret, EnvSessionSecret: c.Identity.SessionSecret,
+	} {
+		if value == "" {
+			problems = append(problems, fmt.Errorf("%s is required", key))
+		}
+	}
+	return errors.Join(problems...)
+}
+
+// secret reads a secret from NAME or, in production, from the file named by NAME_FILE.
+func (r *reader) secret(key string) string {
+	if path, ok := r.raw(key + SecretFileSuffix); ok {
+		content, err := os.ReadFile(path) //nolint:gosec // the path is deployment configuration (mounted secret file), not user input
+		if err != nil {
+			r.problems = append(r.problems, fmt.Errorf("%s%s: cannot read the file", key, SecretFileSuffix))
+			return ""
+		}
+		return strings.TrimSpace(string(content))
+	}
+	return r.text(key, "")
 }
 
 type reader struct {

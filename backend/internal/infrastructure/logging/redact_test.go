@@ -27,7 +27,7 @@ func TestRedactionMasksSensitiveKeys(t *testing.T) {
 		"password", "db_password", "api_key", "apiKey", "Authorization", "cookie", "Set-Cookie",
 		"access_token", "refresh_token", "client_secret", "private_key", "session", "prompt",
 		"system_prompt", "completion", "content", "artifact_content", "body", "response_body",
-		"credentials", "database_url", "key",
+		"credentials", "database_url", "key", "id_token", "code_verifier", "nonce", "csrf_token",
 	}
 	for _, key := range keys {
 		t.Run(key, func(t *testing.T) {
@@ -64,6 +64,11 @@ func TestRedactionScrubsSecretsInsideFreeText(t *testing.T) {
 		"connect password=" + secret + " host=db",
 		"provider key sk-" + secret + "abcdefghij",
 		"jwt eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0." + secret,
+		// OIDC login flow (ADR-12, MARCO-2): code, state, nonce and PKCE never reach a log line.
+		"GET /api/v1/session/oidc/callback?code=" + secret + "&state=x",
+		"callback?state=" + secret,
+		"form grant_type=authorization_code&code_verifier=" + secret,
+		"auth?nonce=" + secret + "&code_challenge=" + secret,
 	}
 	for _, text := range texts {
 		output := captureLog(t, func(logger *slog.Logger) {

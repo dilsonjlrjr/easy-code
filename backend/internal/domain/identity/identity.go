@@ -3,7 +3,10 @@
 // audit records: only the opaque subject does.
 package identity
 
-import "time"
+import (
+	"context"
+	"time"
+)
 
 // Role is a project role (project_members.role).
 type Role string
@@ -27,8 +30,9 @@ type Principal struct {
 	Administrator    bool
 }
 
-// Session is a web session (cookie ec_session).
+// Session is a web session (cookie ec_session), stored on the server (ADR-12).
 type Session struct {
+	ID              int64 // internal key of web_sessions
 	Subject         string
 	OrganizationID  string
 	AuthenticatedAt time.Time // last authentication; critical decisions need it recent (ADR-19)
@@ -37,11 +41,22 @@ type Session struct {
 	CSRFToken       string
 }
 
-// Session lifetimes of RNF-06.
+// Session lifetimes of RNF-06 and ADR-19.
 const (
 	SessionIdle     = 30 * time.Minute
 	SessionLifetime = 8 * time.Hour
+	// IDPCheckEvery is how often the api confirms with the SSO that the session still holds
+	// (revoked token or disabled account refused within 60 s, RNF-06).
+	IDPCheckEvery = 60 * time.Second
+	// CriticalDecisionWindow is the maximum age of the last SSO authentication for a critical
+	// decision (approve gate, accept risk; ADR-19).
+	CriticalDecisionWindow = 10 * time.Minute
 )
+
+// RecentlyAuthenticated reports whether the last SSO authentication allows a critical decision.
+func (s Session) RecentlyAuthenticated(now time.Time) bool {
+	return !s.AuthenticatedAt.IsZero() && now.Sub(s.AuthenticatedAt) <= CriticalDecisionWindow
+}
 
 // ExpiresAt is when the session ends without activity.
 func (s Session) ExpiresAt() time.Time {
@@ -68,4 +83,18 @@ func Has(roles []Role, wanted ...Role) bool {
 		}
 	}
 	return false
+}
+
+type sessionKey struct{}
+
+// WithSession carries the web session of the request in ctx (once-per-session rules, such as
+// project.access_as_administrator, RNF-13).
+func WithSession(ctx context.Context, s Session) context.Context {
+	return context.WithValue(ctx, sessionKey{}, s)
+}
+
+// SessionFrom returns the session of the request, if any.
+func SessionFrom(ctx context.Context) (Session, bool) {
+	s, ok := ctx.Value(sessionKey{}).(Session)
+	return s, ok
 }

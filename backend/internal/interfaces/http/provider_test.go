@@ -48,7 +48,7 @@ func write(h harness, method, path, cookie, body string) *fasthttp.RequestCtx {
 // US-15 CA-1, CA-2, CA-3: the answer shows status and last 4 only; the key is never echoed or logged.
 func TestSaveProviderKeyNeverEchoesOrLogsTheKey(t *testing.T) {
 	providers := &fakeProviders{}
-	h := productHarness(t, "dev", withProviders(providers))
+	h := productHarness(t, withProviders(providers))
 	cookie := sessionCookie(t, h)
 	key := "sk-ant-secret-0123456789wxyz"
 	rc := write(h, fasthttp.MethodPut, "/api/v1/providers/anthropic/key", cookie, `{"key":"`+key+`"}`)
@@ -74,7 +74,7 @@ func TestSaveProviderKeyNeverEchoesOrLogsTheKey(t *testing.T) {
 }
 
 func TestListProvidersShowsStatusWithoutValue(t *testing.T) {
-	h := productHarness(t, "dev", withProviders(&fakeProviders{}))
+	h := productHarness(t, withProviders(&fakeProviders{}))
 	rc := h.do(fasthttp.MethodGet, "/api/v1/providers", map[string]string{"Cookie": sessionCookie(t, h)})
 	items := decode(t, rc)["items"].([]any)
 	first := items[0].(map[string]any)

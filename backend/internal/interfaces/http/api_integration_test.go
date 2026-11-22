@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/valyala/fasthttp"
 	"go.opentelemetry.io/otel/propagation"
@@ -13,13 +14,13 @@ import (
 	"easycode/internal/application/idempotency"
 	apppricing "easycode/internal/application/pricing"
 	appproject "easycode/internal/application/project"
-	"easycode/internal/application/session"
 	"easycode/internal/infrastructure/i18n"
 	"easycode/internal/infrastructure/logging"
+	"easycode/internal/infrastructure/oidc"
+	"easycode/internal/infrastructure/oidc/oidctest"
 	"easycode/internal/infrastructure/postgres"
 	"easycode/internal/infrastructure/postgres/postgrestest"
 	"easycode/internal/infrastructure/specs"
-	"easycode/internal/infrastructure/websession"
 	httpapi "easycode/internal/interfaces/http"
 )
 
@@ -28,12 +29,14 @@ type liveAPI struct {
 	harness
 	db     *postgrestest.Database
 	cookie string
+	deps   httpapi.Dependencies
 }
 
 func newLiveAPI(t *testing.T, options ...func(*httpapi.Dependencies, *postgrestest.Database)) liveAPI {
 	t.Helper()
 	db := postgrestest.New(t)
-	if err := postgres.SeedDevIdentity(context.Background(), db.Admin, "dev", "Dev"); err != nil {
+	idp := oidctest.New(t)
+	if err := postgres.EnsureOrganization(context.Background(), db.Admin, idp.Issuer(), "Test organization"); err != nil {
 		t.Fatal(err)
 	}
 	pool := db.PoolAs("easycode_api")
@@ -52,19 +55,29 @@ func newLiveAPI(t *testing.T, options ...func(*httpapi.Dependencies, *postgreste
 	deps := httpapi.Dependencies{
 		Logger: logging.New(logs, slog.LevelDebug, "test", "dev"), Translator: translator, Health: fakeHealth{},
 		Tracer: noop.NewTracerProvider().Tracer("test"), Propagator: propagation.TraceContext{},
-		Sessions:      session.NewService(postgres.NewUsers(pool), websession.NewCodec(strings.Repeat("s", 32)), "dev"),
-		Idempotency:   idempotency.NewGuard(tx, postgres.NewIdempotencyKeys(pool)),
-		PublicOrigin:  "https://easycode.test",
-		Pricing:       apppricing.NewService(tx, postgres.NewCatalog(pool), trail),
-		Projects:      appproject.NewService(tx, projects, postgres.NewOutbox(pool), trail, "workflow-basico", 1),
+		Sessions:     testSessions(idp, postgres.NewUsers(pool), postgres.NewWebSessions(pool)),
+		Idempotency:  idempotency.NewGuard(tx, postgres.NewIdempotencyKeys(pool)),
+		PublicOrigin: "https://easycode.test",
+		Pricing:      apppricing.NewService(tx, postgres.NewCatalog(pool), trail),
+		Projects:     appproject.NewService(tx, projects, postgres.NewOutbox(pool), trail, "workflow-basico", 1),
+		Members: appproject.NewMemberService(tx, projects, postgres.NewMembers(pool),
+			oidc.NewPeopleDirectory(oidc.NewAdmin(idp.Settings(""))), postgres.NewOutbox(pool), trail),
 		Configuration: appproject.NewConfigurationService(tx, projects, projects, postgres.NewCatalog(pool), trail, wf.Definition),
 	}
 	for _, option := range options {
 		option(&deps, db)
 	}
-	live := liveAPI{harness: harness{handler: httpapi.NewHandler(deps), logText: logs}, db: db}
+	live := liveAPI{harness: harness{handler: httpapi.NewHandler(deps), logText: logs, idp: idp}, db: db, deps: deps}
 	live.cookie = sessionCookie(t, live.harness)
 	return live
+}
+
+// as is the same api seen by another signed-in person (test identity through the fake SSO).
+func (l liveAPI) as(t *testing.T, u oidctest.User) liveAPI {
+	t.Helper()
+	other := l
+	other.cookie = login(t, l.harness, u, time.Now())
+	return other
 }
 
 func (l liveAPI) send(method, path, body string, headers map[string]string) *fasthttp.RequestCtx {
