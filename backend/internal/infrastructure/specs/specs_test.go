@@ -45,3 +45,28 @@ func TestYAMLDatesStayText(t *testing.T) {
 		t.Fatalf("got %s %v", encoded, err)
 	}
 }
+
+// RNF-07: every agent of the Phase 1 workflow has an explicit policy; Requisitos has no sandbox.
+func TestAgentPoliciesComeFromPermissions(t *testing.T) {
+	requirements, err := specs.AgentPolicy("requirements-agent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if requirements.Execute || requirements.Allows("execute_command") || !requirements.CanWrite("docs/requisitos/US-01.md") {
+		t.Fatalf("requirements: %+v", requirements)
+	}
+	developer, err := specs.AgentPolicy("developer-agent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := developer.Category("tests"); !ok || !developer.CanWrite("app/main.go") || developer.CanWrite("docs/arquitetura/adr/ADR-01.md") {
+		t.Fatalf("developer: %+v", developer)
+	}
+	if developer.Ceiling.CPU != 4 || developer.Ceiling.Time.Minutes() != 15 {
+		t.Fatalf("developer ceiling: %+v", developer.Ceiling)
+	}
+	architect, _ := specs.AgentPolicy("architect-agent")
+	if _, ok := architect.Category("build"); ok || !architect.CanRead("docs/requisitos/VISAO.md") {
+		t.Fatalf("architect: %+v", architect)
+	}
+}

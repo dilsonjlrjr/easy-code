@@ -8,9 +8,15 @@ DOCKER_GO       := docker run --rm -u $(shell id -u):$(shell id -g) -e HOME=/tmp
                    -e GOCACHE=/cache/build -e GOMODCACHE=/cache/mod -e GOLANGCI_LINT_CACHE=/cache/lint \
                    -v "$(CURDIR)":/src -w /src -v easycode-go-cache:/cache
 TEST_NETWORK    ?=
+# The sandbox tests (RNF-02, RNF-03, US-41) and the MARCO-3 end-to-end test drive the host Docker daemon
+# through its socket, like easycode-sandbox does; without the socket they are skipped.
+SANDBOX_TEST_IMAGE ?= easycode-sandbox-go:ci
+DOCKER_SOCKET   ?= /var/run/docker.sock
+DOCKER_GID      := $(shell stat -c %g $(DOCKER_SOCKET) 2>/dev/null)
+TEST_DOCKER     := $(if $(DOCKER_GID),-v $(DOCKER_SOCKET):/var/run/docker.sock --group-add $(DOCKER_GID) -e EASYCODE_TEST_DOCKER_SOCKET=/var/run/docker.sock -e EASYCODE_TEST_SANDBOX_IMAGE=$(SANDBOX_TEST_IMAGE),)
 RUN_ENV         ?= --network host -e EASYCODE_DATABASE_URL -e EASYCODE_HTTP_ADDR -e EASYCODE_LOG_LEVEL
 
-.PHONY: build test test-race test-integration lint run migrate image fmt tidy cache ci check-specs sync-specs
+.PHONY: build test test-race test-integration lint run migrate image fmt tidy cache ci check-specs sync-specs sandbox-image
 
 cache:
 	@docker volume create easycode-go-cache >/dev/null
@@ -21,14 +27,18 @@ build: cache
 
 # Set EASYCODE_TEST_DATABASE_URL to a disposable database to run the migrator integration test.
 test: cache
-	$(DOCKER_GO) -e EASYCODE_TEST_DATABASE_URL $(TEST_NETWORK) $(GO_IMAGE) go test -count=1 -timeout 20m ./...
+	$(DOCKER_GO) -e EASYCODE_TEST_DATABASE_URL $(TEST_NETWORK) $(TEST_DOCKER) $(GO_IMAGE) go test -count=1 -timeout 30m ./...
 
 test-race: cache
-	$(DOCKER_GO) -e EASYCODE_TEST_DATABASE_URL $(TEST_NETWORK) $(GO_IMAGE) go test -race -count=1 -timeout 20m ./...
+	$(DOCKER_GO) -e EASYCODE_TEST_DATABASE_URL $(TEST_NETWORK) $(TEST_DOCKER) $(GO_IMAGE) go test -race -count=1 -timeout 30m ./...
 
 # Runs every test, integration included, against a throwaway PostgreSQL container.
-test-integration:
+test-integration: sandbox-image
 	./scripts/with-postgres.sh $(MAKE) test
+
+# Go sandbox image with the warm build cache (ADR-07), used by the sandbox tests.
+sandbox-image:
+	docker build -q -t $(SANDBOX_TEST_IMAGE) ../infra/sandbox/go >/dev/null
 
 # The binaries embed copies of domain specs (workflow, artifact schemas, permissions) and agent
 # instructions, so builds are reproducible from project/backend alone. check-specs fails when a copy

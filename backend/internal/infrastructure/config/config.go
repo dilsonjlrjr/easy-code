@@ -57,6 +57,19 @@ const (
 	EnvWorkerCorrections    = "EASYCODE_WORKER_MAX_ARTIFACT_CORRECTIONS"
 	EnvWorkerMaxTokens      = "EASYCODE_WORKER_MAX_OUTPUT_TOKENS"
 	EnvWorkerID             = "EASYCODE_WORKER_ID"
+	EnvReposDir             = "EASYCODE_REPOS_DIR"
+	EnvGitBaseURL           = "EASYCODE_GIT_BASE_URL"
+	EnvSandboxSocket        = "EASYCODE_SANDBOX_SOCKET"
+	EnvSandboxImage         = "EASYCODE_SANDBOX_IMAGE"
+	EnvSandboxImages        = "EASYCODE_SANDBOX_IMAGES"
+	EnvSandboxRuntime       = "EASYCODE_SANDBOX_RUNTIME"
+	EnvDockerSocket         = "EASYCODE_DOCKER_SOCKET"
+	EnvSandboxDepsNetwork   = "EASYCODE_SANDBOX_DEPENDENCIES_NETWORK"
+	EnvSandboxDepsProxy     = "EASYCODE_SANDBOX_DEPENDENCIES_PROXY"
+	EnvProjectCPULimit      = "EASYCODE_PROJECT_CPU_LIMIT"
+	EnvProjectMemoryLimit   = "EASYCODE_PROJECT_MEMORY_LIMIT_MIB"
+	EnvProjectDiskLimit     = "EASYCODE_PROJECT_DISK_LIMIT_MIB"
+	EnvProjectCommandTime   = "EASYCODE_PROJECT_COMMAND_TIME"
 )
 
 // removedVariables belonged to the marco1 development profile (fixed "dev" identity), which no
@@ -80,6 +93,34 @@ type Config struct {
 	Gateway   Gateway
 	Identity  Identity
 	Providers Providers
+	Sandbox   Sandbox
+	// ReposDir is the directory of the project git repositories (volume repos, US-42).
+	ReposDir string
+	// GitBaseURL is the public base of the clone URLs (Repository.clone_url); "" = PublicOrigin.
+	GitBaseURL string
+}
+
+// Sandbox configures easycode-sandbox and its use by the worker (ADR-05, ADR-06, RNF-03).
+type Sandbox struct {
+	// Socket is the Unix socket shared only by the worker and the runner.
+	Socket string
+	// Image is the logical image of the project stack the worker asks for (Phase 1: Go).
+	Image string
+	// Images is the allowlist of the runner: logical id → local image reference ("go=easycode-sandbox-go:dev").
+	Images map[string]string
+	// Runtime is the OCI runtime of the containers (runc in Phase 1, runsc later).
+	Runtime string
+	// DockerSocket is the daemon socket, only mounted in the runner.
+	DockerSocket string
+	// DependenciesNetwork is the internal network of the dependency action, whose only exit is the deps-proxy (ADR-07).
+	DependenciesNetwork string
+	// DependenciesProxy is the deps-proxy URL the package managers use in the dependency action.
+	DependenciesProxy string
+	// Project limits of RNF-03 (2 vCPU, 4 GiB, 10 GiB, 30 min by default).
+	CPU         float64
+	MemoryMiB   int
+	DiskMiB     int
+	CommandTime time.Duration
 }
 
 // Identity configures the SSO (Keycloak realm, ADR-12) and the web session.
@@ -237,6 +278,23 @@ func Load(lookup LookupFunc) (Config, error) {
 			KeyTestTimeout:       r.duration(EnvKeyTestTimeout, 15*time.Second),
 			AttachmentLimitBytes: r.integer(EnvAttachmentLimit, 10<<20),
 		},
+	}
+	cfg.ReposDir = r.text(EnvReposDir, "/var/lib/easycode/repos")
+	cfg.GitBaseURL = strings.TrimRight(r.text(EnvGitBaseURL, cfg.Identity.PublicOrigin), "/")
+	cfg.Sandbox = Sandbox{
+		Socket: r.text(EnvSandboxSocket, "/run/easycode-sandbox/runner.sock"), Image: r.text(EnvSandboxImage, "go"),
+		Images: map[string]string{}, Runtime: r.text(EnvSandboxRuntime, "runc"), DockerSocket: r.text(EnvDockerSocket, "/var/run/docker.sock"),
+		DependenciesNetwork: r.text(EnvSandboxDepsNetwork, ""), DependenciesProxy: r.text(EnvSandboxDepsProxy, ""),
+		CPU: float64(r.integer(EnvProjectCPULimit, 2)), MemoryMiB: r.integer(EnvProjectMemoryLimit, 4096),
+		DiskMiB: r.integer(EnvProjectDiskLimit, 10240), CommandTime: r.duration(EnvProjectCommandTime, 30*time.Minute),
+	}
+	for _, item := range r.list(EnvSandboxImages) {
+		logical, ref, ok := strings.Cut(item, "=")
+		if !ok || logical == "" || ref == "" {
+			r.fail(EnvSandboxImages, item, errors.New("want logical=image"))
+			continue
+		}
+		cfg.Sandbox.Images[logical] = ref
 	}
 	r.checkIdentity(cfg.Identity)
 	cfg.Database.MigrationURL = r.text(EnvMigrationDatabaseURL, cfg.Database.URL)
