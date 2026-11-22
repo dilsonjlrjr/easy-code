@@ -4,7 +4,8 @@
 # Development shortcuts, not for production:
 # - every service connects as the database superuser; production uses the per-process roles
 #   that the first migration creates (ADR-18);
-# - no reverse proxy, TLS or Keycloak yet.
+# - no reverse proxy, TLS or Keycloak yet;
+# - easycode-gateway runs the fake provider (real provider adapter lands in Onda 1).
 
 name: easycode
 
@@ -69,6 +70,22 @@ services:
       context: ./backend
       args:
         BINARY: easycode-worker
+    volumes:
+      - gateway-socket:/run/easycode-gateway
+
+  # Only process that opens provider keys (S-03). Until Onda 1 it serves the deterministic fake
+  # provider; no database, no network beyond the socket shared with the worker.
+  gateway:
+    build:
+      context: ./backend
+      args:
+        BINARY: easycode-gateway
+    environment:
+      EASYCODE_LOG_LEVEL: ${EASYCODE_LOG_LEVEL:-debug}
+      EASYCODE_GATEWAY_PROVIDERS: fake
+    network_mode: none
+    volumes:
+      - gateway-socket:/run/easycode-gateway
 
   frontend:
     build:
@@ -80,3 +97,4 @@ services:
 
 volumes:
   postgres-data:
+  gateway-socket:

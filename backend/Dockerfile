@@ -13,9 +13,13 @@ COPY . .
 RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
     go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o /out/app ./cmd/${BINARY}
+# Socket directory shared by easycode-gateway and the worker: a named volume mounted here starts
+# with this ownership, so the nonroot gateway can create its socket.
+RUN mkdir -p /out/run/easycode-gateway
 
 FROM ${RUNTIME_IMAGE}
 COPY --from=build /out/app /app
+COPY --from=build --chown=nonroot:nonroot /out/run/easycode-gateway /run/easycode-gateway
 USER nonroot:nonroot
 EXPOSE 8080
 ENTRYPOINT ["/app"]

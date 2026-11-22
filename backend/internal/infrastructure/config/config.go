@@ -29,6 +29,10 @@ const (
 	EnvOTelInsecure         = "EASYCODE_OTEL_INSECURE"
 	EnvOTelSampleRatio      = "EASYCODE_OTEL_SAMPLE_RATIO"
 	EnvWorkerHeartbeat      = "EASYCODE_WORKER_HEARTBEAT_INTERVAL"
+	EnvWorkerOutboxPoll     = "EASYCODE_WORKER_OUTBOX_POLL_INTERVAL"
+	EnvGatewaySocket        = "EASYCODE_GATEWAY_SOCKET"
+	EnvGatewayProviders     = "EASYCODE_GATEWAY_PROVIDERS"
+	EnvGatewaySessionIdle   = "EASYCODE_GATEWAY_SESSION_IDLE"
 )
 
 // LookupFunc reads one environment variable. os.LookupEnv satisfies it.
@@ -41,6 +45,7 @@ type Config struct {
 	Database  Database
 	Telemetry Telemetry
 	Worker    Worker
+	Gateway   Gateway
 }
 
 // HTTP configures the api listener.
@@ -71,6 +76,18 @@ type Telemetry struct {
 // Worker configures the background worker loop.
 type Worker struct {
 	HeartbeatInterval time.Duration
+	// OutboxPollInterval is the fallback poll of the outbox publisher; a NOTIFY wakes it earlier.
+	OutboxPollInterval time.Duration
+}
+
+// Gateway configures easycode-gateway (interno.md section 3).
+type Gateway struct {
+	// Socket is the Unix socket shared only with the worker.
+	Socket string
+	// Providers lists the enabled provider adapters, comma separated ("fake" until Onda 1).
+	Providers []string
+	// SessionIdle closes a wave session after this inactivity.
+	SessionIdle time.Duration
 }
 
 // Load reads the configuration. It reports every invalid variable at once.
@@ -96,7 +113,15 @@ func Load(lookup LookupFunc) (Config, error) {
 			Insecure:    r.boolean(EnvOTelInsecure, false),
 			SampleRatio: r.ratio(EnvOTelSampleRatio, 1.0),
 		},
-		Worker: Worker{HeartbeatInterval: r.duration(EnvWorkerHeartbeat, 30*time.Second)},
+		Worker: Worker{
+			HeartbeatInterval:  r.duration(EnvWorkerHeartbeat, 30*time.Second),
+			OutboxPollInterval: r.duration(EnvWorkerOutboxPoll, 5*time.Second),
+		},
+		Gateway: Gateway{
+			Socket:      r.text(EnvGatewaySocket, "/run/easycode-gateway/gateway.sock"),
+			Providers:   r.list(EnvGatewayProviders),
+			SessionIdle: r.duration(EnvGatewaySessionIdle, 15*time.Minute),
+		},
 	}
 	cfg.Database.MigrationURL = r.text(EnvMigrationDatabaseURL, cfg.Database.URL)
 	return cfg, errors.Join(r.problems...)
@@ -130,6 +155,20 @@ func (r *reader) text(key, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+func (r *reader) list(key string) []string {
+	value, ok := r.raw(key)
+	if !ok {
+		return nil
+	}
+	var items []string
+	for _, item := range strings.Split(value, ",") {
+		if item = strings.TrimSpace(item); item != "" {
+			items = append(items, item)
+		}
+	}
+	return items
 }
 
 func (r *reader) duration(key string, fallback time.Duration) time.Duration {
