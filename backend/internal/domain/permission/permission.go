@@ -42,7 +42,13 @@ type Policy struct {
 	Categories []string                    // command categories the agent may use
 	Commands   map[string]sandbox.Category // command_categories of permissoes.yaml
 	Ceiling    sandbox.Limits              // limits of the agent profile (nil limits = zero)
+	// TrackingPaths are artifacts of other agents (or approved ones of its own) whose tracking fields the
+	// agent updates (permissoes.yaml writes, operation tracking_fields: the T of the Dev, CT.execucao).
+	TrackingPaths []string
 }
+
+// CanTrack reports whether the agent may update the tracking fields of the artifact at path.
+func (p Policy) CanTrack(clean string) bool { return matchAny(p.TrackingPaths, clean) }
 
 // Tools returns the tools the agent may call, in a stable order. finish is always offered.
 func (p Policy) Tools() []string {

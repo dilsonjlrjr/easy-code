@@ -33,6 +33,8 @@ type CheckView struct {
 	Severity string
 	Status   string
 	Evidence json.RawMessage
+	// ConfirmedBy is who confirmed (or refused) a human check, nil while pending.
+	ConfirmedBy *DecisionView
 }
 
 // DecisionView is the human or orchestrator decision of a round.
@@ -58,6 +60,21 @@ type RoundView struct {
 	Decision     *DecisionView
 	// ReworkWave is the code of the rework wave a rejection created (ER-12-14), "" when none.
 	ReworkWave string
+	// BlockingFindings are the active critical or high findings of the gate scope; NonBlockingFindings
+	// the other active ones (gate report, US-31 CA-3).
+	BlockingFindings    []FindingRef
+	NonBlockingFindings []FindingRef
+	// Evaluation is the current evaluation of the round; ReevaluatedBy the finding whose opening made it
+	// evaluate again (US-31 CA-3), "" when none.
+	Evaluation    int
+	ReevaluatedBy string
+}
+
+// FindingRef is a finding listed in a round (FindingSummary).
+type FindingRef struct {
+	Code, Title, Severity, Category, Status, DestinationStage, OriginStage, Author string
+	Cycles                                                                         int
+	OpenedAt                                                                       time.Time
 }
 
 // OutputRef is an output version of the round.
@@ -72,8 +89,9 @@ type OutputRef struct {
 type DecisionStore interface {
 	Rounds(ctx context.Context, projectID, stage string) ([]RoundView, error)
 	Round(ctx context.Context, projectID, stage string, round int) (RoundView, error)
-	// Decide locks the round, records the confirmation and moves the round (approve or reject).
-	Decide(ctx context.Context, principal identity.Principal, projectID, stage string, round int, approve bool, reason string) error
+	// Decide locks the round, records the confirmation and the human checks (confirmed when approving,
+	// failed when rejecting) and moves the round (approve or reject).
+	Decide(ctx context.Context, principal identity.Principal, projectID, stage string, round int, approve bool, reason string, confirmed []string) error
 }
 
 // Decision is approveGate or rejectGate.
@@ -169,12 +187,13 @@ func (d *Decisions) Decide(ctx context.Context, principal identity.Principal, se
 		}
 	}
 	err = d.tx.InTx(ctx, func(ctx context.Context) error {
-		if err := d.store.Decide(ctx, principal, decision.ProjectID, stage, decision.Round, decision.Approve, decision.Reason); err != nil {
+		if err := d.store.Decide(ctx, principal, decision.ProjectID, stage, decision.Round, decision.Approve, decision.Reason, decision.ConfirmedChecks); err != nil {
 			return err
 		}
 		eventType, action, to := "br.easycode.gate.approved.v1", "gate.approve", StateApproved
+		confirmed := orEmpty(decision.ConfirmedChecks)
 		data := map[string]any{"gate": decision.Gate, "round": decision.Round, "stage": stage, "ok_checks": len(current.Checks),
-			"actor": map[string]any{"type": "human", "id": principal.Subject, "origin": "web"}, "approvals": 1, "confirmed_human_checks": []string{}}
+			"actor": map[string]any{"type": "human", "id": principal.Subject, "origin": "web"}, "approvals": 1, "confirmed_human_checks": confirmed}
 		if !decision.Approve {
 			eventType, action, to = "br.easycode.gate.rejected.v1", "gate.reject", StateRejected
 			data = map[string]any{"gate": decision.Gate, "round": decision.Round, "stage": stage, "failed_checks": []string{},

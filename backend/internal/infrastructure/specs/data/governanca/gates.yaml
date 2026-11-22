@@ -1,0 +1,276 @@
+# Composição dos gates do workflow padrão (decisão D-02). Lote E3-4, parte A.
+# Esquema: governanca.schema.json (tipo: gate_composition). Catálogo: checagens.yaml. Máquina da rodada: estados/gate.md.
+#
+# Convenções:
+#   - Um gate por id citado em workflow/workflow-padrao.yaml. `approves` = tipos de artefato que o gate leva a aprovado
+#     (saídas da etapa + saídas de atividades paralelas com approved_in_gate igual ao gate).
+#   - required_checks: falha leva a rodada a reprovado (failure_severity: bloqueia no catálogo).
+#     alert_checks: falha só entra no relatório do gate (failure_severity: alerta no catálogo).
+#   - common_checks valem para todos os gates, somadas às de cada gate; checagem cujo alvo não existe na etapa
+#     (ex.: artefato tipado na implementação) passa sem itens.
+#   - Checagem humana só entra em gate cujo modo permitido é só humana: num gate que pode ser automático ela não teria
+#     quem a executasse.
+#   - approval.allowed = default_approval do workflow; approval.default = default_mode (PROJETO.md 7.3).
+#   - alerts_require_human: alertas cuja falha tira a rodada do modo automático (vai a awaiting_human; PC-06).
+#   - Fase 1 (workflow-basico.yaml, PD-01): valem os gates das três etapas dele (requisitos, arquitetura, implementacao),
+#     com a mesma composição; o modo vem do workflow em vigor (gate.implementation só humano na Fase 1).
+version: 1
+type: gate_composition
+workflow: workflow-padrao
+
+common_checks:
+  required_checks:
+    - artifact.schema_valid
+    - artifact.history_has_current_version
+    - artifact.ids_unique
+    - artifact.author_consistent
+    - artifact.no_foreign_approved_modification
+    - stage.required_outputs_present
+    - stage.inputs_approved
+    - wave.limits_respected
+    - project.history_preserved
+    - traceability.existing_references
+    - finding.no_open_blocking
+    - finding.destination_consistent
+    - finding.design_points_to_screens
+    - finding.cycles_consistent
+    - finding.internal_cycle_green
+    - finding.escalation_consistent
+    - finding.extra_round_authorized
+    - finding.closing_consistent
+    - finding.human_acceptance
+    - finding.discard_consistent
+    - traceability.replacement_reciprocal
+    - traceability.rework_recorded
+  alert_checks:
+    - wave.record_complete
+    - traceability.no_reference_to_replaced
+    - finding.no_open_medium_low
+
+gates:
+  - id: gate.requirements
+    stage: requirements
+    approves: [VISAO, US, RNF, BACKLOG]
+    required_checks:
+      - us.acceptance_criteria_present
+      - us.no_blocking_question
+      - rnf.metric_and_verification
+      - rnf.min_categories
+      - backlog.assumptions_checked
+      - backlog.priority_consistent
+      - traceability.backlog_covers_us
+      - us.criteria_testable
+      - visao.scope_confirmed
+    alert_checks:
+      - us.criteria_no_vague_term
+      - traceability.us_rnf_reciprocal
+      - us.real_origin
+      - visao.glossary_complete
+      - artifact.body_no_contradiction
+    approval: { allowed: human, default: human, always_human: false, configurable_per_project: false }
+
+  - id: gate.architecture
+    stage: architecture
+    approves: [ARQ, ADR, T]
+    required_checks:
+      - arq.openapi_valid
+      - t.dependencies_no_cycle
+      - traceability.us_must_covered_by_t
+      - traceability.component_justified
+      - traceability.adr_listed_in_arq
+      - traceability.t_points_to_us
+      - traceability.operations_in_contract
+    alert_checks:
+      - traceability.ca_must_covered_by_t
+      - artifact.body_no_contradiction
+      - traceability.us_met_by_component
+    approval: { allowed: human, default: human, always_human: false, configurable_per_project: false }
+
+  - id: gate.data
+    stage: data
+    approves: [DIC, PERSIST]
+    required_checks:
+      - dic.ddl_executes
+      - dic.model_consistent
+      - dic.personal_data_marked
+      - persist.model_references
+      - dic.integrity_by_constraint
+      - dic.personal_classification_checked
+    alert_checks:
+      - dic.legal_basis_defined
+      - traceability.performance_rnf_in_persist
+      - artifact.body_no_contradiction
+    approval: { allowed: human, default: human, always_human: false, configurable_per_project: false }
+
+  - id: gate.design
+    stage: design
+    approves: [TELAS]
+    required_checks:
+      - telas.files_present
+      - telas.criteria_consistent
+      - telas.prototype_navigable
+      - telas.accessibility_verified
+      - telas.state_by_parameter
+      - traceability.interface_us_in_screen
+      - traceability.operations_in_contract
+    alert_checks:
+      - artifact.body_no_contradiction
+    approval: { allowed: human, default: human, always_human: false, configurable_per_project: false }
+
+  # Aprova também CT (plano, atividade qa-plano) e AMEACAS (atividade seguranca-ameacas).
+  - id: gate.validation
+    stage: validation
+    approves: [VALIDACAO, CT, AMEACAS]
+    required_checks:
+      - validacao.checks_complete
+      - validacao.review_opinions_recorded
+      - validacao.verdict_unblocked
+      - ameacas.high_critical_handled
+      - traceability.ca_must_covered_by_ct
+      - traceability.contract_gap_resolved
+      - traceability.validation_coverage_consistent
+      - traceability.validation_versions_current
+    alert_checks:
+      - validacao.review_opinion_rejected
+      - traceability.rnf_must_covered_by_ct
+      - traceability.t_cts_consistent
+      - traceability.ca_covered_by_ct
+    alerts_require_human: [validacao.review_opinion_rejected]
+    approval: { allowed: human_or_automatic, default: automatic, always_human: false, configurable_per_project: true }
+
+  # Saída sem tipo de artefato (app/). As checagens de código avaliam o último commit da etapa.
+  - id: gate.implementation
+    stage: implementation
+    approves: []
+    required_checks:
+      - code.build_green
+      - tests.executed_green
+      - code.lint_clean
+      - code.migrations_consistent_with_ddl
+      - t.completed_or_justified
+      - t.dev_record_present
+    alert_checks:
+      - code.api_contract_consistent
+      - traceability.file_scope_respected
+    approval: { allowed: human_or_automatic, default: human, always_human: false, configurable_per_project: true }
+
+  - id: gate.qa
+    stage: qa
+    approves: [REL-QA]
+    required_checks:
+      - rel_qa.consistent_with_ct
+      - rel_qa.open_findings_consistent
+      - rel_qa.verdict_approved
+      - traceability.ca_must_with_ct_passing
+      - traceability.ct_execution_linked
+    alert_checks:
+      - ct.not_executed_justified
+      - rel_qa.commands_reproducible
+      - artifact.body_no_contradiction
+      - traceability.ct_test_in_t
+    approval: { allowed: human, default: human, always_human: false, configurable_per_project: false }
+
+  - id: gate.security
+    stage: security
+    approves: [REL-SEG]
+    required_checks:
+      - security.no_critical_risk
+      - rel_seg.summary_consistent
+      - rel_seg.scans_executed
+      - rel_seg.verdict_approved
+      - traceability.threats_checked
+    alert_checks:
+      - rel_seg.false_positives_reviewed
+      - artifact.body_no_contradiction
+    approval: { allowed: human, default: human, always_human: false, configurable_per_project: false }
+
+  # No gate.release, finding.no_open_blocking vale para o projeto inteiro.
+  - id: gate.release
+    stage: release
+    approves: [RELEASE]
+    required_checks:
+      - release.gates_approved
+      - release.current_quality
+      - release.accepted_risks_complete
+      - release.no_active_wave
+      - security.no_critical_risk
+      - traceability.us_must_complete
+      - release.delivery_checked
+      - traceability.release_scope_consistent
+      - traceability.release_commit_contains_work
+    alert_checks:
+      - release.costs_consistent
+      - artifact.body_no_contradiction
+      - traceability.release_open_findings_listed
+    approval: { allowed: human, default: human, always_human: true, configurable_per_project: false }
+
+# Retrabalho de implementação por ACH não abre rodada de gate (achado.md, seção 7): estas checagens valem no commit de cada
+# ciclo, na transição do ACH de in_rework para revalidando. Sem aprovação humana; confirma a revalidação do emissor.
+internal_cycle:
+  - stage: implementation
+    transition: { machine: finding, event: easycode.wave.completed }
+    required_checks:
+      - code.build_green
+      - tests.executed_green
+      - code.lint_clean
+      - finding.internal_cycle_green
+    alert_checks:
+      - code.api_contract_consistent
+
+# Sempre humano, em qualquer etapa e qualquer configuração (PROJETO.md 7.3). Nenhum agente nem o orquestrador executa.
+decisions_always_human:
+  - id: scope_change
+    description: >-
+      Mudar o escopo do projeto: decisão sobre ACH escalado e pergunta do agente que muda escopo (onda em
+      awaiting_user). Registra autorizado_por e decidido_em; a decisão do ACH exige step-up (PL-38), escolhe quem altera
+      os Artefatos de requisitos (agente ou edição humana) e o ACH só fecha quando o gate.requirements aprova a alteração (PD-06).
+    transitions:
+      - { machine: finding, event: decide_scope_change }
+      - { machine: wave, event: answer }
+    references: { project: ["7.3"], specification: [achado.md#41-resolucao-do-achado-fechado], policies: [policy.required_human_approval] }
+  - id: risk_accepted
+    description: Exceção de segurança e qualquer aceite de risco de ACH; tira o ACH do bloqueio do gate e da Release.
+    transitions:
+      - { machine: finding, event: accept_risk }
+    references: { project: ["7.3"], specification: [achado.md#5-aceite-de-risco], policies: [policy.required_human_approval, policy.decision_record] }
+  - id: extra_round
+    description: Autorizar rodada de retrabalho além de 3 ciclos para ACH escalado (uma rodada por autorização).
+    transitions:
+      - { machine: finding, event: authorize_new_rework }
+    references: { project: ["6.3.4"], specification: [achado.md#4-ciclo-de-retrabalho-e-revalidacao], policies: [policy.rework_cycle_limit] }
+  - id: release_approval
+    description: Aprovar o gate.release; a decisão vai para RELEASE.aprovacao.
+    transitions:
+      - { machine: gate, event: approve }
+    references: { project: ["6.1", "7.3"], schemas: [release.schema.json], policies: [policy.required_human_approval] }
+  - id: production_publication
+    description: >-
+      Fases 1-2: concluir o projeto depois do gate.release aprovado, com a tag da release no repositório (US-52,
+      concluirProjeto). Fase 3: registrar a publicação feita pelo CI/CD da empresa, conforme a política da organização;
+      com RELEASE.entrega.ambiente producao, exige autorização humana registrada.
+    transitions:
+      - { machine: project, event: record_publication }
+    references: { project: ["7.2.10", "7.3"], policies: [policy.required_human_approval] }
+
+# O que o projeto pode ajustar nas Fases 1 e 2. A Fase 4 amplia (workflow/README.md, "Fixo nas Fases 1-2").
+configuration_per_project:
+  configurable:
+    - id: approval_mode
+      description: >-
+        Escolher humana ou automatica só nos gates com configurable_per_project true (gate.validation, gate.implementation),
+        pelo responsável (US-07). Modo automatico na implementação = modo AUTOMATICO do Dev (tarefas em sequência; o gate
+        confere o critério de saída); modo manual = gate.implementation humano, sem aprovação por tarefa (PL-35). Troca com
+        rodada aberta: para humana vale na hora, para automatica só na próxima rodada (PD-05, estados/gate.md).
+    - id: promote_alert
+      description: Tornar bloqueante, no projeto, uma checagem de alerta de qualquer gate (nunca o contrário).
+  not_configurable:
+    - id: required_checks
+      description: Remover checagem obrigatória ou rebaixá-la a alerta, em qualquer gate e no ciclo interno.
+    - id: override_approval
+      description: Aprovar rodada com checagem bloqueante falha (a saída é aceite de risco do ACH, só humano).
+    - id: human_gates_mode
+      description: Modo automatico em gate com permitidos humana (requisitos, arquitetura, dados, design, qa, seguranca, release).
+    - id: decisions_always_human
+      description: Delegar a agente ou ao orquestrador qualquer item de decisions_always_human.
+    - id: cycle_limit
+      description: Limite de 3 ciclos por achado e roteamento padrão por categoria (workflow-padrao.yaml, retornos).

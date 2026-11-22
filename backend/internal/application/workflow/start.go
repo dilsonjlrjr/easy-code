@@ -144,6 +144,10 @@ type NewWave struct {
 	Pair          ResolvedPair
 	Configuration AgentConfiguration
 	Task          string // T of an implementation wave (one wave per task, PL-20)
+	// Purpose is execution (default), rework, revalidation or reevaluation; Finding is the ACH of a
+	// rework or revalidation wave (waves_finding_ck).
+	Purpose string
+	Finding string
 }
 
 // AgentConfiguration is the default configuration of the stage agent (agent_configurations v1).
@@ -178,6 +182,12 @@ type Orchestration interface {
 	StageStates(ctx context.Context, projectID string) (map[string]string, error)
 	// ApprovedTasks lists the approved T of the project in number order (one implementation wave each).
 	ApprovedTasks(ctx context.Context, projectID string) ([]string, error)
+	// ResumePaused moves the waves of a stage paused by policy back to running (resume_by_policy) and
+	// returns their codes; HasWaves reports whether the stage has waves not completed nor canceled.
+	ResumePaused(ctx context.Context, projectID, stage string) ([]string, error)
+	HasWaves(ctx context.Context, projectID, stage string) (bool, error)
+	// ReevaluationPending lists the approved stages marked for reevaluation.
+	ReevaluationPending(ctx context.Context, projectID string) (map[string]bool, error)
 }
 
 // AgentDefaults gives the default configuration of an agent.

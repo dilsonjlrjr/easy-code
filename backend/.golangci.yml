@@ -20,7 +20,7 @@ linters:
     misspell:
       locale: US
       # Artifact header fields are pt-BR by the domain schemas (specs/dominio/artefatos).
-      ignore-rules: [autor, participante, participantes]
+      ignore-rules: [autor, participante, participantes, componentes, criticos, comando]
     gosec:
       excludes:
         - G115 # integer conversions are bounded by config validation

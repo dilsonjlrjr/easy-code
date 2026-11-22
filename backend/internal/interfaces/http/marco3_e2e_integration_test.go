@@ -76,7 +76,7 @@ func (p *agentScripts) Complete(_ context.Context, req provider.Request, _ func(
 	return provider.Response{Message: script[0], Usage: provider.Usage{Input: 900, Output: 200}, Stop: provider.StopTool, ProviderID: "req"}, nil
 }
 
-func folderFiles(t *testing.T, dir, prefix string) map[string]string {
+func folderFiles(t *testing.T, dir string) map[string]string {
 	t.Helper()
 	files := map[string]string{}
 	entries, err := os.ReadDir(dir)
@@ -88,7 +88,7 @@ func folderFiles(t *testing.T, dir, prefix string) map[string]string {
 		if err != nil {
 			t.Fatal(err)
 		}
-		files[prefix+entry.Name()] = string(raw)
+		files[entry.Name()] = string(raw)
 	}
 	return files
 }
@@ -159,7 +159,7 @@ func TestReserveConflict(t *testing.T) { // US-01 CA-2
 
 func phase1Scripts(t *testing.T) map[string][]provider.Message {
 	requirements := provider.Message{Calls: append(writeAll(referenceFiles(t), "r"), call("rf", runtime.ToolFinish, map[string]any{}))}
-	architecture := folderFiles(t, "testdata/reserva-arquitetura", "")
+	architecture := folderFiles(t, "testdata/reserva-arquitetura")
 	archFiles := map[string]string{
 		"docs/arquitetura/ARQ.md": architecture["ARQ.md"], "docs/arquitetura/adr/ADR-01.md": architecture["ADR-01.md"],
 		"docs/arquitetura/tarefas/T-01.md": architecture["T-01.md"], "docs/arquitetura/estrutura.md": architecture["estrutura.md"],
@@ -177,6 +177,7 @@ func phase1Scripts(t *testing.T) map[string][]provider.Message {
 	}
 	build := map[string]any{"category": "build", "argv": []string{"go", "build", "./..."}, "directory": "app"}
 	tests := map[string]any{"category": "tests", "argv": []string{"go", "test", "-count=1", "-v", "./..."}, "directory": "app"}
+	lint := map[string]any{"category": "lint", "argv": []string{"go", "vet", "./..."}, "directory": "app"} // code.lint_clean (US-31)
 	developer := []provider.Message{
 		{Calls: []provider.ToolCall{
 			call("d1", runtime.ToolReadFile, map[string]string{"path": "docs/arquitetura/tarefas/T-01.md"}),
@@ -196,6 +197,7 @@ func phase1Scripts(t *testing.T) map[string][]provider.Message {
 			call("d11", runtime.ToolWriteFile, map[string]string{"path": "app/README.md", "content": "# Reserva\n\nTestes: `go test ./...` em app/.\n"}),
 			call("d12", runtime.ToolExecuteCommand, build),
 			call("d13", runtime.ToolExecuteCommand, tests),
+			call("d13l", runtime.ToolExecuteCommand, lint),
 			call("d14", runtime.ToolFinish, map[string]any{}),
 		}},
 	}
@@ -251,7 +253,7 @@ func newPhase1Worker(t *testing.T, db *postgrestest.Database, gateway runtime.Ga
 		t.Fatal(err)
 	}
 	store := appartifact.NewStore(tx, specs.HeaderParser{}, validator, postgres.NewArtifacts(pool), outbox)
-	progress := appgate.NewProgress(tx, postgres.NewGates(pool), store, validator, flow{workflows, orchestrator}, outbox, wf.Definition)
+	progress := newProgress(t, tx, pool, store, validator, flow{workflows, orchestrator}, outbox, wf.Definition)
 	ledger := postgres.NewLedger(pool)
 	models := runtime.NewGatewayModels(gateway, postgres.NewProviderKeys(pool), ledger, ledger)
 	agents := map[string]runtime.Agent{}
@@ -312,11 +314,25 @@ func (w phase1Worker) runWave(t *testing.T, live liveAPI, base, wave, want strin
 func (l liveAPI) approve(t *testing.T, base, gate string, round int) {
 	t.Helper()
 	csrf := l.json(t, "GET", "/api/v1/me", "", nil, 200)["csrf_token"].(string)
-	decided := l.json(t, "POST", fmt.Sprintf("%s/gates/%s/rounds/%d/approval", base, gate, round), `{"confirmed_human_checks":[]}`,
+	current := l.json(t, "GET", fmt.Sprintf("%s/gates/%s/rounds/%d", base, gate, round), "", nil, 200)
+	decided := l.json(t, "POST", fmt.Sprintf("%s/gates/%s/rounds/%d/approval", base, gate, round), confirmedChecks(t, current),
 		mergeHeaders(key(), map[string]string{"X-CSRF-Token": csrf}), 200)
 	if decided["state"] != "approved" {
 		t.Fatalf("%s approval: %v", gate, decided)
 	}
+}
+
+// confirmedChecks is the approval body that confirms every human check of the round (US-06 RN-3).
+func confirmedChecks(t *testing.T, round map[string]any) string {
+	t.Helper()
+	ids := []string{}
+	for _, item := range round["checks"].([]any) {
+		if c := item.(map[string]any); c["type"] == "human" {
+			ids = append(ids, c["check"].(string))
+		}
+	}
+	body, _ := json.Marshal(map[string]any{"confirmed_human_checks": ids})
+	return string(body)
 }
 
 func checksOf(t *testing.T, round map[string]any) map[string]string {
@@ -461,7 +477,7 @@ SELECT organization_id, 'anthropic', $1, $2, '0000', id FROM easycode.users WHER
 		t.Fatalf("US-19 CA-1: commit of the wave: %v", dev)
 	}
 	executions := live.json(t, "GET", base+"/waves/DEV-01/sandbox-executions", "", nil, 200)["items"].([]any)
-	if len(executions) != 4 {
+	if len(executions) != 5 {
 		t.Fatalf("US-41 CA-1: every command of the wave: %v", executions)
 	}
 	for _, item := range executions {

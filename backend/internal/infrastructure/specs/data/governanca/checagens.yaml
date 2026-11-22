@@ -1,0 +1,1892 @@
+# Catálogo de checagens nomeadas do Easy Code (decisão D-02, specs/dominio/README.md). Lote E3-4, parte A.
+# Esquema: governanca.schema.json (tipo: check_catalog). Composição por gate: gates.yaml.
+#
+# Convenções:
+#   - id: <alvo>.<regra> em snake_case, sem acento. Prefixo `traceability.` para checagens do grafo de vínculos
+#     (regras RAS-nn de specs/dominio/rastreabilidade.md). `rule: RAS-nn` liga a checagem à regra; checagem de outro
+#     alvo que implementa uma RAS também leva `rule`. Toda RAS-nn tem ao menos uma checagem (valida_gov.py confere).
+#   - references.policies: políticas de politicas.yaml que a checagem aplica.
+#   - target.type: artefato (com a lista de tipos), etapa (com a lista de etapas), onda (ondas das etapas listadas), projeto.
+#   - tipo: automatica (o orquestrador executa na avaliação da rodada, transição complete_checks)
+#           humana (o aprovador confirma no ato de aprovar; sem confirmação, reprova com a checagem como motivo).
+#   - failure_severity: bloqueia (a rodada vai a reprovado; nenhum humano aprova por cima) | alerta (entra no relatório do gate).
+#   - le / approves_when / fails_when: definição verificável. "ACH ativo" = situacao em aberto, in_rework, revalidando
+#     escalado ou awaiting_scope (specs/dominio/achado.md, seção 7). "Artefato vigente" = estado diferente de substituido.
+#   - guardas: transições de estados.yaml (maquina + evento) cuja guarda usa a checagem além do gate.
+#   - references.project: seção do PROJETO.md; terceiro número = item da lista numerada (7.2.1 = seção 7.2, regra 1).
+#   - Regras que o JSON Schema do artefato já garante não são repetidas: entram por artifact.schema_valid.
+version: 1
+type: check_catalog
+
+checks:
+  # ------------------------------------------------------------------ genéricas de artefato
+  - id: artifact.schema_valid
+    name: Cabeçalho YAML válido no esquema do tipo
+    target: { type: artifact, artifacts: [all] }
+    type: automatic
+    reads:
+      - "cabeçalho YAML do artefato"
+      - "esquema urn:easycode:esquema:<tipo>:v1"
+    approves_when: O cabeçalho valida sem erro no esquema do seu `type` (que inclui o cabeçalho comum).
+    fails_when: Cabeçalho ausente, YAML inválido ou qualquer erro de validação; o relatório lista o caminho de cada erro.
+    failure_severity: blocks
+    guards:
+      - { machine: artifact, event: submit_for_review }
+      - { machine: wave, event: complete }
+    references:
+      project: ["7.2.1"]
+      schemas: [cabecalho-comum.schema.json]
+      specification: [README.md#decisoes-de-especificacao]
+
+  - id: artifact.history_has_current_version
+    name: Histórico cobre a versão atual
+    target: { type: artifact, artifacts: [all] }
+    type: automatic
+    reads:
+      - "version"
+      - "history"
+      - "versões anteriores do artefato no repositório do projeto"
+    approves_when: >-
+      A última entrada de `history` tem `version` igual à `version` atual; as versões de `history` são crescentes, sem
+      lacuna, a partir de 1; toda versão anterior registrada continua recuperável no repositório; toda versão nascida de
+      retrabalho por achado tem `history[].achado`.
+    fails_when: Versão atual sem entrada, lacuna ou repetição de versão, versão anterior apagada, ou retrabalho por ACH sem `finding` no histórico.
+    failure_severity: blocks
+    guards:
+      - { machine: artifact, event: submit_for_review }
+      - { machine: finding, event: easycode.wave.completed }
+    references:
+      project: ["7.2.7", "7.2.9"]
+      schemas: [cabecalho-comum.schema.json]
+      specification: [artefatos/README.md#versionamento]
+
+  - id: artifact.ids_unique
+    name: Ids únicos e nome de arquivo coerente
+    target: { type: artifact, artifacts: [all] }
+    type: automatic
+    reads:
+      - "id"
+      - "ids internos dos itens (CA-n, RN-n, S-n, RK-n, AM-n, TL-n)"
+      - "nome do arquivo"
+      - "ids dos demais artefatos do projeto"
+    approves_when: >-
+      O `id` é único no projeto; cada id interno é único dentro do artefato; o nome do arquivo é o `id` (artefato numerado)
+      ou o nome fixo do template (artefato único).
+    fails_when: Id repetido no projeto, id interno repetido no artefato ou arquivo com nome diferente do id.
+    failure_severity: blocks
+    references:
+      specification: [README.md#convencoes-gerais, artefatos/README.md#regras-de-ids]
+
+  - id: artifact.author_consistent
+    name: Autor e onda coerentes com a etapa
+    target: { type: artifact, artifacts: [all] }
+    type: automatic
+    reads:
+      - "author"
+      - "wave"
+      - "tabela de tipos (autor e etapa dona)"
+      - "registro de ondas do orquestrador"
+    approves_when: >-
+      `author` é o agente autor do tipo na tabela de artefatos/README.md (ACH: agente de etapa seguinte à dona do artefato
+      afetado ou orquestrador, nunca requirements-agent; VALIDACAO: architect-agent, líder); `wave` existe, está concluida e pertence à etapa ou atividade paralela que produz o tipo.
+      Versão de edição humana (PD-03): `author: humano` só em VISAO, US, RNF, BACKLOG ou ADR, com `editado_por` igual à pessoa
+      registrada na edição e `revisado_por` igual ao agente autor do tipo; `wave` é a onda de revisão da edição (finalidade
+      edit_review), concluida.
+    fails_when: Autor diferente do previsto, onda inexistente, não concluida ou de outra etapa, ou edição humana sem revisão do agente.
+    failure_severity: blocks
+    references:
+      project: ["7.2.2", "7.2.8"]
+      specification: [artefatos/README.md#tipos]
+
+  - id: artifact.no_foreign_approved_modification
+    name: Nenhum artefato aprovado alterado fora da regra
+    target: { type: stage, stages: [all] }
+    type: automatic
+    reads:
+      - "diff do repositório do projeto entre as versões em version_inputs e o commit da rodada"
+      - "tracking_fields de estados.yaml"
+    approves_when: >-
+      Todo artefato em estado aprovado mudou, na rodada, só em campos de acompanhamento e só pelo agente que a regra
+      permite; qualquer outra mudança veio de reabertura por ACH (artefato voltou a rascunho com `history[].achado`).
+    fails_when: Artefato aprovado alterado fora dos campos de acompanhamento, ou campo de acompanhamento alterado por quem não pode.
+    failure_severity: blocks
+    references:
+      project: ["7.2.2", "7.2.3", "7.2.4"]
+      specification: [artefatos/README.md#campos-de-acompanhamento, estados/artefato.md]
+      policies: [policy.least_privilege]
+
+  - id: artifact.body_no_contradiction
+    name: Corpo Markdown não contradiz o YAML
+    target: { type: artifact, artifacts: [all] }
+    type: human
+    reads:
+      - "cabeçalho YAML"
+      - "corpo Markdown"
+    approves_when: O aprovador confirma que o corpo explica o cabeçalho sem afirmar valor diferente (em conflito vale o YAML).
+    fails_when: O aprovador aponta trecho do corpo que contradiz um campo do YAML.
+    failure_severity: alert
+    references:
+      specification: [README.md#decisoes-de-especificacao]
+
+  # ------------------------------------------------------------------ etapa, onda e projeto
+  - id: stage.required_outputs_present
+    name: Saídas obrigatórias presentes e em revisão
+    target: { type: stage, stages: [all] }
+    type: automatic
+    reads:
+      - "saidas da etapa e das atividades paralelas com approved_in_gate igual ao gate (workflow-padrao.yaml)"
+      - "repositório do projeto"
+      - "estado dos artefatos"
+    approves_when: >-
+      Toda saída com `required: true` existe no caminho declarado (inclusive anexos); toda saída tipada está em
+      in_review na versão da rodada; para tipos numerados (NN), existe ao menos um artefato vigente.
+    fails_when: Saída obrigatória ausente, ou artefato tipado fora de in_review.
+    failure_severity: blocks
+    guards:
+      - { machine: stage, event: submit_to_gate }
+    references:
+      project: ["7.1", "7.2.1"]
+      specification: [workflow/workflow-padrao.yaml]
+
+  - id: stage.inputs_approved
+    name: Entradas usadas são as versões aprovadas vigentes
+    target: { type: stage, stages: [all] }
+    type: automatic
+    reads:
+      - "entradas da etapa (workflow-padrao.yaml)"
+      - "version_inputs registradas ao liberar a etapa"
+      - "estado e versao atuais dos artefatos de entrada"
+    approves_when: >-
+      Toda entrada registrada em `version_inputs` estava em aprovado e continua a versão vigente (não substituido, sem
+      reabertura posterior); a etapa não está marcada com reevaluation_pending.
+    fails_when: Entrada em rascunho ou in_review, versão superada, artefato substituido ou reavaliação pendente.
+    failure_severity: blocks
+    guards:
+      - { machine: stage, event: unblock }
+    references:
+      project: ["6.3.5"]
+      specification: [estados/etapa.md, workflow/README.md#regras-de-retorno]
+
+  - id: wave.limits_respected
+    name: Ondas dentro das permissões do agente
+    target: { type: wave, stages: [all] }
+    type: automatic
+    reads:
+      - "registro de chamadas de ferramenta das ondas da rodada"
+      - "permissões por agente (governanca/permissoes.yaml)"
+    approves_when: Nenhuma onda da rodada usou ferramenta, caminho ou recurso fora das permissões do seu agente.
+    fails_when: Qualquer uso fora das permissões registrado (inclusive tentativa recusada pelo sandbox).
+    failure_severity: blocks
+    references:
+      project: ["7.2.8"]
+      specification: [estados/onda.md]
+      policies: [policy.least_privilege, policy.wave_timeout]
+
+  - id: wave.record_complete
+    name: Ondas com registro de execução completo
+    target: { type: wave, stages: [all] }
+    type: automatic
+    reads:
+      - "registro de ondas do orquestrador"
+    approves_when: Toda onda da rodada em estado final tem modelo, tokens, custo, tempo de execução e checkpoint final registrados.
+    fails_when: Onda com algum desses campos ausente.
+    failure_severity: alert
+    references:
+      project: ["7.2.7", "7.2.9"]
+      specification: [estados/onda.md]
+      policies: [policy.decision_record, policy.eligible_model]
+
+  - id: project.history_preserved
+    name: Histórico do repositório preservado
+    target: { type: project }
+    type: automatic
+    reads:
+      - "repositório git do projeto"
+      - "commits registrados nas rodadas de gate e nos ciclos de ACH"
+    approves_when: Todo commit registrado em rodada de gate, ciclo de ACH ou `registro_dev` continua alcançável no repositório (sem reescrita de histórico).
+    fails_when: Algum commit registrado não é mais alcançável.
+    failure_severity: blocks
+    references:
+      project: ["7.2.9"]
+      policies: [policy.history_preservation, policy.data_retention]
+
+  - id: project.separation_of_duties
+    name: Decisor não acumula funções conflitantes
+    target: { type: project }
+    type: automatic
+    reads:
+      - "aceites de risco do ciclo de Release atual (quem aceitou)"
+      - "atribuições de papel no projeto (quem, quando, por quem)"
+      - "ator da decisão humana em curso"
+    approves_when: >-
+      Na decisão de gate, o decisor não se atribuiu o papel aprovador no projeto há menos de recent_role_window; no gate.release,
+      o decisor não aceitou risco de ACH do projeto no ciclo de Release atual (policy.separation_of_duties).
+    fails_when: Papel aprovador autoatribuído há menos da janela, ou aprovação do gate.release por quem aceitou risco no mesmo ciclo.
+    failure_severity: blocks
+    guards:
+      - { machine: gate, event: approve }
+      - { machine: gate, event: reject }
+    references:
+      project: ["7.3"]
+      policies: [policy.separation_of_duties]
+
+  # ------------------------------------------------------------------ requisitos
+  - id: us.acceptance_criteria_present
+    name: Toda US com critério de aceite completo
+    target: { type: artifact, artifacts: [US] }
+    type: automatic
+    reads:
+      - "criterios_aceite"
+    approves_when: Toda US vigente tem ao menos um item em `criterios_aceite`, cada um com `dado`, `when` e `entao` não vazios.
+    fails_when: US sem critério de aceite ou critério com parte vazia.
+    failure_severity: blocks
+    references:
+      project: ["7.2.1"]
+      schemas: [us.schema.json]
+
+  - id: us.no_blocking_question
+    name: Nenhuma pergunta aberta bloqueante
+    target: { type: artifact, artifacts: [US] }
+    type: automatic
+    reads:
+      - "open_questions"
+    approves_when: >-
+      Nenhuma US vigente tem item em `perguntas_abertas` com `blocking: true`.
+    fails_when: Alguma pergunta aberta bloqueante.
+    failure_severity: blocks
+    references:
+      project: ["6.1"]
+      schemas: [us.schema.json]
+
+  - id: us.criteria_no_vague_term
+    name: Critério de aceite sem termo vago
+    target: { type: artifact, artifacts: [US] }
+    type: automatic
+    reads:
+      - "criterios_aceite[].entao"
+      - "lista de termos vagos (rápido, fácil, adequado, intuitivo, amigável)"
+    approves_when: Nenhum `entao` contém termo da lista sem valor mensurável no mesmo critério.
+    fails_when: Termo vago encontrado; o relatório cita US e CA.
+    failure_severity: alert
+    references:
+      specification: [../../agentes/instrucoes/requisitos.md]
+
+  - id: us.criteria_testable
+    name: Critérios de aceite testáveis
+    target: { type: artifact, artifacts: [US] }
+    type: human
+    reads:
+      - "criterios_aceite"
+    approves_when: O aprovador confirma que cada critério tem resultado observável e uma só leitura.
+    fails_when: O aprovador aponta critério sem resultado observável ou ambíguo.
+    failure_severity: blocks
+    references:
+      project: ["7.2.1"]
+      schemas: [us.schema.json]
+
+  - id: us.real_origin
+    name: Origem da US aponta trecho real
+    target: { type: artifact, artifacts: [US] }
+    type: human
+    reads:
+      - "origin"
+      - "necessidade de negócio e respostas do usuário registradas nas ondas"
+    approves_when: O aprovador confirma que `origin` cita trecho da necessidade ou de resposta registrada.
+    fails_when: Origem inventada ou que não corresponde ao registro.
+    failure_severity: alert
+    references:
+      schemas: [us.schema.json]
+
+  - id: rnf.metric_and_verification
+    name: Todo RNF com métrica e verificação
+    target: { type: artifact, artifacts: [RNF] }
+    type: automatic
+    reads:
+      - "metrica"
+      - "verificacao.tipo"
+      - "verificacao.detalhe"
+    approves_when: Todo RNF vigente tem `metrica` e `verificacao` (tipo e detalhe) não vazios.
+    fails_when: RNF sem métrica ou sem forma de verificação.
+    failure_severity: blocks
+    references:
+      project: ["7.2.1"]
+      schemas: [rnf.schema.json]
+
+  - id: rnf.min_categories
+    name: RNF em ao menos 4 categorias
+    target: { type: artifact, artifacts: [RNF] }
+    type: automatic
+    reads:
+      - "RNF.categoria dos RNF vigentes"
+    approves_when: >-
+      Os RNF vigentes cobrem ao menos 4 categorias distintas, entre elas seguranca, desempenho, acessibilidade e privacidade
+      (PC-02; mínimo da instrução do agente de Requisitos).
+    fails_when: Nenhum RNF, ou menos de 4 categorias, ou falta uma das quatro exigidas.
+    failure_severity: blocks
+    references:
+      schemas: [rnf.schema.json]
+      specification: [../../agentes/instrucoes/requisitos.md]
+
+  - id: backlog.assumptions_checked
+    name: Suposições do agente conferidas pelo aprovador
+    target: { type: artifact, artifacts: [BACKLOG] }
+    type: human
+    reads:
+      - "BACKLOG.suposicoes"
+      - "necessidade de negócio e respostas do usuário registradas nas ondas"
+    approves_when: >-
+      O aprovador confirma cada suposição de `suposicoes` (PL-19: a conferência é no gate, sem ação na etapa); suposição que
+      não vale vira motivo de reprovação, e o retrabalho a transforma em pergunta ou em requisito.
+    fails_when: O aprovador não confirma alguma suposição.
+    failure_severity: blocks
+    references:
+      project: ["7.3"]
+      schemas: [backlog.schema.json]
+
+  - id: visao.scope_confirmed
+    name: Escopo confirmado pelo aprovador
+    target: { type: artifact, artifacts: [VISAO, BACKLOG] }
+    type: human
+    reads:
+      - "VISAO.objetivo"
+      - "VISAO.fora_de_escopo"
+      - "BACKLOG.historias"
+      - "BACKLOG.adiadas"
+    approves_when: O aprovador confirma que objetivo, fora de escopo, histórias e adiadas representam a necessidade de negócio (as suposições têm checagem própria, backlog.assumptions_checked).
+    fails_when: O aprovador aponta divergência de escopo.
+    failure_severity: blocks
+    references:
+      project: ["7.3"]
+      schemas: [visao.schema.json, backlog.schema.json]
+
+  - id: visao.glossary_complete
+    name: Termos de domínio no glossário
+    target: { type: artifact, artifacts: [VISAO] }
+    type: human
+    reads:
+      - "VISAO.glossario"
+      - "textos das US"
+    approves_when: O aprovador confirma que todo termo de domínio usado nas US está em `glossario`.
+    fails_when: O aprovador aponta termo de domínio sem definição.
+    failure_severity: alert
+    references:
+      schemas: [visao.schema.json]
+
+  - id: backlog.priority_consistent
+    name: Prioridade do backlog igual à da US e do RNF
+    target: { type: artifact, artifacts: [BACKLOG] }
+    type: automatic
+    rule: RAS-06
+    reads:
+      - "BACKLOG.historias[].prioridade"
+      - "BACKLOG.rnf[].prioridade"
+      - "US.prioridade"
+      - "RNF.prioridade"
+    approves_when: Para cada item, a prioridade no BACKLOG é igual à do artefato referenciado.
+    fails_when: Alguma prioridade divergente.
+    failure_severity: blocks
+    references:
+      schemas: [backlog.schema.json, us.schema.json, rnf.schema.json]
+
+  # ------------------------------------------------------------------ arquitetura
+  - id: arq.openapi_valid
+    name: Contrato OpenAPI válido
+    target: { type: artifact, artifacts: [ARQ] }
+    type: automatic
+    rule: RAS-13
+    reads:
+      - "ARQ.contratos.openapi"
+      - "arquivo apontado"
+    approves_when: Sem `contratos.openapi`, passa (sistema sem API). Com ele, o arquivo existe e valida na especificação OpenAPI 3.x.
+    fails_when: Arquivo apontado ausente ou com erro de validação OpenAPI.
+    failure_severity: blocks
+    references:
+      schemas: [arq.schema.json]
+      specification: [../../agentes/instrucoes/arquitetura.md]
+
+  - id: t.dependencies_no_cycle
+    name: Dependências entre tarefas sem ciclo
+    target: { type: artifact, artifacts: [T] }
+    type: automatic
+    rule: RAS-10
+    reads:
+      - "T.depende_de"
+    approves_when: O grafo formado por `depende_de` das T vigentes não tem ciclo nem autodependência.
+    fails_when: Ciclo encontrado; o relatório lista as T do ciclo.
+    failure_severity: blocks
+    references:
+      schemas: [t.schema.json]
+
+  # ------------------------------------------------------------------ dados
+  - id: dic.ddl_executes
+    name: DDL executa em banco limpo
+    target: { type: artifact, artifacts: [DIC] }
+    type: automatic
+    reads:
+      - "docs/dados/esquema.sql"
+      - "PERSIST.banco.sgbd"
+      - "PERSIST.banco.versao"
+      - "registro de execução no sandbox"
+    approves_when: O `esquema.sql` (DDL de referência) executa sem erro em instância limpa do SGBD e versão de PERSIST, no sandbox do projeto.
+    fails_when: Erro de execução; o relatório traz a saída do SGBD.
+    failure_severity: blocks
+    references:
+      schemas: [dic.schema.json, persist.schema.json]
+      specification: [../../agentes/instrucoes/dba.md]
+
+  - id: dic.model_consistent
+    name: Dicionário, DBML e DDL coerentes
+    target: { type: artifact, artifacts: [DIC] }
+    type: automatic
+    reads:
+      - "DIC.tabelas"
+      - "docs/dados/modelo-dados.dbml (quando houver; sem DBML, a comparação é só entre DIC.tabelas e o catálogo)"
+      - "catálogo do banco criado por dic.ddl_executes"
+    approves_when: >-
+      As tabelas, colunas (nome, tipo, nulo) e constraints de `DIC.tabelas` são as mesmas do DBML e do catálogo do banco
+      criado pelo DDL, sem sobra nem falta.
+    fails_when: Qualquer tabela, coluna ou constraint presente em um e ausente ou diferente em outro.
+    failure_severity: blocks
+    references:
+      project: ["7.2.4"]
+      schemas: [dic.schema.json]
+
+  - id: dic.personal_data_marked
+    name: Dados pessoais marcados e com finalidade
+    target: { type: artifact, artifacts: [DIC] }
+    type: automatic
+    rule: RAS-15
+    reads:
+      - "DIC.tabelas[].colunas[].dado_pessoal"
+      - "DIC.dados_pessoais[].campo"
+    approves_when: >-
+      Toda coluna com `dado_pessoal: true` aparece em `dados_pessoais` como `tabela.coluna`, e todo item de `dados_pessoais` aponta coluna marcada.
+    fails_when: Coluna marcada sem item em `dados_pessoais`, ou item sem coluna marcada.
+    failure_severity: blocks
+    references:
+      schemas: [dic.schema.json]
+
+  - id: dic.legal_basis_defined
+    name: Base legal de dado pessoal definida
+    target: { type: artifact, artifacts: [DIC] }
+    type: automatic
+    reads:
+      - "DIC.dados_pessoais[].base_legal"
+    approves_when: >-
+      Nenhum item com `base_legal: a_confirmar`.
+    fails_when: Algum item com `a_confirmar`.
+    failure_severity: alert
+    references:
+      schemas: [dic.schema.json]
+
+  - id: dic.personal_classification_checked
+    name: Classificação de dado pessoal conferida pelo aprovador
+    target: { type: artifact, artifacts: [DIC] }
+    type: human
+    reads:
+      - "DIC.tabelas[].colunas[].dado_pessoal"
+      - "DIC.dados_pessoais"
+    approves_when: >-
+      O aprovador confirma que as colunas marcadas como dado pessoal (e só elas) guardam dado pessoal, com finalidade, base
+      legal e retenção coerentes (PL-44: a confirmação é no gate, sem ação na etapa).
+    fails_when: O aprovador aponta coluna com dado pessoal sem marca, ou marca indevida.
+    failure_severity: blocks
+    references:
+      schemas: [dic.schema.json]
+      policies: [policy.data_retention]
+
+  - id: dic.integrity_by_constraint
+    name: Regras de integridade críticas garantidas no banco
+    target: { type: artifact, artifacts: [DIC] }
+    type: human
+    reads:
+      - "US.regras_negocio"
+      - "US.criterios_aceite"
+      - "DIC.tabelas[].constraints[].regra"
+    approves_when: O aprovador confirma que toda regra de integridade crítica das US está garantida por constraint com `rule` apontando a US.
+    fails_when: O aprovador aponta regra crítica sem constraint.
+    failure_severity: blocks
+    references:
+      project: ["7.2.4"]
+      schemas: [dic.schema.json]
+
+  - id: persist.model_references
+    name: Índices e permissões apontam o modelo
+    target: { type: artifact, artifacts: [PERSIST] }
+    type: automatic
+    rule: RAS-14
+    reads:
+      - "PERSIST.indices[].tabela"
+      - "PERSIST.indices[].colunas"
+      - "DIC.tabelas"
+    approves_when: Toda tabela e coluna citada em `PERSIST.indices` existe em `DIC.tabelas`.
+    fails_when: Índice sobre tabela ou coluna inexistente no dicionário.
+    failure_severity: blocks
+    references:
+      schemas: [persist.schema.json, dic.schema.json]
+
+  # ------------------------------------------------------------------ design
+  - id: telas.files_present
+    name: Fluxo, protótipo, estilo e telas existem
+    target: { type: artifact, artifacts: [TELAS] }
+    type: automatic
+    reads:
+      - "TELAS.fluxo"
+      - "TELAS.prototipo"
+      - "TELAS.estilo"
+      - "TELAS.telas[].arquivo"
+      - "repositório do projeto"
+    approves_when: Todo caminho citado existe no repositório do projeto.
+    fails_when: Algum caminho inexistente.
+    failure_severity: blocks
+    references:
+      schemas: [telas.schema.json]
+
+  - id: telas.criteria_consistent
+    name: Critérios da tela pertencem às US da tela
+    target: { type: artifact, artifacts: [TELAS] }
+    type: automatic
+    rule: RAS-18
+    reads:
+      - "TELAS.telas[].us"
+      - "TELAS.telas[].criterios"
+    approves_when: Em cada tela, a US de todo item de `criteria` (`US-NN/CA-n`) está em `us` da mesma tela.
+    fails_when: Critério de US não listada na tela.
+    failure_severity: blocks
+    references:
+      schemas: [telas.schema.json]
+
+  - id: telas.prototype_navigable
+    name: Protótipo abre e navega entre as telas
+    target: { type: artifact, artifacts: [TELAS] }
+    type: automatic
+    reads:
+      - "TELAS.prototipo"
+      - "TELAS.telas"
+      - "navegador do sandbox"
+    approves_when: O protótipo abre no navegador do sandbox e cada tela de `TELAS.telas` é alcançável a partir da entrada.
+    fails_when: Protótipo não abre ou alguma tela não é alcançável.
+    failure_severity: blocks
+    references:
+      schemas: [telas.schema.json]
+      specification: [../../agentes/instrucoes/design.md]
+
+  - id: telas.accessibility_verified
+    name: Acessibilidade verificada
+    target: { type: artifact, artifacts: [TELAS] }
+    type: automatic
+    reads:
+      - "TELAS.acessibilidade.nivel"
+      - "TELAS.acessibilidade.verificado"
+    approves_when: "`acessibilidade.verificado` é true no nível declarado (wcag22_aa)."
+    fails_when: "`verificado` false."
+    failure_severity: blocks
+    references:
+      schemas: [telas.schema.json]
+
+  - id: telas.state_by_parameter
+    name: Protótipo troca de estado por parâmetro
+    target: { type: artifact, artifacts: [TELAS] }
+    type: automatic
+    reads:
+      - "TELAS.telas[].estados"
+      - "TELAS.prototipo"
+      - "navegador do sandbox"
+    approves_when: >-
+      Cada página do protótipo abre no estado pedido por `?state=<snake_case>` para todo estado de `telas[].estados` da tela
+      (PL-45; o visualizador de protótipo usa o parâmetro para trocar de estado).
+    fails_when: Página que ignora o parâmetro ou estado declarado que não abre.
+    failure_severity: blocks
+    references:
+      schemas: [telas.schema.json]
+      specification: [../../agentes/instrucoes/design.md]
+
+  # ------------------------------------------------------------------ validação (e saídas de qa-plano e seguranca-ameacas)
+  - id: validacao.checks_complete
+    name: Os cinco pares conferidos
+    target: { type: artifact, artifacts: [VALIDACAO] }
+    type: automatic
+    reads:
+      - "VALIDACAO.conferencias[].par"
+    approves_when: "Cada par (arquitetura_dados, api_dados, api_telas, ameacas_arquitetura, cobertura_us_t_ct) aparece exatamente uma vez."
+    fails_when: Par repetido ou ausente.
+    failure_severity: blocks
+    references:
+      schemas: [validacao.schema.json]
+
+  - id: validacao.review_opinions_recorded
+    name: Pareceres de arquiteto, DBA e designer registrados
+    target: { type: artifact, artifacts: [VALIDACAO] }
+    type: automatic
+    reads:
+      - "VALIDACAO.pareceres"
+      - "registro de ondas"
+    approves_when: Há exatamente um parecer de cada participante (arquiteto, dba, designer), cada um registrado em onda concluída do agente correspondente.
+    fails_when: Parecer ausente, repetido ou registrado em onda de outro agente.
+    failure_severity: blocks
+    references:
+      project: ["6.1"]
+      schemas: [validacao.schema.json]
+
+  - id: validacao.verdict_unblocked
+    name: Validação liberada
+    target: { type: artifact, artifacts: [VALIDACAO] }
+    type: automatic
+    reads:
+      - "VALIDACAO.veredito"
+    approves_when: "A VALIDACAO mais recente da rodada tem `veredito: liberado`."
+    fails_when: "`veredito: devolvido`."
+    failure_severity: blocks
+    references:
+      schemas: [validacao.schema.json]
+
+  - id: validacao.review_opinion_rejected
+    name: Liberação com parecer reprovado
+    target: { type: artifact, artifacts: [VALIDACAO] }
+    type: automatic
+    reads:
+      - "VALIDACAO.pareceres[].parecer"
+      - "VALIDACAO.veredito"
+    approves_when: Nenhum parecer reprovado, ou veredito devolvido.
+    fails_when: >-
+      Veredito liberado com parecer reprovado de arquiteto ou designer (só o do DBA força devolvido no esquema, US-20 RN-1). A falha
+      impede a aprovação automática do gate.validation: a rodada vai a awaiting_human (alerts_require_human em gates.yaml, PC-06).
+    failure_severity: alert
+    guards:
+      - { machine: gate, event: complete_checks }
+    references:
+      schemas: [validacao.schema.json]
+
+  - id: ameacas.high_critical_handled
+    name: Ameaça Alta ou Crítica tratada
+    target: { type: artifact, artifacts: [AMEACAS] }
+    type: automatic
+    rule: RAS-24
+    reads:
+      - "AMEACAS.ameacas[].severidade"
+      - "status"
+      - "mitigacao"
+      - "onde"
+      - "finding"
+      - "ACH apontado"
+    approves_when: >-
+      Toda ameaça `critical` ou `high` tem `status: mitigada` (com `mitigacao` e `onde`), `status: achado` (com ACH existente)
+      ou `status: aceita` com `finding` apontando ACH em `accepted` por humano.
+    fails_when: Ameaça Alta ou Crítica sem tratamento, ou `aceita` sem ACH aceito por humano.
+    failure_severity: blocks
+    references:
+      project: ["7.2.6", "7.3"]
+      schemas: [ameacas.schema.json]
+      specification: [achado.md#5-aceite-de-risco]
+
+  # ------------------------------------------------------------------ implementação
+  - id: code.build_green
+    name: Build verde
+    target: { type: wave, stages: [implementation] }
+    type: automatic
+    reads:
+      - "commit avaliado (último commit da etapa ou commit_ou_versao do ciclo do ACH)"
+      - "comando de build do app/README.md"
+      - "registro de execução no sandbox"
+    approves_when: O build roda do zero no sandbox, no commit avaliado, com código de saída 0.
+    fails_when: Código de saída diferente de 0 ou build não executado.
+    failure_severity: blocks
+    references:
+      project: ["6.3.6"]
+      specification: [workflow/README.md#regras-de-retorno]
+
+  - id: tests.executed_green
+    name: Testes automatizados executados e verdes
+    target: { type: wave, stages: [implementation] }
+    type: automatic
+    reads:
+      - "commit avaliado"
+      - "comando de testes do app/README.md"
+      - "registro de execução no sandbox"
+    approves_when: A suíte de testes roda do zero no sandbox, no commit avaliado, com ao menos um teste executado, nenhum falho e código de saída 0.
+    fails_when: Algum teste falho ou intermitente, nenhum teste executado, ou suíte não executada.
+    failure_severity: blocks
+    references:
+      project: ["6.3.6"]
+      specification: [../../agentes/instrucoes/dev.md]
+
+  - id: code.lint_clean
+    name: Lint limpo
+    target: { type: wave, stages: [implementation] }
+    type: automatic
+    reads:
+      - "commit avaliado"
+      - "comando de lint do app/README.md"
+      - "registro de execução no sandbox"
+    approves_when: O lint roda no commit avaliado sem erro (código de saída 0).
+    fails_when: Erro de lint ou lint não executado.
+    failure_severity: blocks
+    references:
+      project: ["6.3.6"]
+
+  - id: code.migrations_consistent_with_ddl
+    name: Migrations reproduzem o modelo aprovado
+    target: { type: wave, stages: [implementation] }
+    type: automatic
+    reads:
+      - "migrations do app/"
+      - "DIC aprovado (esquema.sql)"
+      - "catálogo do banco no sandbox"
+    approves_when: Aplicadas em banco limpo, as migrations produzem as mesmas tabelas, colunas e constraints do DDL aprovado.
+    fails_when: Divergência de modelo (mudança de modelagem sem passar pelo DBA).
+    failure_severity: blocks
+    references:
+      project: ["7.2.4"]
+      schemas: [dic.schema.json]
+
+  - id: code.api_contract_consistent
+    name: API implementada segue o contrato
+    target: { type: wave, stages: [implementation] }
+    type: automatic
+    reads:
+      - "ARQ.contratos.openapi aprovado"
+      - "aplicação em execução no sandbox"
+    approves_when: Sem contrato, passa. Com contrato, rotas, métodos e esquemas de resposta da aplicação conferem com o OpenAPI aprovado.
+    fails_when: Rota, método ou esquema divergente do contrato.
+    failure_severity: alert
+    references:
+      project: ["7.2.3"]
+      schemas: [arq.schema.json]
+
+  - id: t.completed_or_justified
+    name: Toda tarefa concluída ou justificada
+    target: { type: artifact, artifacts: [T] }
+    type: automatic
+    rule: RAS-26
+    reads:
+      - "T.situacao"
+      - "T.justificativa"
+    approves_when: "Toda T vigente tem `situacao: concluida`, ou `situacao: justificada` com `justificativa`."
+    fails_when: T planejada ou in_progress.
+    failure_severity: blocks
+    references:
+      project: ["7.2.1"]
+      schemas: [t.schema.json]
+
+  - id: t.dev_record_present
+    name: Tarefa concluída com commits registrados
+    target: { type: artifact, artifacts: [T] }
+    type: automatic
+    rule: RAS-26
+    reads:
+      - "T.registro_dev.commits"
+      - "repositório do projeto"
+    approves_when: Toda T concluida tem ao menos um commit em `registro_dev.commits`, e cada commit existe no repositório.
+    fails_when: T concluida sem commit ou com commit inexistente.
+    failure_severity: blocks
+    references:
+      project: ["7.2.7"]
+      schemas: [t.schema.json]
+
+  # ------------------------------------------------------------------ qa
+  - id: rel_qa.consistent_with_ct
+    name: Relatório de QA coerente com os CT
+    target: { type: artifact, artifacts: [REL-QA] }
+    type: automatic
+    rule: RAS-30
+    reads:
+      - "REL-QA.matriz"
+      - "REL-QA.resumo"
+      - "CT.execucao"
+    approves_when: >-
+      O `result` de cada linha da matriz é o `execucao.resultado` do CT; os totais de `summary` (ct_executados,
+      passaram, falharam, bloqueados, ca_must_cobertos, ca_must_total) batem com a matriz e com as US Must vigentes.
+    fails_when: Resultado ou total divergente.
+    failure_severity: blocks
+    references:
+      schemas: [rel-qa.schema.json, ct.schema.json]
+
+  - id: rel_qa.open_findings_consistent
+    name: Achados abertos do relatório de QA conferem
+    target: { type: artifact, artifacts: [REL-QA] }
+    type: automatic
+    rule: RAS-31
+    reads:
+      - "REL-QA.achados_abertos"
+      - "ACH emitidos por qa-agent"
+    approves_when: "`achados_abertos` é exatamente o conjunto de ACH ativos emitidos pelo QA no fim da execução."
+    fails_when: ACH ativo omitido ou ACH listado que não está ativo.
+    failure_severity: blocks
+    references:
+      schemas: [rel-qa.schema.json]
+
+  - id: rel_qa.verdict_approved
+    name: Relatório de QA aprovado
+    target: { type: artifact, artifacts: [REL-QA] }
+    type: automatic
+    reads:
+      - "REL-QA.veredito"
+    approves_when: "O REL-QA mais recente tem `veredito: aprovado`."
+    fails_when: "`veredito: reprovado`."
+    failure_severity: blocks
+    references:
+      schemas: [rel-qa.schema.json]
+
+  - id: ct.not_executed_justified
+    name: CT não executado ou bloqueado justificado
+    target: { type: artifact, artifacts: [CT] }
+    type: automatic
+    reads:
+      - "CT.execucao.resultado"
+      - "REL-QA.sem_cobertura"
+    approves_when: Todo CT com resultado `not_executed` ou `bloqueado` tem seu critério em `REL-QA.sem_cobertura`, com motivo.
+    fails_when: CT não executado ou bloqueado sem motivo no relatório.
+    failure_severity: alert
+    references:
+      schemas: [ct.schema.json, rel-qa.schema.json]
+
+  - id: rel_qa.commands_reproducible
+    name: Comandos do relatório reproduzem a execução
+    target: { type: artifact, artifacts: [REL-QA] }
+    type: automatic
+    reads:
+      - "REL-QA.comandos"
+      - "sandbox limpo"
+    approves_when: Os comandos rodam do zero em sandbox limpo e reproduzem os totais de `summary`.
+    fails_when: Comando falha ou totais diferentes.
+    failure_severity: alert
+    references:
+      schemas: [rel-qa.schema.json]
+      specification: [../../agentes/instrucoes/qa.md]
+
+  # ------------------------------------------------------------------ segurança
+  - id: security.no_critical_risk
+    name: Nenhum risco Crítico ou Alto de segurança não aceito
+    target: { type: project }
+    type: automatic
+    reads:
+      - "ACH de categoria vulnerabilidade e ACH emitidos por security-agent"
+      - "AMEACAS.ameacas"
+      - "REL-SEG.resumo"
+    approves_when: >-
+      Nenhum ACH de categoria `vulnerability` ou emitido pela Segurança, com severidade `critical` ou `high`, está ativo no
+      projeto; nenhuma ameaça `critical` ou `high` com `status: achado` aponta ACH ativo; e o REL-SEG mais recente tem
+      `summary.critical.abertos` e `summary.high.abertos` iguais a 0. ACH aceito por humano não conta.
+    fails_when: Qualquer uma das condições falha.
+    failure_severity: blocks
+    references:
+      project: ["7.2.6", "6.1"]
+      schemas: [ach.schema.json, ameacas.schema.json, rel-seg.schema.json]
+
+  - id: rel_seg.summary_consistent
+    name: Resumo do relatório de segurança confere com os ACH
+    target: { type: artifact, artifacts: [REL-SEG] }
+    type: automatic
+    rule: RAS-33
+    reads:
+      - "REL-SEG.resumo"
+      - "ACH emitidos por security-agent"
+    approves_when: >-
+      Para cada severidade, `abertos` = ACH ativos, `fechados` = ACH em fechado e `aceitos` = ACH em aceito, contando os ACH
+      emitidos pela Segurança (descartados não contam).
+    fails_when: Algum total divergente.
+    failure_severity: blocks
+    references:
+      schemas: [rel-seg.schema.json, ach.schema.json]
+
+  - id: rel_seg.scans_executed
+    name: Varreduras executadas e registradas
+    target: { type: artifact, artifacts: [REL-SEG] }
+    type: automatic
+    reads:
+      - "REL-SEG.varreduras"
+      - "registro de execução no sandbox"
+    approves_when: >-
+      Há varredura de opengrep, trivy e gitleaks, cada uma com `version` e `command` que constam do registro de execução do
+      sandbox na onda da auditoria.
+    fails_when: Ferramenta obrigatória ausente ou varredura sem execução registrada.
+    failure_severity: blocks
+    references:
+      schemas: [rel-seg.schema.json]
+      specification: [../../agentes/instrucoes/seguranca.md]
+
+  - id: rel_seg.verdict_approved
+    name: Relatório de segurança aprovado
+    target: { type: artifact, artifacts: [REL-SEG] }
+    type: automatic
+    reads:
+      - "REL-SEG.veredito"
+    approves_when: "O REL-SEG mais recente tem `veredito: aprovado`."
+    fails_when: "`veredito: reprovado`."
+    failure_severity: blocks
+    references:
+      schemas: [rel-seg.schema.json]
+
+  - id: rel_seg.false_positives_reviewed
+    name: Falsos positivos revisados pelo aprovador
+    target: { type: artifact, artifacts: [REL-SEG] }
+    type: human
+    reads:
+      - "REL-SEG.falsos_positivos"
+      - "REL-SEG.varreduras[].falsos_positivos"
+    approves_when: O aprovador confirma que cada falso positivo tem justificativa aceitável.
+    fails_when: O aprovador aponta resultado descartado sem justificativa suficiente.
+    failure_severity: alert
+    references:
+      schemas: [rel-seg.schema.json]
+
+  # ------------------------------------------------------------------ release
+  - id: release.gates_approved
+    name: Todos os gates aprovados e vigentes
+    target: { type: artifact, artifacts: [RELEASE] }
+    type: automatic
+    reads:
+      - "RELEASE.gates"
+      - "rodadas de gate do projeto"
+      - "estado das etapas"
+    approves_when: >-
+      Há um item em `gates` para cada etapa de requisitos a seguranca; cada `aprovado_por` e `when` é o da rodada aprovado
+      vigente da etapa (não invalidado); toda etapa está aprovada e sem reevaluation_pending.
+    fails_when: Etapa ausente, rodada invalidada, dados divergentes, etapa não aprovada ou com reavaliação pendente.
+    failure_severity: blocks
+    references:
+      project: ["6.1", "7.2.1"]
+      schemas: [release.schema.json]
+
+  - id: release.current_quality
+    name: Relatórios de qualidade e segurança atuais
+    target: { type: artifact, artifacts: [RELEASE] }
+    type: automatic
+    rule: RAS-34
+    reads:
+      - "RELEASE.qualidade.rel_qa"
+      - "RELEASE.qualidade.rel_seg"
+    approves_when: Apontam o REL-QA e o REL-SEG mais recentes, ambos aprovados no seu gate e com veredito aprovado.
+    fails_when: Relatório antigo, não aprovado ou reprovado.
+    failure_severity: blocks
+    references:
+      schemas: [release.schema.json]
+
+  - id: release.accepted_risks_complete
+    name: Riscos aceitos completos
+    target: { type: artifact, artifacts: [RELEASE] }
+    type: automatic
+    rule: RAS-36
+    reads:
+      - "RELEASE.riscos_aceitos"
+      - "ACH do projeto"
+    approves_when: "`riscos_aceitos` é exatamente o conjunto de ACH em aceito no projeto, cada um com `aceite` completo e, quando há `aceite.valido_ate`, vigente na data da avaliação (D-29)."
+    fails_when: ACH aceito omitido, ACH listado que não está aceito ou aceite vencido sem renovação humana.
+    failure_severity: blocks
+    references:
+      project: ["7.2.7", "7.3"]
+      schemas: [release.schema.json, ach.schema.json]
+
+  - id: release.no_active_wave
+    name: Nenhuma onda ativa
+    target: { type: project }
+    type: automatic
+    reads:
+      - "registro de ondas do projeto"
+    approves_when: Nenhuma onda em queued, running, awaiting_user, pausando ou pausada.
+    fails_when: Alguma onda nesses estados.
+    failure_severity: blocks
+    guards:
+      - { machine: project, event: record_publication }
+    references:
+      specification: [estados/projeto.md]
+
+  - id: release.costs_consistent
+    name: Custos da release conferem com o registro
+    target: { type: artifact, artifacts: [RELEASE] }
+    type: automatic
+    reads:
+      - "RELEASE.custos"
+      - "registro de ondas (tokens, custo, tempo)"
+    approves_when: Para cada etapa, ondas, retrabalho, tokens, custo e tempos batem com a soma do registro de ondas.
+    fails_when: Valor divergente.
+    failure_severity: alert
+    references:
+      project: ["10"]
+      schemas: [release.schema.json]
+      policies: [policy.project_budget]
+
+  - id: release.delivery_checked
+    name: Entrega conferida pelo aprovador
+    target: { type: artifact, artifacts: [RELEASE] }
+    type: human
+    reads:
+      - "RELEASE.entrega"
+      - "RELEASE.riscos_aceitos"
+    approves_when: O aprovador confirma repositório, commit, tag, pipeline e ambiente da entrega e os riscos aceitos.
+    fails_when: O aprovador recusa a entrega (motivo registrado em `approval.reason`).
+    failure_severity: blocks
+    references:
+      project: ["7.2.10", "7.3"]
+      schemas: [release.schema.json]
+      policies: [policy.required_human_approval]
+
+  # ------------------------------------------------------------------ achado (ACH)
+  - id: finding.no_open_blocking
+    name: Nenhum ACH Crítico ou Alto ativo
+    target: { type: artifact, artifacts: [ACH] }
+    type: automatic
+    rule: RAS-35
+    reads:
+      - "ACH.severidade"
+      - "ACH.situacao"
+      - "ACH.onda (etapa de origem pelo registro de ondas)"
+    approves_when: >-
+      Nenhum ACH com severidade `critical` ou `high` está ativo com etapa de origem igual à etapa do gate (atividade paralela
+      conta para a etapa de `approved_in_gate`). No gate.release, nenhum no projeto inteiro. Aceito, fechado e descartado
+      não contam.
+    fails_when: Algum ACH Crítico ou Alto ativo no escopo; o relatório lista os ids.
+    failure_severity: blocks
+    references:
+      project: ["7.2.6"]
+      schemas: [ach.schema.json]
+      specification: [achado.md#7-efeito-no-gate, estados/gate.md]
+
+  - id: finding.no_open_medium_low
+    name: ACH Médio ou Baixo ativo
+    target: { type: artifact, artifacts: [ACH] }
+    type: automatic
+    rule: RAS-37
+    reads:
+      - "ACH.severidade"
+      - "ACH.situacao"
+    approves_when: Nenhum ACH `medium` ou `low` ativo no mesmo escopo de finding.no_open_blocking.
+    fails_when: Algum ativo; entra no relatório do gate.
+    failure_severity: alert
+    references:
+      specification: [achado.md#7-efeito-no-gate]
+
+  - id: finding.destination_consistent
+    name: Etapa destino coerente
+    target: { type: artifact, artifacts: [ACH] }
+    type: automatic
+    rule: RAS-04
+    reads:
+      - "ACH.categoria"
+      - "ACH.etapa_destino"
+      - "ACH.artefatos_afetados"
+      - "returns.default_destination_by_category"
+      - "corpo do ACH"
+    approves_when: >-
+      `etapa_destino` é o destino padrão da categoria, ou o corpo tem a seção "Justificativa do destino" não vazia; e, se
+      `etapa_destino` não é implementacao, todo artefato de `artefatos_afetados` tem essa etapa como etapa dona.
+    fails_when: Destino fora do padrão sem justificativa, ou artefato afetado de outra etapa dona.
+    failure_severity: blocks
+    guards:
+      - { machine: finding, event: start_rework }
+    references:
+      project: ["7.2.3", "7.2.4", "7.2.5"]
+      schemas: [ach.schema.json]
+      specification: [achado.md#2-categorias-e-roteamento, achado.md#8-checagens-de-governanca-do-achado]
+
+  - id: finding.design_points_to_screens
+    name: Inconsistência de design aponta TELAS
+    target: { type: artifact, artifacts: [ACH] }
+    type: automatic
+    reads:
+      - "ACH.categoria"
+      - "ACH.etapa_destino"
+      - "ACH.artefatos_afetados"
+    approves_when: "ACH `design_inconsistency` com `etapa_destino: design` tem `TELAS` ou `TELAS/TL-n` em `artefatos_afetados`."
+    fails_when: Sem TELAS em `artefatos_afetados`.
+    failure_severity: blocks
+    guards:
+      - { machine: finding, event: start_rework }
+    references:
+      specification: [achado.md#8-checagens-de-governanca-do-achado]
+
+  - id: finding.cycles_consistent
+    name: Ciclos de retrabalho coerentes
+    target: { type: artifact, artifacts: [ACH] }
+    type: automatic
+    reads:
+      - "ACH.ciclos"
+      - "ACH.autor"
+      - "ACH.etapa_destino"
+      - "registro de ondas"
+    approves_when: >-
+      `number` vai de 1 a n sem lacuna; só o último ciclo pode estar em andamento; todo ciclo anterior tem
+      `commit_ou_versao`, `onda_revalidacao` e `result`; `onda_retrabalho` é onda do agente da etapa destino;
+      `onda_revalidacao` é onda do agente `author` do ACH.
+    fails_when: Qualquer condição falha.
+    failure_severity: blocks
+    guards:
+      - { machine: finding, event: record_revalidation }
+    references:
+      project: ["6.3.3"]
+      specification: [achado.md#4-ciclo-de-retrabalho-e-revalidacao]
+      policies: [policy.rework_cycle_limit]
+
+  - id: finding.internal_cycle_green
+    name: Ciclo interno da implementação verde
+    target: { type: artifact, artifacts: [ACH] }
+    type: automatic
+    reads:
+      - "ACH.etapa_destino"
+      - "último ciclo (commit_ou_versao)"
+      - "resultados de code.build_green"
+      - "tests.executed_green e code.lint_clean nesse commit"
+    approves_when: "Com `etapa_destino: implementacao`, o commit do ciclo passou em build, testes e lint antes de o ACH ir a revalidando. Outros destinos: passa."
+    fails_when: Ciclo enviado à revalidação sem as três checagens verdes no commit.
+    failure_severity: blocks
+    guards:
+      - { machine: finding, event: easycode.wave.completed }
+    references:
+      project: ["6.3.6"]
+      specification: [achado.md#7-efeito-no-gate]
+
+  - id: finding.escalation_consistent
+    name: Escalonamento só no limite de ciclos
+    target: { type: artifact, artifacts: [ACH] }
+    type: automatic
+    reads:
+      - "ACH.situacao"
+      - "ACH.ciclos"
+      - "ACH.escalonamentos"
+    approves_when: >-
+      ACH escalado tem `escalonamentos[].quando` e `reason`, e 3 ciclos `not_fixed` (ou, depois de rodada extra, último ciclo
+      `not_fixed`), ou `reason` registra decisão humana de escalar antes.
+    fails_when: Escalado sem os ciclos exigidos e sem decisão humana registrada.
+    failure_severity: blocks
+    guards:
+      - { machine: finding, event: record_revalidation }
+    references:
+      project: ["6.3.4"]
+      schemas: [ach.schema.json]
+      specification: [achado.md#8-checagens-de-governanca-do-achado]
+      policies: [policy.rework_cycle_limit]
+
+  - id: finding.extra_round_authorized
+    name: Rodada além de 3 ciclos autorizada por humano
+    target: { type: artifact, artifacts: [ACH] }
+    type: automatic
+    reads:
+      - "ACH.ciclos"
+      - "ACH.escalonamentos"
+      - "identidades de usuário da plataforma"
+    approves_when: >-
+      Com mais de 3 ciclos, `escalonamentos[].decisao: novo_retrabalho`, `decidido_em` e `autorizado_por` igual a usuário
+      humano validado pela plataforma (não um agente).
+    fails_when: Ciclo 4 ou posterior sem essa autorização.
+    failure_severity: blocks
+    guards:
+      - { machine: finding, event: authorize_new_rework }
+    references:
+      project: ["6.3.4"]
+      schemas: [ach.schema.json]
+      policies: [policy.rework_cycle_limit, policy.required_human_approval]
+
+  - id: finding.closing_consistent
+    name: Fechamento coerente com a resolução
+    target: { type: artifact, artifacts: [ACH] }
+    type: automatic
+    reads:
+      - "ACH.situacao"
+      - "ACH.resolucao"
+      - "ACH.ciclos"
+      - "ACH.escalonamentos"
+      - "ACH.artefatos_alterados"
+    approves_when: >-
+      Fechado com `resolucao: corrigido` tem último ciclo `fixed` com `onda_revalidacao` do autor; com
+      `resolucao: mudanca_escopo` tem `escalonamentos[].decisao: mudanca_escopo` com `autorizado_por` humano, `decidido_em`,
+      `justificativa`, `alteracao_por` e `artefatos_ponto_de_partida`, e cada id de `artefatos_alterados` é artefato de requisitos
+      com versão nova depois de `decidido_em`, aprovada pelo gate.requirements que fechou o ACH (PD-06).
+    fails_when: Qualquer condição falha.
+    failure_severity: blocks
+    guards:
+      - { machine: finding, event: record_revalidation }
+      - { machine: finding, event: decide_scope_change }
+      - { machine: finding, event: easycode.gate.approved }
+    references:
+      project: ["6.3.3", "7.3"]
+      schemas: [ach.schema.json]
+      specification: [achado.md#41-resolucao-do-achado-fechado]
+      policies: [policy.required_human_approval]
+
+  - id: finding.human_acceptance
+    name: Risco aceito só por humano
+    target: { type: artifact, artifacts: [ACH] }
+    type: automatic
+    reads:
+      - "ACH.situacao"
+      - "ACH.aceite"
+      - "identidades de usuário da plataforma"
+      - "registro da ação"
+    approves_when: ACH aceito tem `aceite.por` igual ao usuário humano validado que executou a ação, com `when` e `justificativa`.
+    fails_when: Aceite por agente ou orquestrador, ou identidade diferente da registrada na ação.
+    failure_severity: blocks
+    guards:
+      - { machine: finding, event: accept_risk }
+    references:
+      project: ["7.3"]
+      schemas: [ach.schema.json]
+      specification: [achado.md#5-aceite-de-risco]
+      policies: [policy.required_human_approval, policy.decision_record]
+
+  - id: finding.discard_consistent
+    name: Descarte só sem evidência ou por duplicata
+    target: { type: artifact, artifacts: [ACH] }
+    type: automatic
+    reads:
+      - "ACH.situacao"
+      - "ACH.motivo_descarte"
+      - "demais ACH do projeto"
+    approves_when: ACH descartado tem `motivo_descarte` de falta de evidência, ou de duplicata citando ACH existente diferente dele.
+    fails_when: Outro motivo, ou duplicata de ACH inexistente.
+    failure_severity: blocks
+    guards:
+      - { machine: finding, event: discard }
+    references:
+      project: ["6.3.7"]
+      specification: [achado.md#6-descarte]
+
+  # ------------------------------------------------------------------ rastreabilidade (regras RAS-nn em rastreabilidade.md)
+  - id: traceability.existing_references
+    name: Todo vínculo aponta artefato ou item existente
+    target: { type: artifact, artifacts: [all] }
+    type: automatic
+    rule: RAS-01
+    link_fields: &campos_vinculo
+      - vinculos
+      - substituido_por
+      - historico[].achado
+      - US.rnf
+      - RNF.us_afetadas
+      - BACKLOG.historias[].us
+      - BACKLOG.rnf[].rnf
+      - BACKLOG.adiadas[].us
+      - ARQ.contexto.rnf_criticos
+      - ARQ.componentes[].atende
+      - ARQ.decisoes
+      - ADR.motivada_por
+      - ADR.substitui
+      - ADR.restricoes
+      - T.cobre[].us
+      - T.cobre[].criterios
+      - T.segue
+      - T.depende_de
+      - T.cts
+      - DIC.tabelas[].constraints[].regra
+      - DIC.tabelas[].origem
+      - PERSIST.desempenho[].rnf
+      - TELAS.telas[].us
+      - TELAS.telas[].criterios
+      - TELAS.lacunas_contrato
+      - CT.cobre
+      - CT.execucao.achado
+      - AMEACAS.ameacas[].achado
+      - AMEACAS.conferencia[].ameaca
+      - VALIDACAO.conferencias[].achado
+      - REL-QA.matriz[].us
+      - REL-QA.matriz[].criterio
+      - REL-QA.matriz[].ct
+      - REL-QA.matriz[].achado
+      - REL-QA.sem_cobertura[].us
+      - REL-QA.achados_abertos
+      - REL-SEG.varreduras[].achados
+      - REL-SEG.varreduras[].resultados[].achado
+      - REL-SEG.owasp[].achados
+      - REL-SEG.ameacas_conferidas
+      - REL-SEG.ameacas_conferidas[].achados
+      - RELEASE.qualidade.rel_qa
+      - RELEASE.qualidade.rel_seg
+      - RELEASE.riscos_aceitos
+      - ACH.artefatos_afetados
+      - ACH.artefatos_alterados
+      - ACH.escalonamentos[].artefatos_ponto_de_partida
+    reads:
+      - "campos de vínculo listados"
+      - "ids de artefato e ids internos do projeto"
+    approves_when: Todo id citado nesses campos existe no projeto (ADR.restricoes, nas restrições técnicas do projeto, US-54); item interno (`US-03/CA-2`, `AM-3`) existe no artefato apontado.
+    fails_when: Algum vínculo para artefato ou item inexistente; o relatório lista campo e id.
+    failure_severity: blocks
+    references:
+      project: ["4"]
+      specification: [artefatos/README.md#vinculos]
+
+  - id: traceability.no_reference_to_replaced
+    name: Vínculo para artefato substituído
+    target: { type: artifact, artifacts: [all] }
+    type: automatic
+    rule: RAS-01
+    link_fields: *campos_vinculo
+    reads:
+      - "campos de vínculo"
+      - "estado dos artefatos apontados"
+    approves_when: Nenhum artefato vigente aponta artefato em substituido (exceto em `substituido_por` e `ADR.substitui`, que apontam o substituto ou o substituído por definição).
+    fails_when: Vínculo para artefato substituido (deveria apontar o substituto).
+    failure_severity: alert
+    references:
+      specification: [estados/artefato.md]
+
+  - id: traceability.us_rnf_reciprocal
+    name: Vínculo US e RNF recíproco
+    target: { type: artifact, artifacts: [US, RNF] }
+    type: automatic
+    rule: RAS-07
+    link_fields:
+      - "US.rnf"
+      - "RNF.us_afetadas"
+    reads:
+      - "US.rnf"
+      - "RNF.us_afetadas"
+    approves_when: RNF está em `US.rnf` se e só se a US está em `RNF.us_afetadas`.
+    fails_when: Vínculo em um lado só.
+    failure_severity: alert
+    references:
+      schemas: [us.schema.json, rnf.schema.json]
+
+  - id: traceability.backlog_covers_us
+    name: Backlog cobre todas as US e RNF
+    target: { type: artifact, artifacts: [BACKLOG] }
+    type: automatic
+    rule: RAS-05
+    link_fields:
+      - "BACKLOG.historias[].us"
+      - "BACKLOG.adiadas[].us"
+      - "BACKLOG.rnf[].rnf"
+    reads:
+      - "BACKLOG"
+      - "US vigentes"
+      - "RNF vigentes"
+    approves_when: >-
+      Toda US vigente aparece exatamente uma vez em `historias` ou `adiadas`; US `wont` está em `adiadas` e só ela; todo RNF
+      vigente aparece exatamente uma vez em `rnf`.
+    fails_when: US ou RNF ausente ou repetido.
+    failure_severity: blocks
+    references:
+      schemas: [backlog.schema.json]
+
+  - id: traceability.us_must_covered_by_t
+    name: Toda US Must coberta por tarefa
+    target: { type: artifact, artifacts: [T] }
+    type: automatic
+    rule: RAS-09
+    link_fields:
+      - "US.prioridade"
+      - "T.cobre[].us"
+    reads:
+      - "US vigentes com prioridade must"
+      - "T.cobre"
+    approves_when: Toda US Must vigente aparece em `cobre[].us` de ao menos uma T vigente.
+    fails_when: US Must sem tarefa.
+    failure_severity: blocks
+    references:
+      specification: [../../agentes/instrucoes/arquitetura.md]
+
+  - id: traceability.ca_must_covered_by_t
+    name: Todo critério de US Must coberto por tarefa
+    target: { type: artifact, artifacts: [T] }
+    type: automatic
+    rule: RAS-09
+    link_fields:
+      - "US.criterios_aceite"
+      - "T.cobre[].criterios"
+    reads:
+      - "critérios de aceite das US Must"
+      - "T.cobre"
+    approves_when: Todo CA de US Must vigente está em `cobre[].criterios` de ao menos uma T vigente com a mesma US.
+    fails_when: CA de US Must sem tarefa.
+    failure_severity: alert
+    references:
+      schemas: [t.schema.json]
+
+  - id: traceability.component_justified
+    name: Todo componente justificado por US ou RNF
+    target: { type: artifact, artifacts: [ARQ] }
+    type: automatic
+    rule: RAS-12
+    link_fields:
+      - "ARQ.componentes[].atende"
+    reads:
+      - "ARQ.componentes"
+    approves_when: Todo componente tem `atende` não vazio com US ou RNF vigente.
+    fails_when: Componente sem US ou RNF.
+    failure_severity: blocks
+    references:
+      specification: [../../agentes/instrucoes/arquitetura.md]
+
+  - id: traceability.adr_listed_in_arq
+    name: ARQ lista as ADR vigentes
+    target: { type: artifact, artifacts: [ARQ, ADR] }
+    type: automatic
+    rule: RAS-11
+    link_fields:
+      - "ARQ.decisoes"
+      - "ADR.substitui"
+    reads:
+      - "ARQ.decisoes"
+      - "ADR do projeto"
+    approves_when: "`ARQ.decisoes` contém exatamente as ADR vigentes; toda ADR com `substitui` aponta ADR que não está em `ARQ.decisoes`."
+    fails_when: ADR vigente fora da lista, ADR substituída na lista, ou id inexistente.
+    failure_severity: blocks
+    references:
+      project: ["7.2.3", "7.2.7"]
+      schemas: [arq.schema.json, adr.schema.json]
+
+  - id: traceability.performance_rnf_in_persist
+    name: RNF de desempenho tratado na persistência
+    target: { type: artifact, artifacts: [PERSIST] }
+    type: automatic
+    rule: RAS-16
+    link_fields:
+      - "RNF.categoria"
+      - "PERSIST.desempenho[].rnf"
+    reads:
+      - "RNF vigentes de categoria desempenho"
+      - "PERSIST.desempenho"
+    approves_when: Todo RNF de desempenho vigente aparece em `PERSIST.desempenho[].rnf`.
+    fails_when: RNF de desempenho sem item em `desempenho`.
+    failure_severity: alert
+    references:
+      schemas: [persist.schema.json, rnf.schema.json]
+
+  - id: traceability.interface_us_in_screen
+    name: Toda US com interface em ao menos uma tela
+    target: { type: artifact, artifacts: [TELAS] }
+    type: automatic
+    rule: RAS-17
+    link_fields:
+      - "US.tem_interface"
+      - "TELAS.telas[].us"
+    reads:
+      - "US vigentes com tem_interface true e prioridade diferente de wont"
+      - "TELAS.telas"
+    approves_when: Toda US nessa condição aparece em `us` de ao menos uma tela.
+    fails_when: US com interface sem tela.
+    failure_severity: blocks
+    references:
+      schemas: [telas.schema.json, us.schema.json]
+      specification: [../../agentes/instrucoes/design.md]
+
+  - id: traceability.ca_must_covered_by_ct
+    name: Todo critério de US Must com cenário de teste
+    target: { type: artifact, artifacts: [CT] }
+    type: automatic
+    rule: RAS-20
+    link_fields:
+      - "US.prioridade"
+      - "US.criterios_aceite"
+      - "CT.cobre.us"
+      - "CT.cobre.criterio"
+    reads:
+      - "critérios de aceite das US Must vigentes"
+      - "CT vigentes"
+    approves_when: Todo CA de US Must vigente é coberto por ao menos um CT vigente.
+    fails_when: CA de US Must sem CT.
+    failure_severity: blocks
+    references:
+      specification: [../../agentes/instrucoes/qa.md]
+
+  - id: traceability.rnf_must_covered_by_ct
+    name: RNF Must testável com cenário de teste
+    target: { type: artifact, artifacts: [CT] }
+    type: automatic
+    rule: RAS-22
+    link_fields:
+      - "RNF.prioridade"
+      - "RNF.verificacao.tipo"
+      - "CT.cobre.rnf"
+    reads:
+      - "RNF Must vigentes com verificacao.tipo teste_automatizado ou medicao"
+      - "CT vigentes"
+    approves_when: Todo RNF nessa condição é coberto por ao menos um CT.
+    fails_when: RNF Must testável sem CT.
+    failure_severity: alert
+    references:
+      schemas: [rnf.schema.json, ct.schema.json]
+
+  - id: traceability.t_cts_consistent
+    name: CT da tarefa cobrem critérios da tarefa
+    target: { type: artifact, artifacts: [T] }
+    type: automatic
+    rule: RAS-23
+    link_fields:
+      - "T.cts"
+      - "T.cobre"
+      - "CT.cobre"
+    reads:
+      - "T.cts"
+      - "T.cobre"
+      - "CT.cobre"
+    approves_when: Todo CT em `T.cts` cobre critério listado em `T.cobre` (ou RNF de US coberta pela T).
+    fails_when: CT da tarefa sem relação com o que ela cobre.
+    failure_severity: alert
+    references:
+      schemas: [t.schema.json, ct.schema.json]
+
+  - id: traceability.ca_must_with_ct_passing
+    name: Todo critério de US Must com CT passando
+    target: { type: artifact, artifacts: [REL-QA] }
+    type: automatic
+    rule: RAS-30
+    link_fields:
+      - "US.prioridade"
+      - "CT.cobre"
+      - "CT.execucao.resultado"
+      - "REL-QA.matriz"
+    reads:
+      - "critérios de aceite das US Must vigentes"
+      - "CT.execucao"
+      - "REL-QA.matriz"
+    approves_when: >-
+      Todo CA de US Must vigente tem ao menos um CT com `execucao.resultado: passou` na execução do REL-QA mais recente.
+    fails_when: CA de US Must sem CT passando.
+    failure_severity: blocks
+    references:
+      project: ["7.2.1"]
+      schemas: [rel-qa.schema.json]
+      specification: [../../agentes/instrucoes/qa.md]
+
+  - id: traceability.threats_checked
+    name: Ameaças mitigadas conferidas na auditoria
+    target: { type: artifact, artifacts: [REL-SEG, AMEACAS] }
+    type: automatic
+    rule: RAS-32
+    link_fields:
+      - "AMEACAS.ameacas[].id"
+      - "AMEACAS.conferencia[].ameaca"
+      - "REL-SEG.ameacas_conferidas"
+    reads:
+      - "AMEACAS.ameacas"
+      - "AMEACAS.conferencia"
+      - "REL-SEG.ameacas_conferidas"
+    approves_when: >-
+      Toda ameaça `mitigada` está em `REL-SEG.ameacas_conferidas` (id simples ou `ameaca` do objeto, PL-21) e em
+      `AMEACAS.conferencia`; item com `result: nao_mitigada` aponta ACH em `findings`; ameaça `critical` ou `high` com
+      `implementada: false` tem ACH ativo, fechado ou aceito apontado em `ameacas[].achado`.
+    fails_when: Ameaça mitigada não conferida, ou Alta/Crítica não implementada sem ACH.
+    failure_severity: blocks
+    references:
+      project: ["7.2.6"]
+      schemas: [ameacas.schema.json, rel-seg.schema.json]
+
+  - id: traceability.us_must_complete
+    name: Toda US Must com cadeia completa
+    target: { type: artifact, artifacts: [RELEASE] }
+    type: automatic
+    rule: RAS-38
+    link_fields:
+      - "RELEASE.rastreabilidade"
+      - "T.cobre"
+      - "T.situacao"
+      - "CT.cobre"
+      - "CT.execucao.resultado"
+      - "ACH.artefatos_afetados"
+    reads:
+      - "US Must vigentes"
+      - "T"
+      - "CT"
+      - "ACH"
+      - "RELEASE.rastreabilidade"
+    approves_when: >-
+      Toda US Must vigente tem T concluida, todo CA com CT passando e nenhum ACH Crítico ou Alto ativo que a afete;
+      `us_must_completas` e `us_must_total` do RELEASE são iguais entre si e iguais à contagem calculada.
+    fails_when: US Must incompleta ou números divergentes.
+    failure_severity: blocks
+    references:
+      project: ["7.2.1"]
+      schemas: [release.schema.json]
+
+  # ------------------------------------------------------------------ rastreabilidade (acrescentadas na conciliação E3: RAS sem checagem)
+  - id: traceability.replacement_reciprocal
+    name: Substituição recíproca e do mesmo tipo
+    target: { type: artifact, artifacts: [all] }
+    type: automatic
+    rule: RAS-02
+    link_fields:
+      - substituido_por
+      - "ADR.substitui"
+    reads:
+      - "estado e substituido_por de todos os artefatos"
+      - "ADR.substitui"
+    approves_when: >-
+      Artefato `replaced` aponta em `substituido_por` artefato do mesmo tipo; toda ADR com `substitui: b` deixa a ADR b
+      em `replaced` com `substituido_por` igual à nova ADR.
+    fails_when: Substituto de outro tipo, ou ADR substituída sem estado ou sem `substituido_por` recíproco.
+    failure_severity: blocks
+    references:
+      schemas: [cabecalho-comum.schema.json, adr.schema.json]
+      specification: [rastreabilidade.md]
+
+  - id: traceability.rework_recorded
+    name: Versão de retrabalho aponta o ACH, e o ACH aponta o artefato
+    target: { type: artifact, artifacts: [all] }
+    type: automatic
+    rule: RAS-03
+    link_fields:
+      - historico[].achado
+      - "ACH.artefatos_afetados"
+      - "ACH.artefatos_alterados"
+    reads:
+      - "historico de todos os artefatos"
+      - "ACH"
+    approves_when: >-
+      Toda entrada de `history` com `finding` aponta ACH existente que tem o artefato (ou item dele) em `artefatos_afetados`
+      ou `artefatos_alterados`; todo artefato reaberto por ACH in_rework (destino diferente de implementacao) tem entrada
+      de `history` com esse `finding`.
+    fails_when: Versão de retrabalho sem ACH coerente, ou artefato reaberto sem registro do ACH no histórico.
+    failure_severity: blocks
+    references:
+      project: ["7.2.9"]
+      schemas: [cabecalho-comum.schema.json, ach.schema.json]
+      specification: [rastreabilidade.md]
+      policies: [policy.history_preservation]
+
+  - id: traceability.t_points_to_us
+    name: Tarefa funcional cobre US do escopo e critérios existentes
+    target: { type: artifact, artifacts: [T] }
+    type: automatic
+    rule: RAS-08
+    link_fields:
+      - "T.natureza"
+      - "T.cobre"
+      - "BACKLOG.historias[].us"
+    reads:
+      - "T vigentes"
+      - "US vigentes"
+      - "BACKLOG.historias"
+    approves_when: >-
+      Toda T com `natureza: funcional` (ou sem `natureza`) cobre só US de `BACKLOG.historias` e só critérios que existem nessa
+      US. T `esqueleto` ou `refatoracao` pode não ter `cobre`; se tiver, vale a mesma regra.
+    fails_when: T cobre US fora do escopo (adiada ou inexistente) ou critério inexistente na US.
+    failure_severity: blocks
+    references:
+      schemas: [t.schema.json, backlog.schema.json]
+      specification: [rastreabilidade.md]
+
+  - id: traceability.us_met_by_component
+    name: US e RNF Must atendidos por componente
+    target: { type: artifact, artifacts: [ARQ] }
+    type: automatic
+    rule: RAS-12
+    link_fields:
+      - "ARQ.componentes[].atende"
+      - "ARQ.contexto.rnf_criticos"
+    reads:
+      - "ARQ.componentes"
+      - "ARQ.contexto.rnf_criticos"
+      - "US e RNF Must vigentes"
+    approves_when: Toda US Must, todo RNF Must e todo RNF de `rnf_criticos` aparecem no `atende` de algum componente.
+    fails_when: US ou RNF Must sem componente que o atenda.
+    failure_severity: alert
+    references:
+      schemas: [arq.schema.json]
+      specification: [rastreabilidade.md]
+
+  - id: traceability.operations_in_contract
+    name: operationId citado existe no contrato da API
+    target: { type: artifact, artifacts: [T, TELAS] }
+    type: automatic
+    rule: RAS-42
+    link_fields:
+      - "T.operacoes"
+      - "TELAS.telas[].operacoes"
+    reads:
+      - "T.operacoes"
+      - "TELAS.telas[].operacoes"
+      - "docs/arquitetura/api/openapi.yaml"
+    approves_when: >-
+      Todo `operationId` em `T.operacoes` e em `TELAS.telas[].operacoes` existe no contrato da API vigente. Sem contrato
+      (sistema sem API), os campos ficam vazios.
+    fails_when: operationId inexistente no contrato, ou campo preenchido sem contrato.
+    failure_severity: blocks
+    references:
+      schemas: [t.schema.json, telas.schema.json, arq.schema.json]
+      specification: [rastreabilidade.md]
+
+  - id: traceability.contract_gap_resolved
+    name: Lacunas de contrato foram à Arquitetura e estão resolvidas
+    target: { type: artifact, artifacts: [TELAS] }
+    type: automatic
+    rule: RAS-19
+    link_fields:
+      - "TELAS.lacunas_contrato"
+      - "ACH.categoria"
+      - "ACH.etapa_destino"
+    reads:
+      - "TELAS.lacunas_contrato"
+      - "ACH"
+    approves_when: >-
+      Todo ACH de `TELAS.lacunas_contrato` tem `category: lacuna_contrato` (ou justificativa do destino), `etapa_destino:
+      arquitetura` e não está active; todo ACH `contract_gap` emitido pelo Designer está na lista.
+    fails_when: Lacuna ainda ativa, com outro destino ou fora da lista.
+    failure_severity: blocks
+    references:
+      schemas: [telas.schema.json, ach.schema.json]
+      specification: [rastreabilidade.md, achado.md#2-categorias-e-roteamento]
+
+  - id: traceability.ca_covered_by_ct
+    name: Critério de US Should/Could do escopo com cenário de teste
+    target: { type: artifact, artifacts: [CT] }
+    type: automatic
+    rule: RAS-21
+    link_fields:
+      - "CT.cobre"
+      - "BACKLOG.historias[].us"
+    reads:
+      - "critérios de aceite das US do escopo que não são Must"
+      - "CT vigentes"
+    approves_when: Todo CA de US Should ou Could de `BACKLOG.historias` é coberto por ao menos um CT vigente.
+    fails_when: CA de US Should/Could do escopo sem CT.
+    failure_severity: alert
+    references:
+      schemas: [ct.schema.json]
+      specification: [rastreabilidade.md]
+
+  - id: traceability.validation_coverage_consistent
+    name: Conferência de cobertura da VALIDACAO condiz com o grafo
+    target: { type: artifact, artifacts: [VALIDACAO] }
+    type: automatic
+    rule: RAS-25
+    link_fields:
+      - "VALIDACAO.conferencias"
+    reads:
+      - "VALIDACAO.conferencias"
+      - "resultado de RAS-08, RAS-09, RAS-20 e RAS-22"
+    approves_when: >-
+      Com `cobertura_us_t_ct` = ok, as checagens de RAS-08, RAS-09, RAS-20 e RAS-22 passam na mesma rodada.
+    fails_when: Conferência ok com regra de cobertura falhando.
+    failure_severity: blocks
+    references:
+      schemas: [validacao.schema.json]
+      specification: [rastreabilidade.md]
+
+  - id: traceability.validation_versions_current
+    name: VALIDACAO conferiu as versões vigentes das entradas
+    target: { type: artifact, artifacts: [VALIDACAO] }
+    type: automatic
+    rule: RAS-40
+    link_fields:
+      - "VALIDACAO.artefatos_conferidos"
+    reads:
+      - "VALIDACAO.artefatos_conferidos"
+      - "versões aprovadas vigentes de ARQ, ADR, T, DIC, PERSIST, TELAS, AMEACAS e CT"
+    approves_when: >-
+      `artefatos_conferidos` está presente e lista, para cada entrada da etapa `validation`, a versão vigente na rodada; nenhuma
+      entrada foi reaprovada em versão nova depois da conferência.
+    fails_when: Campo ausente, entrada faltando ou versão conferida diferente da vigente.
+    failure_severity: blocks
+    references:
+      schemas: [validacao.schema.json]
+      specification: [rastreabilidade.md, workflow/workflow-padrao.yaml]
+
+  - id: traceability.file_scope_respected
+    name: Commits da tarefa dentro do escopo de arquivos
+    target: { type: artifact, artifacts: [T] }
+    type: automatic
+    rule: RAS-27
+    link_fields:
+      - "T.registro_dev"
+      - "T.escopo_arquivos"
+    reads:
+      - "T.registro_dev.commits"
+      - "T.escopo_arquivos"
+      - "arquivos alterados por commit no repositório"
+    approves_when: Todo arquivo alterado pelos commits de cada T está dentro de algum prefixo ou glob de `escopo_arquivos`.
+    fails_when: Commit da T altera arquivo fora do escopo.
+    failure_severity: alert
+    references:
+      schemas: [t.schema.json]
+      specification: [rastreabilidade.md]
+
+  - id: traceability.ct_execution_linked
+    name: CT executado e ligado ao teste no código
+    target: { type: artifact, artifacts: [CT] }
+    type: automatic
+    rule: RAS-28
+    link_fields:
+      - "CT.execucao"
+    reads:
+      - "CT.execucao"
+      - "repositório no commit avaliado"
+    approves_when: >-
+      Todo CT tem `execucao` com `wave`; CT que passou aponta teste `file::name` existente no commit avaliado, ou
+      evidência quando o nível é não funcional.
+    fails_when: CT sem execução, ou passou sem teste existente nem evidência.
+    failure_severity: blocks
+    references:
+      schemas: [ct.schema.json]
+      specification: [rastreabilidade.md]
+
+  - id: traceability.ct_test_in_t
+    name: Teste do CT registrado por tarefa que cobre o critério
+    target: { type: artifact, artifacts: [CT] }
+    type: automatic
+    rule: RAS-29
+    link_fields:
+      - "CT.execucao"
+      - "T.registro_dev"
+      - "T.cobre"
+    reads:
+      - "CT.execucao.teste"
+      - "T.registro_dev.testes"
+      - "T.cobre"
+    approves_when: O arquivo do teste de cada CT de critério está em `registro_dev.testes` de alguma T que cobre o mesmo critério.
+    fails_when: Teste do CT sem T correspondente.
+    failure_severity: alert
+    references:
+      schemas: [ct.schema.json, t.schema.json]
+      specification: [rastreabilidade.md]
+
+  - id: traceability.release_open_findings_listed
+    name: RELEASE lista os ACH não resolvidos
+    target: { type: artifact, artifacts: [RELEASE] }
+    type: automatic
+    rule: RAS-37
+    link_fields:
+      - "RELEASE.achados_abertos"
+    reads:
+      - "RELEASE.achados_abertos"
+      - "ACH ativos"
+    approves_when: "`achados_abertos` é exatamente o conjunto de ACH ativos na data da release (ausente = nenhum)."
+    fails_when: ACH ativo fora da lista, ou ACH da lista que não está ativo.
+    failure_severity: alert
+    references:
+      schemas: [release.schema.json]
+      specification: [rastreabilidade.md]
+
+  - id: traceability.release_scope_consistent
+    name: Escopo e validação da RELEASE coerentes
+    target: { type: artifact, artifacts: [RELEASE] }
+    type: automatic
+    rule: RAS-41
+    link_fields:
+      - "RELEASE.historias"
+      - "RELEASE.validacao"
+      - "BACKLOG.historias[].us"
+    reads:
+      - "RELEASE.historias"
+      - "RELEASE.validacao"
+      - "BACKLOG.historias"
+      - "VALIDACAO"
+    approves_when: >-
+      `historias` (quando presente) é subconjunto de `BACKLOG.historias` e contém toda US Must do escopo; `validation` (quando
+      presente) é a VALIDACAO mais recente, aprovada e com `veredito: liberado`.
+    fails_when: US fora do escopo ou Must faltando, ou VALIDACAO desatualizada ou não liberada.
+    failure_severity: blocks
+    references:
+      schemas: [release.schema.json]
+      specification: [rastreabilidade.md]
+
+  - id: traceability.release_commit_contains_work
+    name: Commit da entrega contém o trabalho
+    target: { type: artifact, artifacts: [RELEASE] }
+    type: automatic
+    rule: RAS-39
+    link_fields:
+      - "RELEASE.entrega"
+      - "T.registro_dev"
+      - "ACH.ciclos"
+    reads:
+      - "RELEASE.entrega.commit"
+      - "T.registro_dev.commits"
+      - "ACH.ciclos[].commit_ou_versao"
+      - "histórico git do projeto"
+    approves_when: Todo commit de T concluída e de correção de ACH fechado é ancestral de `delivery.commit`.
+    fails_when: Algum commit de trabalho fora da história do commit entregue.
+    failure_severity: blocks
+    references:
+      schemas: [release.schema.json, t.schema.json, ach.schema.json]
+      specification: [rastreabilidade.md]
+      policies: [policy.history_preservation]

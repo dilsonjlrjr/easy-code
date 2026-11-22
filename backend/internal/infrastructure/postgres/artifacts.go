@@ -73,9 +73,9 @@ UPDATE easycode.artifact_versions SET description = $3, path = $4, header = $5::
  WHERE artifact_id = $1 AND version = $2 AND git_commit IS NULL`, artifactID, v.Version, v.Description, v.Path, string(v.Header), v.Body, v.ContentHash)
 	} else {
 		_, err = q.Exec(WithOperation(ctx, "artifact_versions.insert"), `
-INSERT INTO easycode.artifact_versions (artifact_id, version, wave_id, author, wave_code, description, path, header, body, content_hash)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10)`,
-			artifactID, v.Version, waveID, v.Author, v.WaveCode, v.Description, v.Path, string(v.Header), v.Body, v.ContentHash)
+INSERT INTO easycode.artifact_versions (artifact_id, version, wave_id, author, wave_code, description, path, header, body, content_hash, finding_id)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, (SELECT w.finding_id FROM easycode.waves w WHERE w.id = $3 AND w.purpose = 'rework' AND $11 <> 'ACH'))`,
+			artifactID, v.Version, waveID, v.Author, v.WaveCode, v.Description, v.Path, string(v.Header), v.Body, v.ContentHash, v.Type)
 	}
 	if err != nil {
 		return fmt.Errorf("save artifact version: %w", classify(err))
@@ -266,4 +266,64 @@ SELECT ar.code, v.header FROM easycode.artifacts ar JOIN easycode.projects pr ON
 		out[code] = header
 	}
 	return out, rows.Err()
+}
+
+// Current implements appartifact.Repository.
+func (a Artifacts) Current(ctx context.Context, projectID, code string) (*appartifact.Current, error) {
+	var c appartifact.Current
+	var header []byte
+	err := conn(ctx, a.pool).QueryRow(WithOperation(ctx, "artifacts.current"), `
+SELECT ar.code, ar.type, ar.state, ar.current_version, v.path, v.author, v.header, v.body
+  FROM easycode.artifacts ar JOIN easycode.projects pr ON pr.id = ar.project_id
+  JOIN easycode.artifact_versions v ON v.artifact_id = ar.id AND v.version = ar.current_version
+ WHERE pr.public_id = $1::uuid AND ar.code = $2`, projectID, code).Scan(&c.Code, &c.Type, &c.State, &c.Version, &c.Path, &c.Author, &header, &c.Body)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("current artifact: %w", classify(err))
+	}
+	return &c, json.Unmarshal(header, &c.Header)
+}
+
+// MergeHeader implements appartifact.Repository (tracking fields of the current version).
+func (a Artifacts) MergeHeader(ctx context.Context, projectID, code string, fields map[string]any) error {
+	encoded, err := json.Marshal(fields)
+	if err != nil {
+		return err
+	}
+	_, err = conn(ctx, a.pool).Exec(WithOperation(ctx, "artifact_versions.merge_tracking"), `
+UPDATE easycode.artifact_versions v SET header = v.header || $3::jsonb
+  FROM easycode.artifacts ar JOIN easycode.projects pr ON pr.id = ar.project_id
+ WHERE v.artifact_id = ar.id AND v.version = ar.current_version AND pr.public_id = $1::uuid AND ar.code = $2`, projectID, code, string(encoded))
+	if err != nil {
+		return fmt.Errorf("merge tracking fields: %w", classify(err))
+	}
+	return nil
+}
+
+// Reopen implements appartifact.Repository: the next version, owned by the rework wave and tied to the
+// finding, becomes current and the artifact goes back to draft.
+func (a Artifacts) Reopen(ctx context.Context, v appartifact.NewVersion, finding string) error {
+	q := conn(ctx, a.pool)
+	var artifactID, waveID int64
+	err := q.QueryRow(WithOperation(ctx, "artifacts.reopen_resolve"), `
+SELECT ar.id, w.id FROM easycode.artifacts ar JOIN easycode.projects pr ON pr.id = ar.project_id
+  JOIN easycode.waves w ON w.project_id = pr.id AND w.code = $3
+ WHERE pr.public_id = $1::uuid AND ar.code = $2 FOR UPDATE OF ar`, v.ProjectID, v.Code, v.WaveCode).Scan(&artifactID, &waveID)
+	if err != nil {
+		return fmt.Errorf("resolve reopened artifact: %w", classify(err))
+	}
+	if _, err := q.Exec(WithOperation(ctx, "artifacts.reopen"), `
+UPDATE easycode.artifacts SET state = 'draft', current_version = $2, updated_at = now() WHERE id = $1`, artifactID, v.Version); err != nil {
+		return fmt.Errorf("reopen artifact: %w", classify(err))
+	}
+	_, err = q.Exec(WithOperation(ctx, "artifact_versions.reopen"), `
+INSERT INTO easycode.artifact_versions (artifact_id, version, wave_id, author, wave_code, description, path, header, body, content_hash, finding_id)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, (SELECT f.id FROM easycode.artifacts f WHERE f.project_id = (SELECT project_id FROM easycode.artifacts WHERE id = $1) AND f.code = $11))`,
+		artifactID, v.Version, waveID, v.Author, v.WaveCode, v.Description, v.Path, string(v.Header), v.Body, v.ContentHash, finding)
+	if err != nil {
+		return fmt.Errorf("reopened version: %w", classify(err))
+	}
+	return nil
 }

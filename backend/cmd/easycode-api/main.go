@@ -14,6 +14,7 @@ import (
 
 	appartifact "easycode/internal/application/artifact"
 	appevent "easycode/internal/application/event"
+	appfinding "easycode/internal/application/finding"
 	appgate "easycode/internal/application/gate"
 	apphealth "easycode/internal/application/health"
 	"easycode/internal/application/idempotency"
@@ -24,6 +25,7 @@ import (
 	apprepository "easycode/internal/application/repository"
 	appsession "easycode/internal/application/session"
 	appskill "easycode/internal/application/skill"
+	apptraceability "easycode/internal/application/traceability"
 	appwave "easycode/internal/application/wave"
 	appworkflow "easycode/internal/application/workflow"
 	"easycode/internal/infrastructure/config"
@@ -191,6 +193,8 @@ func productDependencies(cfg config.Config, pool *pgxpool.Pool, logger *slog.Log
 		Workflow:      appworkflow.NewService(tx, projects, workflows, workflows, workflows, trail),
 		Artifacts:     appartifact.NewQueries(projects, postgres.NewArtifacts(pool)),
 		Gates:         appgate.NewDecisions(tx, projects, postgres.NewGates(pool), postgres.NewOutbox(pool), trail),
+		Findings:      appfinding.NewDecisions(tx, projects, postgres.NewFindings(pool), postgres.NewOutbox(pool), trail),
+		Traceability:  apptraceability.NewService(projects, postgres.NewTraceability(pool)),
 		History:       postgres.NewOutbox(pool),
 		Pending:       apppending.NewService(postgres.NewPending(pool, definition)),
 		Waves:         waves,

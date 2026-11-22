@@ -186,7 +186,9 @@ func TestForbiddenToolCallsAreRefusedPerAgent(t *testing.T) {
 		{"developer-agent", provider.ToolCall{ID: "8", Name: runtime.ToolExecuteCommand, Args: args(map[string]any{"category": "build", "argv": []string{"curl", "http://postgres"}})}, "command_not_allowed"},
 		{"developer-agent", provider.ToolCall{ID: "9", Name: runtime.ToolExecuteCommand, Args: args(map[string]any{"category": "scanner", "argv": []string{"trivy"}})}, "command_not_allowed"},
 		{"developer-agent", provider.ToolCall{ID: "10", Name: runtime.ToolWriteFile, Args: args(map[string]string{"path": "docs/arquitetura/adr/ADR-01.md", "content": "x"})}, "path_not_allowed"},
-		{"developer-agent", provider.ToolCall{ID: "11", Name: runtime.ToolWriteFile, Args: args(map[string]string{"path": "docs/arquitetura/tarefas/T-01.md", "content": "x"})}, "foreign_artifact_write"},
+		// US-31: the Dev updates the tracking fields of the approved T (situacao, registro_dev); the executor refuses any other change.
+		{"developer-agent", provider.ToolCall{ID: "11", Name: runtime.ToolWriteFile, Args: args(map[string]string{"path": "docs/arquitetura/tarefas/T-01.md", "content": "x"})}, ""},
+		{"qa-agent", provider.ToolCall{ID: "13", Name: runtime.ToolWriteFile, Args: args(map[string]string{"path": "docs/arquitetura/tarefas/T-01.md", "content": "x"})}, "foreign_artifact_write"},
 		{"developer-agent", provider.ToolCall{ID: "12", Name: runtime.ToolAskUser, Args: args(map[string]any{"items": []map[string]string{{"text": "a", "suggestion": "b"}}})}, ""},
 	}
 	for _, c := range cases {

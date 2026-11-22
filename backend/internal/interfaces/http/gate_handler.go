@@ -21,8 +21,8 @@ type GateUseCases interface {
 
 func roundOf(r appgate.RoundView) map[string]any {
 	out := map[string]any{"gate": r.Gate, "stage": r.Stage, "round": r.Round, "state": r.State, "opened_at": r.OpenedAt,
-		"approval_mode": r.ApprovalMode, "min_approvals": 1, "partial_approvals": []any{}, "blocking_findings": []any{},
-		"non_blocking_findings": []any{}, "available_actions": []string{}, "decision": nil}
+		"approval_mode": r.ApprovalMode, "min_approvals": 1, "partial_approvals": []any{}, "blocking_findings": findingRefs(r.BlockingFindings, true),
+		"non_blocking_findings": findingRefs(r.NonBlockingFindings, false), "available_actions": []string{}, "decision": nil}
 	outputs := make([]map[string]any, 0, len(r.Outputs))
 	for _, o := range r.Outputs {
 		outputs = append(outputs, map[string]any{"artifact": o.Code, "version": o.Version, "type": o.Type, "state": o.State})
@@ -31,6 +31,10 @@ func roundOf(r appgate.RoundView) map[string]any {
 	checks := make([]map[string]any, 0, len(r.Checks))
 	for _, c := range r.Checks {
 		check := map[string]any{"check": c.Check, "name": c.Check, "type": c.Type, "failure_severity": c.Severity, "status": c.Status, "confirmed_by": nil}
+		if c.ConfirmedBy != nil {
+			check["confirmed_by"] = decisionJSON{Per: actorJSON{Type: "human", User: &userRefJSON{ID: c.ConfirmedBy.By.Subject, Name: c.ConfirmedBy.By.Name}},
+				When: c.ConfirmedBy.At, Origin: optional("web")}
+		}
 		evidence := json.RawMessage("[]")
 		if len(c.Evidence) > 0 {
 			evidence = c.Evidence
@@ -39,6 +43,10 @@ func roundOf(r appgate.RoundView) map[string]any {
 		checks = append(checks, check)
 	}
 	out["checks"] = checks
+	out["reevaluation"] = nil
+	if r.ReevaluatedBy != "" {
+		out["reevaluation"] = map[string]any{"cause": "finding_opened", "finding": r.ReevaluatedBy, "evaluation": r.Evaluation}
+	}
 	out["rework_wave"] = nil
 	if r.ReworkWave != "" {
 		out["rework_wave"] = r.ReworkWave
@@ -54,7 +62,7 @@ func roundOf(r appgate.RoundView) map[string]any {
 			per.ID = "orchestrator"
 		}
 		decision := map[string]any{"result": d.Result, "record": decisionJSON{Per: per, When: d.At, Origin: originOf(d.ByType)},
-			"failed_checks": orEmpty(d.FailedChecks), "blocking_findings": []string{}}
+			"failed_checks": orEmpty(d.FailedChecks), "blocking_findings": findingCodes(r.BlockingFindings)}
 		if d.Reason != "" {
 			decision["reason"] = d.Reason
 		}
@@ -167,4 +175,23 @@ func (a *api) approveGate(rc *fasthttp.RequestCtx, principal identity.Principal)
 
 func (a *api) rejectGate(rc *fasthttp.RequestCtx, principal identity.Principal) error {
 	return a.decideGate(rc, principal, false)
+}
+
+// findingRefs renders the findings of a round as FindingSummary.
+func findingRefs(refs []appgate.FindingRef, blocking bool) []map[string]any {
+	out := make([]map[string]any, 0, len(refs))
+	for _, f := range refs {
+		out = append(out, map[string]any{"id": f.Code, "title": f.Title, "severity": f.Severity, "category": f.Category, "status": f.Status,
+			"destination_stage": f.DestinationStage, "origin_stage": f.OriginStage, "author": f.Author, "blocking": blocking, "cycles": f.Cycles,
+			"opened_at": f.OpenedAt, "acceptance_expired": false})
+	}
+	return out
+}
+
+func findingCodes(refs []appgate.FindingRef) []string {
+	out := make([]string, 0, len(refs))
+	for _, f := range refs {
+		out = append(out, f.Code)
+	}
+	return out
 }

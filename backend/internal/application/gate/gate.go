@@ -1,58 +1,27 @@
-// Package gate is the minimal governance engine of MARCO-1 (ADR-10, interno.md section 5): after
-// the last wave of a stage the orchestrator submits it to its gate, opens a round, runs the only
-// automatic check of the marco (artifact.schema_valid) and waits for the human approver; the api
-// applies approve and reject synchronously, and the worker reacts (stage approved and the next
-// stages unblocked, US-05 CA-4; or stage returned with a rework wave).
+// Package gate is the governance engine of the worker (ADR-10, interno.md section 5): after the last
+// wave of a stage the orchestrator submits it to its gate, opens a round, runs every check of the gate
+// composition (gates.yaml: the common checks plus the gate ones, blocking or alert, automatic or human)
+// and the blocking findings, and decides complete_checks: rejected (a blocking check failed or a critical
+// or high finding is active), approved (automatic mode allowed) or awaiting_human. The api applies the
+// human decisions synchronously; the worker reacts (stage approved and the next stages unblocked, or the
+// stage returned with rework waves, or waiting for the findings that block it).
 package gate
 
 import (
 	"context"
 	"encoding/json"
-	"sort"
-	"strings"
+	"fmt"
+	"time"
 
 	"easycode/internal/application/artifact"
 	"easycode/internal/application/event"
 	"easycode/internal/application/transaction"
 	domainartifact "easycode/internal/domain/artifact"
 	domainevent "easycode/internal/domain/event"
-	"easycode/internal/domain/failure"
+	domainfinding "easycode/internal/domain/finding"
+	"easycode/internal/domain/governance"
 	domainworkflow "easycode/internal/domain/workflow"
 )
-
-// Automatic checks of the gates (checagens.yaml). gate.requirements runs artifact.schema_valid
-// (MARCO-1); MARCO-3 adds the traceability of the tasks to gate.architecture and the build and test
-// evidence of the sandbox to gate.implementation; MARCO-4 adds the model references of gate.data, the
-// screen ↔ story links of gate.design (US-21) and the opinions and verdict of gate.validation (US-20).
-// The other checks of gates.yaml come with US-31.
-const (
-	CheckSchemaValid        = "artifact.schema_valid"
-	CheckTasksCoverUS       = "traceability.t_points_to_us"
-	CheckBuildGreen         = "code.build_green"
-	CheckTestsGreen         = "tests.executed_green"
-	CheckModelReferences    = "persist.model_references"
-	CheckInterfaceUSScreen  = "traceability.interface_us_in_screen"
-	CheckCriteriaConsistent = "telas.criteria_consistent"
-	CheckOpinionsRecorded   = "validacao.review_opinions_recorded"
-	CheckVerdictUnblocked   = "validacao.verdict_unblocked"
-	categoryBuild           = "build"
-	categoryTests           = "tests"
-	stageArchitecture       = "architecture"
-	stageData               = "data"
-	stageDesign             = "design"
-	stageValidation         = "validation"
-	stageImplementation     = "implementation"
-)
-
-// Execution is the last sandbox execution of a category in the stage (evidence of US-41).
-type Execution struct {
-	Wave        string
-	ID          string
-	ExitCode    *int
-	EndReason   string
-	TestsTotal  *int
-	TestsFailed *int
-}
 
 // Round states (machine gate).
 const (
@@ -60,7 +29,33 @@ const (
 	StateAwaitingHuman = "awaiting_human"
 	StateApproved      = "approved"
 	StateRejected      = "rejected"
+	StateInvalidated   = "invalidated"
 )
+
+// Check results (check_executions.result, D-36).
+const (
+	ResultPassed  = "passed"
+	ResultFailed  = "failed"
+	ResultPending = "pending"
+)
+
+// CheckFindingsBlocking is the check whose failure means a critical or high finding is active.
+const CheckFindingsBlocking = "finding.no_open_blocking"
+
+// Execution is a sandbox execution recorded in a wave (evidence of US-41).
+type Execution struct {
+	Wave        string
+	ID          string
+	Category    string
+	Command     string
+	ExitCode    *int
+	EndReason   string
+	TestsTotal  *int
+	TestsFailed *int
+}
+
+// Green reports whether the execution ended with exit code 0.
+func (e Execution) Green() bool { return e.ExitCode != nil && *e.ExitCode == 0 }
 
 // Decided is a round already decided whose stage still waits for the effect.
 type Decided struct {
@@ -70,22 +65,96 @@ type Decided struct {
 	State     string
 }
 
-// Store is the gate persistence used by the worker.
+// ArtifactRecord is the current version of an artifact of the project, as the checks read it.
+type ArtifactRecord struct {
+	Code, Type, State string
+	Version           int
+	Path              string
+	Author            string // author of the version (agent, orchestrator or human)
+	WaveCode          string
+	WaveStage         string
+	WaveState         string
+	WavePurpose       string
+	Finding           string // ACH whose rework created the version (artifact_versions.finding_id)
+	ReplacedBy        string
+	Committed         bool
+	// ApprovedByRound is true when the current version of an approved artifact is in an approved round.
+	ApprovedByRound bool
+	Header          map[string]any
+	Body            string
+}
+
+// WaveRecord is a wave of the round window (wave.limits_respected, wave.record_complete).
+type WaveRecord struct {
+	Code, Stage, Agent, Purpose, State, FailureCause string
+	LimitExceeded                                    int // executions ended by a resource limit
+	Models, Calls                                    int
+	FinalCheckpoint                                  bool
+	Finished                                         bool
+}
+
+// StageRecord is the stage row and the start of the round window.
+type StageRecord struct {
+	State               string
+	ReevaluationPending bool
+	// Since is when the previous round of the stage was decided (zero for the first round): the waves of
+	// the round are the ones completed after it.
+	Since time.Time
+}
+
+// Settings are the project choices for a gate (gate_configurations).
+type Settings struct {
+	Mode     string   // configured approval mode, "" when none
+	Promoted []string // alerts made blocking by the project
+}
+
+// CheckResult is one check result of a round.
+type CheckResult struct {
+	Check    string
+	Type     string
+	Severity string
+	Status   string
+	Evidence json.RawMessage
+}
+
+// Store is the gate persistence used by the worker; it is also the read port of the checks.
 type Store interface {
 	// ActiveWaves counts the waves of the stage not completed (queued to paused, or failed).
 	ActiveWaves(ctx context.Context, projectID, stage string) (int, error)
-	// OpenRound creates the next round in evaluating with the outputs and returns its number.
-	OpenRound(ctx context.Context, projectID, stage string, outputs []artifact.Stored) (int, error)
-	RecordRoundCheck(ctx context.Context, projectID, stage string, round int, check string, passed bool, evidence json.RawMessage) error
+	// OpenRound creates the next round in evaluating with the outputs and the approval mode.
+	OpenRound(ctx context.Context, projectID, stage, mode string, outputs []artifact.Stored) (int, error)
+	RecordCheck(ctx context.Context, projectID, stage string, round int, result CheckResult) error
 	SetRoundState(ctx context.Context, projectID, stage string, round int, state string) error
+	// Reevaluate moves an awaiting_human round back to evaluating with a new evaluation number and the
+	// finding that caused it.
+	Reevaluate(ctx context.Context, projectID, stage string, round int, finding string) error
+	// ActiveRound returns the round in evaluating or awaiting_human of the stage (0 when none) and its state.
+	ActiveRound(ctx context.Context, projectID, stage string) (int, string, error)
+	// RoundMode returns the approval mode the round was opened with.
+	RoundMode(ctx context.Context, projectID, stage string, round int) (string, error)
 	// Decided lists stages in awaiting_gate whose last round is approved or rejected.
 	Decided(ctx context.Context) ([]Decided, error)
-	// LastExecution returns the last execution of the category in the last completed wave of the
-	// stage, or nil when the wave ran none.
+	// LastExecution returns the last execution of the category in the last completed wave of the stage.
 	LastExecution(ctx context.Context, projectID, stage, category string) (*Execution, error)
-	// ReviewOpinions returns, by agent, the opinion recorded by the last completed wave of each agent
-	// in the stage (participants of the validation, "registro de ondas").
+	// WaveExecutions returns the sandbox executions of a wave, in order.
+	WaveExecutions(ctx context.Context, projectID, wave string) ([]Execution, error)
+	// ReviewOpinions returns, by agent, the opinion of the last completed wave of each agent in the stage.
 	ReviewOpinions(ctx context.Context, projectID, stage string) (map[string]domainworkflow.ReviewOpinion, error)
+	ProjectArtifacts(ctx context.Context, projectID string) ([]ArtifactRecord, error)
+	ProjectFindings(ctx context.Context, projectID string) ([]domainfinding.Finding, error)
+	RoundWaves(ctx context.Context, projectID string, stages []string, since time.Time) ([]WaveRecord, error)
+	Stage(ctx context.Context, projectID, stage string) (StageRecord, error)
+	Settings(ctx context.Context, projectID, gate string) (Settings, error)
+	// RecordedCommits are the commits the project recorded (waves, artifact versions, finding cycles).
+	RecordedCommits(ctx context.Context, projectID string) ([]string, error)
+	// LastRound returns the number and failed checks of the last round of a stage (0 when none).
+	LastRound(ctx context.Context, projectID, stage string) (int, []string, error)
+}
+
+// Repository reads the project repository (files at HEAD and commits).
+type Repository interface {
+	Files(ctx context.Context, projectID string) (map[string]string, error)
+	Reachable(ctx context.Context, projectID, sha string) (bool, error)
 }
 
 // HeaderValidator validates a stored header against the schema of its type.
@@ -108,20 +177,54 @@ type StageFlow interface {
 	QueueRework(ctx context.Context, projectID, stage, correlation string) ([]string, error)
 }
 
-// Progress is the worker side of the gate.
-type Progress struct {
-	tx         transaction.Runner
-	store      Store
-	artifacts  Artifacts
-	validator  HeaderValidator
-	flow       StageFlow
-	outbox     event.Outbox
-	definition domainworkflow.Definition
+// RoundHook is told about approved rounds (a finding awaiting a scope change closes when the
+// gate.requirements approves the change, PD-06).
+type RoundHook interface {
+	RoundApproved(ctx context.Context, projectID, stage string, round int, correlation string) error
 }
 
-// NewProgress builds the gate progress.
-func NewProgress(tx transaction.Runner, store Store, artifacts Artifacts, validator HeaderValidator, flow StageFlow, outbox event.Outbox, definition domainworkflow.Definition) *Progress {
-	return &Progress{tx: tx, store: store, artifacts: artifacts, validator: validator, flow: flow, outbox: outbox, definition: definition}
+// Progress is the worker side of the gate.
+type Progress struct {
+	tx          transaction.Runner
+	store       Store
+	artifacts   Artifacts
+	validator   HeaderValidator
+	flow        StageFlow
+	outbox      event.Outbox
+	definition  domainworkflow.Definition
+	composition governance.Composition
+	repository  Repository
+	parser      artifact.HeaderParser
+	hook        RoundHook
+	now         func() time.Time
+}
+
+// NewProgress builds the gate progress. It fails when an automatic check of a gate of the workflow has
+// no implementation (ADR-10: the worker does not start).
+func NewProgress(tx transaction.Runner, store Store, artifacts Artifacts, validator HeaderValidator, flow StageFlow, outbox event.Outbox,
+	definition domainworkflow.Definition, composition governance.Composition) (*Progress, error) {
+	for _, stage := range definition.Stages {
+		for _, spec := range composition.ChecksOf(stage.Gate, nil) {
+			if _, ok := registry[spec.ID]; spec.Type == governance.TypeAutomatic && !ok {
+				return nil, fmt.Errorf("check %s of %s has no implementation", spec.ID, stage.Gate)
+			}
+		}
+	}
+	return &Progress{tx: tx, store: store, artifacts: artifacts, validator: validator, flow: flow, outbox: outbox, definition: definition,
+		composition: composition, now: time.Now}, nil
+}
+
+// WithRepository lets the checks read the project repository (files, commits) and parse its YAML
+// documents (the OpenAPI contract).
+func (p *Progress) WithRepository(repository Repository, parser artifact.HeaderParser) *Progress {
+	p.repository, p.parser = repository, parser
+	return p
+}
+
+// WithHook registers who is told about approved rounds.
+func (p *Progress) WithHook(hook RoundHook) *Progress {
+	p.hook = hook
+	return p
 }
 
 var orchestrator = map[string]any{"type": "orchestrator", "id": "orchestrator"}
@@ -143,34 +246,80 @@ func transition(machine, from, to string) map[string]any {
 	return map[string]any{"machine": machine, "from_state": fromState, "to_state": to}
 }
 
-// WaveCompleted implements runtime.StageProgress: when every wave of the stage is done and the
-// required outputs are in review, the stage goes to its gate (US-17 CA-3) and the round runs its
-// checks; with all of them passing it waits for the human approval (gate.requirements: human).
+// requiredTypes are the typed required outputs of a stage and of the activities approved in its gate.
+func (p *Progress) requiredTypes(stage domainworkflow.Stage) []string {
+	seen := map[string]bool{}
+	var types []string
+	add := func(outputs []domainworkflow.Output) {
+		for _, o := range outputs {
+			if o.Required && o.Type != "" && !o.Attachment && !seen[o.Type] {
+				seen[o.Type] = true
+				types = append(types, o.Type)
+			}
+		}
+	}
+	add(stage.Outputs)
+	for _, a := range p.definition.ActivitiesFor(stage.ID) {
+		add(a.Outputs)
+	}
+	return types
+}
+
+// WaveCompleted implements runtime.StageProgress: when every wave of a running stage is done, its
+// required activities are completed and the required outputs are in review (or approved and current,
+// in a stage reopened by a finding), the stage goes to its gate (US-17 CA-3) and the round runs its
+// checks. A wave of a parallel activity completes the activity and retries the stage it is required for.
 func (p *Progress) WaveCompleted(ctx context.Context, projectID, stageID, correlation string) error {
+	if activity, ok := p.definition.Activity(stageID); ok {
+		return p.activityCompleted(ctx, projectID, activity, correlation)
+	}
 	stage, ok := p.definition.Stage(stageID)
 	if !ok {
 		return nil
+	}
+	record, err := p.store.Stage(ctx, projectID, stageID)
+	if err != nil || record.State != domainworkflow.StageRunning {
+		return err
 	}
 	active, err := p.store.ActiveWaves(ctx, projectID, stageID)
 	if err != nil || active > 0 {
 		return err
 	}
+	for _, activity := range p.definition.ActivitiesFor(stageID) {
+		state, err := p.store.Stage(ctx, projectID, activity.ID)
+		if err != nil || state.State != domainworkflow.ActivityCompleted {
+			return err // guard of submit_to_gate: required activities completed
+		}
+	}
 	outputs, err := p.artifacts.InReview(ctx, projectID, stageID)
+	if err != nil || (len(outputs) == 0 && len(p.requiredTypes(stage)) > 0) {
+		return err // a typed stage goes to the gate with its outputs in review (the implementation has none: app/)
+	}
+	all, err := p.store.ProjectArtifacts(ctx, projectID)
 	if err != nil {
 		return err
 	}
 	present := map[string]bool{}
-	refs := make([]map[string]any, 0, len(outputs))
-	for _, output := range outputs {
-		present[output.Type] = true
-		refs = append(refs, map[string]any{"artifact": output.Code, "version": output.Version})
+	for _, a := range all {
+		if a.State == domainartifact.StateInReview || (a.State == domainartifact.StateApproved && a.ApprovedByRound) {
+			present[a.Type] = true
+		}
 	}
-	for _, output := range stage.Outputs {
-		if output.Required && output.Type != "" && !present[output.Type] {
+	for _, required := range p.requiredTypes(stage) {
+		if !present[required] {
 			return nil // guard of submit_to_gate: required outputs present and in review
 		}
 	}
-	round, err := p.store.OpenRound(ctx, projectID, stageID, outputs)
+	refs := make([]map[string]any, 0, len(outputs))
+	for _, output := range outputs {
+		refs = append(refs, map[string]any{"artifact": output.Code, "version": output.Version})
+	}
+	settings, err := p.store.Settings(ctx, projectID, stage.Gate)
+	if err != nil {
+		return err
+	}
+	mode := stage.ApprovalMode(settings.Mode)
+	round, err := p.store.OpenRound(ctx, projectID, stageID, mode, outputs)
 	if err != nil {
 		return err
 	}
@@ -183,14 +332,45 @@ func (p *Progress) WaveCompleted(ctx context.Context, projectID, stageID, correl
 	}); err != nil {
 		return err
 	}
-	subject := roundSubject(stage.Gate, round)
-	if err := p.emit(ctx, projectID, correlation, "br.easycode.gate.opened.v1", subject, map[string]any{
-		"gate": stage.Gate, "round": round, "stage": stageID, "approval_mode": "human", "outputs": refs, "actor": orchestrator,
+	if err := p.emit(ctx, projectID, correlation, "br.easycode.gate.opened.v1", roundSubject(stage.Gate, round), map[string]any{
+		"gate": stage.Gate, "round": round, "stage": stageID, "approval_mode": mode, "outputs": refs, "actor": orchestrator,
 		"transition": transition("gate", "", StateEvaluating),
 	}); err != nil {
 		return err
 	}
-	return p.evaluate(ctx, projectID, stage, round, outputs, correlation)
+	return p.evaluate(ctx, projectID, stage, round, mode, outputs, settings, correlation)
+}
+
+// activityCompleted applies complete of the activity machine and retries the stage it is required for.
+func (p *Progress) activityCompleted(ctx context.Context, projectID string, activity domainworkflow.Activity, correlation string) error {
+	record, err := p.store.Stage(ctx, projectID, activity.ID)
+	if err != nil || record.State != domainworkflow.StageRunning {
+		return err
+	}
+	active, err := p.store.ActiveWaves(ctx, projectID, activity.ID)
+	if err != nil || active > 0 {
+		return err
+	}
+	all, err := p.store.ProjectArtifacts(ctx, projectID)
+	if err != nil {
+		return err
+	}
+	for _, o := range activity.Outputs {
+		if !o.Required || o.Type == "" || o.Attachment {
+			continue
+		}
+		found := false
+		for _, a := range all {
+			found = found || (a.Type == o.Type && (a.State == domainartifact.StateInReview || a.State == domainartifact.StateApproved))
+		}
+		if !found {
+			return nil
+		}
+	}
+	if err := p.flow.SetStageState(ctx, projectID, activity.ID, domainworkflow.ActivityCompleted); err != nil {
+		return err
+	}
+	return p.WaveCompleted(ctx, projectID, activity.RequiredFor, correlation)
 }
 
 func roundSubject(gate string, round int) string {
@@ -202,333 +382,147 @@ func itoa(n int) string {
 	return string(b)
 }
 
-type checkOutcome struct {
-	check    string
-	evidence []map[string]any
-}
-
-// evaluate runs the automatic checks of the gate and applies complete_checks.
-func (p *Progress) evaluate(ctx context.Context, projectID string, stage domainworkflow.Stage, round int, outputs []artifact.Stored, correlation string) error {
-	headers := map[string]map[string]any{}
-	schema := checkOutcome{check: CheckSchemaValid}
-	for _, output := range outputs {
-		header, err := p.artifacts.Header(ctx, projectID, output.Code)
-		if err != nil {
-			return err
-		}
-		headers[output.Code] = header
-		problems, err := p.validator.Validate(output.Type, header)
-		if err != nil {
-			return err
-		}
-		for _, problem := range problems {
-			schema.evidence = append(schema.evidence, map[string]any{"reference": output.Code, "path": problem.Path, "message": problem.Message})
-		}
+// evaluate runs the checks of the gate and applies complete_checks.
+func (p *Progress) evaluate(ctx context.Context, projectID string, stage domainworkflow.Stage, round int, mode string, outputs []artifact.Stored,
+	settings Settings, correlation string) error {
+	gate := p.composition.Gates[stage.Gate]
+	e := &evaluation{p: p, projectID: projectID, stage: stage, gate: gate, round: round, outputs: outputs}
+	if err := e.load(ctx); err != nil {
+		return err
 	}
-	outcomes := []checkOutcome{schema}
-	switch stage.ID {
-	case stageArchitecture:
-		tasks, err := p.tasksCoverStories(ctx, projectID, outputs, headers)
-		if err != nil {
-			return err
-		}
-		outcomes = append(outcomes, tasks)
-	case stageData:
-		outcomes = append(outcomes, modelReferences(outputs, headers))
-	case stageDesign:
-		links, err := p.screensLinkStories(ctx, projectID, outputs, headers)
-		if err != nil {
-			return err
-		}
-		outcomes = append(outcomes, links, criteriaConsistent(outputs, headers))
-	case stageValidation:
-		recorded, err := p.opinionsRecorded(ctx, projectID, stage, outputs, headers)
-		if err != nil {
-			return err
-		}
-		outcomes = append(outcomes, recorded, verdictUnblocked(outputs, headers))
-	case stageImplementation:
-		for _, c := range []struct{ check, category string }{{CheckBuildGreen, categoryBuild}, {CheckTestsGreen, categoryTests}} {
-			outcome, err := p.executionGreen(ctx, projectID, stage.ID, c.check, c.category)
+	var failed, humanRequired []string
+	okChecks, notices, humanChecks := 0, 0, 0
+	for _, spec := range p.composition.ChecksOf(stage.Gate, settings.Promoted) {
+		result := CheckResult{Check: spec.ID, Type: spec.Type, Severity: spec.Severity}
+		if spec.Type == governance.TypeHuman {
+			result.Status = ResultPending
+			humanChecks++
+		} else {
+			outcome, err := registry[spec.ID](ctx, e)
 			if err != nil {
-				return err
+				return fmt.Errorf("check %s: %w", spec.ID, err)
 			}
-			outcomes = append(outcomes, outcome)
+			result.Status = ResultPassed
+			if len(outcome.evidence) > 0 {
+				result.Evidence, _ = json.Marshal(outcome.evidence)
+			}
+			switch {
+			case !outcome.passed():
+				result.Status = ResultFailed
+				if spec.Severity == governance.SeverityBlocks {
+					failed = append(failed, spec.ID)
+				} else {
+					notices++
+					if gate.RequiresHuman(spec.ID) {
+						humanRequired = append(humanRequired, spec.ID)
+					}
+				}
+			case len(outcome.evidence) > 0:
+				notices++
+				okChecks++
+			default:
+				okChecks++
+			}
 		}
-	}
-	var failed []string
-	for _, outcome := range outcomes {
-		passed := len(outcome.evidence) == 0
-		var raw json.RawMessage
-		if !passed {
-			failed = append(failed, outcome.check)
-			raw, _ = json.Marshal(outcome.evidence)
-		}
-		if err := p.store.RecordRoundCheck(ctx, projectID, stage.ID, round, outcome.check, passed, raw); err != nil {
+		if err := p.store.RecordCheck(ctx, projectID, stage.ID, round, result); err != nil {
 			return err
 		}
 	}
+	blocking, nonBlocking := e.scopedFindings()
 	subject := roundSubject(stage.Gate, round)
-	if len(failed) > 0 {
+	if len(failed) > 0 || len(blocking) > 0 {
 		if err := p.store.SetRoundState(ctx, projectID, stage.ID, round, StateRejected); err != nil {
 			return err
 		}
 		return p.emit(ctx, projectID, correlation, "br.easycode.gate.rejected.v1", subject, map[string]any{
-			"gate": stage.Gate, "round": round, "stage": stage.ID, "actor": orchestrator, "failed_checks": failed,
-			"blocking_findings": []string{}, "transition": transition("gate", StateEvaluating, StateRejected),
+			"gate": stage.Gate, "round": round, "stage": stage.ID, "actor": orchestrator, "failed_checks": orEmpty(failed),
+			"blocking_findings": blocking, "transition": transition("gate", StateEvaluating, StateRejected),
+		})
+	}
+	if mode == governance.ModeAutomatic && len(humanRequired) == 0 && humanChecks == 0 {
+		if err := p.store.SetRoundState(ctx, projectID, stage.ID, round, StateApproved); err != nil {
+			return err
+		}
+		return p.emit(ctx, projectID, correlation, "br.easycode.gate.approved.v1", subject, map[string]any{
+			"gate": stage.Gate, "round": round, "stage": stage.ID, "ok_checks": okChecks, "actor": orchestrator, "approvals": 1,
+			"confirmed_human_checks": []string{}, "transition": transition("gate", StateEvaluating, StateApproved),
 		})
 	}
 	if err := p.store.SetRoundState(ctx, projectID, stage.ID, round, StateAwaitingHuman); err != nil {
 		return err
 	}
 	return p.emit(ctx, projectID, correlation, "br.easycode.gate.awaiting_approval.v1", subject, map[string]any{
-		"gate": stage.Gate, "round": round, "stage": stage.ID, "actor": orchestrator, "ok_checks": len(outcomes), "notices": 0,
-		"non_blocking_findings": []string{}, "transition": transition("gate", StateEvaluating, StateAwaitingHuman),
+		"gate": stage.Gate, "round": round, "stage": stage.ID, "actor": orchestrator, "ok_checks": okChecks, "notices": notices,
+		"non_blocking_findings": nonBlocking, "transition": transition("gate", StateEvaluating, StateAwaitingHuman),
 	})
 }
 
-// tasksCoverStories is traceability.t_points_to_us (RAS-08, US-18 CA-1): every functional T covers
-// at least one US, and each US and criterion it cites exists in the project.
-func (p *Progress) tasksCoverStories(ctx context.Context, projectID string, outputs []artifact.Stored, headers map[string]map[string]any) (checkOutcome, error) {
-	outcome := checkOutcome{check: CheckTasksCoverUS}
-	stories := map[string]map[string]bool{}
-	for _, output := range outputs {
-		if output.Type != "T" {
-			continue
-		}
-		header := headers[output.Code]
-		nature, _ := header["natureza"].(string)
-		covers, _ := header["cobre"].([]any)
-		if len(covers) == 0 && (nature == "" || nature == "funcional") {
-			outcome.evidence = append(outcome.evidence, map[string]any{"reference": output.Code, "path": "/cobre", "message": "functional task covers no US"})
-		}
-		for _, item := range covers {
-			entry, _ := item.(map[string]any)
-			us, _ := entry["us"].(string)
-			criteria, known := stories[us]
-			if !known {
-				story, err := p.artifacts.Header(ctx, projectID, us)
-				if err != nil && failure.From(err).Kind != failure.KindNotFound {
-					return outcome, err
-				}
-				criteria = map[string]bool{}
-				if story != nil {
-					list, _ := story["criterios_aceite"].([]any)
-					for _, ca := range list {
-						if m, ok := ca.(map[string]any); ok {
-							id, _ := m["id"].(string)
-							criteria[id] = true
-						}
-					}
-				}
-				stories[us] = criteria
-			}
-			if len(criteria) == 0 {
-				outcome.evidence = append(outcome.evidence, map[string]any{"reference": output.Code, "path": "/cobre", "message": "unknown US " + us})
-				continue
-			}
-			cited, _ := entry["criterios"].([]any)
-			for _, ca := range cited {
-				if id, _ := ca.(string); !criteria[id] {
-					outcome.evidence = append(outcome.evidence, map[string]any{"reference": output.Code, "path": "/cobre", "message": us + " has no " + id})
-				}
-			}
-		}
+func orEmpty(list []string) []string {
+	if list == nil {
+		return []string{}
 	}
-	return outcome, nil
+	return list
 }
 
-func list(header map[string]any, field string) []any {
-	items, _ := header[field].([]any)
-	return items
-}
-
-func text(value any) string {
-	s, _ := value.(string)
-	return s
-}
-
-// modelReferences is persist.model_references (RAS-14): every index of PERSIST points to a table of DIC
-// and to columns of it.
-func modelReferences(outputs []artifact.Stored, headers map[string]map[string]any) checkOutcome {
-	outcome := checkOutcome{check: CheckModelReferences}
-	tables := map[string]map[string]bool{}
-	for _, output := range outputs {
-		if output.Type != "DIC" {
-			continue
-		}
-		for _, item := range list(headers[output.Code], "tabelas") {
-			table, _ := item.(map[string]any)
-			columns := map[string]bool{}
-			for _, c := range list(table, "colunas") {
-				column, _ := c.(map[string]any)
-				columns[text(column["nome"])] = true
-			}
-			tables[text(table["nome"])] = columns
-		}
+// FindingOpened implements the gate side of easycode.finding.opened (US-31 CA-3): a critical or high
+// finding opened in a stage whose round waits for the human makes the round evaluate again, so the
+// approval is no longer available.
+func (p *Progress) FindingOpened(ctx context.Context, projectID, originStage, finding, correlation string) error {
+	stageID := p.definition.GateStage(originStage)
+	stage, ok := p.definition.Stage(stageID)
+	if !ok {
+		return nil
 	}
-	for _, output := range outputs {
-		if output.Type != "PERSIST" {
-			continue
-		}
-		for _, item := range list(headers[output.Code], "indices") {
-			index, _ := item.(map[string]any)
-			name, table := text(index["nome"]), text(index["tabela"])
-			columns, known := tables[table]
-			if !known {
-				outcome.evidence = append(outcome.evidence, map[string]any{"reference": output.Code, "path": "/indices", "message": "index " + name + " on unknown table " + table})
-				continue
-			}
-			for _, c := range list(index, "colunas") {
-				if column := text(c); !columns[column] {
-					outcome.evidence = append(outcome.evidence, map[string]any{"reference": output.Code, "path": "/indices", "message": "index " + name + " on unknown column " + table + "." + column})
-				}
-			}
-		}
+	round, state, err := p.store.ActiveRound(ctx, projectID, stageID)
+	if err != nil || round == 0 || state != StateAwaitingHuman {
+		return err
 	}
-	return outcome
-}
-
-// screensLinkStories is traceability.interface_us_in_screen (RAS-17, US-21 CA-1, CA-2, CA-3): every US
-// with tem_interface true (and not wont) is in at least one screen; a US without interface is not
-// required; a screen whose stories do not exist in the project is pointed out as orphan.
-func (p *Progress) screensLinkStories(ctx context.Context, projectID string, outputs []artifact.Stored, headers map[string]map[string]any) (checkOutcome, error) {
-	outcome := checkOutcome{check: CheckInterfaceUSScreen}
-	stories, err := p.artifacts.Headers(ctx, projectID, "US")
+	if err := p.store.Reevaluate(ctx, projectID, stageID, round, finding); err != nil {
+		return err
+	}
+	if err := p.emit(ctx, projectID, correlation, "br.easycode.gate.reevaluation_started.v1", roundSubject(stage.Gate, round), map[string]any{
+		"gate": stage.Gate, "round": round, "stage": stageID, "actor": orchestrator, "cause": "finding_opened", "finding": finding,
+		"transition": transition("gate", StateAwaitingHuman, StateEvaluating),
+	}); err != nil {
+		return err
+	}
+	mode, err := p.store.RoundMode(ctx, projectID, stageID, round)
 	if err != nil {
-		return outcome, err
+		return err
 	}
-	covered := map[string]bool{}
-	for _, output := range outputs {
-		if output.Type != "TELAS" {
-			continue
-		}
-		for _, item := range list(headers[output.Code], "telas") {
-			screen, _ := item.(map[string]any)
-			id := text(screen["id"])
-			known := 0
-			for _, us := range list(screen, "us") {
-				code := text(us)
-				if _, ok := stories[code]; ok {
-					covered[code] = true
-					known++
-				} else {
-					outcome.evidence = append(outcome.evidence, map[string]any{"reference": output.Code + "/" + id, "path": "/telas", "message": "screen cites unknown US " + code})
-				}
-			}
-			if known == 0 {
-				outcome.evidence = append(outcome.evidence, map[string]any{"reference": output.Code + "/" + id, "path": "/telas", "message": "orphan screen: no US of the project"})
-			}
-		}
-	}
-	for code, story := range stories {
-		if story["tem_interface"] == true && text(story["prioridade"]) != "wont" && !covered[code] {
-			outcome.evidence = append(outcome.evidence, map[string]any{"reference": code, "path": "/tem_interface", "message": "US with interface in no screen"})
-		}
-	}
-	sortEvidence(outcome.evidence)
-	return outcome, nil
-}
-
-// criteriaConsistent is telas.criteria_consistent (RAS-18): the US of every criterion of a screen is a
-// US of the same screen.
-func criteriaConsistent(outputs []artifact.Stored, headers map[string]map[string]any) checkOutcome {
-	outcome := checkOutcome{check: CheckCriteriaConsistent}
-	for _, output := range outputs {
-		if output.Type != "TELAS" {
-			continue
-		}
-		for _, item := range list(headers[output.Code], "telas") {
-			screen, _ := item.(map[string]any)
-			own := map[string]bool{}
-			for _, us := range list(screen, "us") {
-				own[text(us)] = true
-			}
-			for _, c := range list(screen, "criterios") {
-				criterion := text(c)
-				if us, _, _ := strings.Cut(criterion, "/"); !own[us] {
-					outcome.evidence = append(outcome.evidence, map[string]any{"reference": output.Code + "/" + text(screen["id"]), "path": "/telas",
-						"message": "criterion " + criterion + " of a US outside the screen"})
-				}
-			}
-		}
-	}
-	return outcome
-}
-
-// opinionsRecorded is validacao.review_opinions_recorded: one opinion of each participant (arquiteto,
-// dba, designer), each recorded in a completed wave of the matching agent and copied unchanged.
-func (p *Progress) opinionsRecorded(ctx context.Context, projectID string, stage domainworkflow.Stage, outputs []artifact.Stored, headers map[string]map[string]any) (checkOutcome, error) {
-	outcome := checkOutcome{check: CheckOpinionsRecorded}
-	recorded, err := p.store.ReviewOpinions(ctx, projectID, stage.ID)
+	settings, err := p.store.Settings(ctx, projectID, stage.Gate)
 	if err != nil {
-		return outcome, err
+		return err
 	}
-	for _, output := range outputs {
-		if output.Type != "VALIDACAO" {
-			continue
-		}
-		given := map[string]map[string]any{}
-		for _, item := range list(headers[output.Code], "pareceres") {
-			entry, _ := item.(map[string]any)
-			name := text(entry["participante"])
-			if _, dup := given[name]; dup {
-				outcome.evidence = append(outcome.evidence, map[string]any{"reference": output.Code, "path": "/pareceres", "message": "repeated opinion of " + name})
-			}
-			given[name] = entry
-		}
-		for _, reviewer := range stage.Reviewers() {
-			name := domainworkflow.ReviewerName(reviewer.Agent)
-			opinion, ok := recorded[reviewer.Agent]
-			entry, written := given[name]
-			switch {
-			case !ok:
-				outcome.evidence = append(outcome.evidence, map[string]any{"reference": output.Code, "path": "/pareceres", "message": "no completed wave of " + reviewer.Agent + " with its opinion"})
-			case !written || text(entry["parecer"]) != opinion.Opinion:
-				outcome.evidence = append(outcome.evidence, map[string]any{"reference": output.Code, "path": "/pareceres", "message": "opinion of " + name + " differs from wave " + opinion.Wave})
-			}
-		}
-		if _, ok := given[domainworkflow.ReviewerName(stage.Agent)]; !ok {
-			outcome.evidence = append(outcome.evidence, map[string]any{"reference": output.Code, "path": "/pareceres", "message": "no opinion of the lead"})
-		}
-	}
-	return outcome, nil
-}
-
-// verdictUnblocked is validacao.verdict_unblocked: the VALIDACAO of the round has veredito liberado
-// (a rejection by the DBA forces devolvido in the schema, US-20 RN-2).
-func verdictUnblocked(outputs []artifact.Stored, headers map[string]map[string]any) checkOutcome {
-	outcome := checkOutcome{check: CheckVerdictUnblocked}
-	for _, output := range outputs {
-		if output.Type == "VALIDACAO" && text(headers[output.Code]["veredito"]) != "liberado" {
-			outcome.evidence = append(outcome.evidence, map[string]any{"reference": output.Code, "path": "/veredito", "message": "validation returned"})
-		}
-	}
-	return outcome
-}
-
-func sortEvidence(items []map[string]any) {
-	sort.SliceStable(items, func(i, j int) bool { return text(items[i]["reference"]) < text(items[j]["reference"]) })
-}
-
-// executionGreen is code.build_green and tests.executed_green: the last command of the category in the
-// last wave of the stage ran in the sandbox with exit code 0 and, for tests, at least one test run and
-// none failed (US-19 CA-1, US-41).
-func (p *Progress) executionGreen(ctx context.Context, projectID, stage, check, category string) (checkOutcome, error) {
-	outcome := checkOutcome{check: check}
-	last, err := p.store.LastExecution(ctx, projectID, stage, category)
+	outputs, err := p.artifacts.InReview(ctx, projectID, stageID)
 	if err != nil {
-		return outcome, err
+		return err
 	}
-	switch {
-	case last == nil:
-		outcome.evidence = []map[string]any{{"message": category + " not executed in the sandbox"}}
-	case last.ExitCode == nil || *last.ExitCode != 0:
-		outcome.evidence = []map[string]any{{"reference": last.Wave, "execution": last.ID, "end_reason": last.EndReason, "message": category + " not green"}}
-	case category == categoryTests && (last.TestsTotal == nil || *last.TestsTotal == 0 || (last.TestsFailed != nil && *last.TestsFailed > 0)):
-		outcome.evidence = []map[string]any{{"reference": last.Wave, "execution": last.ID, "message": "no test executed or a test failed"}}
+	return p.evaluate(ctx, projectID, stage, round, mode, outputs, settings, correlation)
+}
+
+// InternalCycle runs the checks of the internal cycle of the implementation (gates.yaml internal_cycle)
+// on a rework wave: build, tests and lint green in the wave (finding.internal_cycle_green), without a
+// round. It returns the failed blocking checks with their evidence.
+func (p *Progress) InternalCycle(ctx context.Context, projectID, wave string) ([]string, []map[string]any, error) {
+	executions, err := p.store.WaveExecutions(ctx, projectID, wave)
+	if err != nil {
+		return nil, nil, err
 	}
-	return outcome, nil
+	last := map[string]Execution{}
+	for _, e := range executions {
+		last[e.Category] = e
+	}
+	var failed []string
+	var evidence []map[string]any
+	for _, c := range []struct{ check, category string }{{CheckBuildGreen, categoryBuild}, {CheckTestsGreen, categoryTests}, {CheckLintClean, categoryLint}} {
+		e, ok := last[c.category]
+		if !ok || !e.Green() || (c.category == categoryTests && !testsGreen(e)) {
+			failed = append(failed, c.check)
+			evidence = append(evidence, map[string]any{"reference": wave, "message": c.category + " not green in the rework wave"})
+		}
+	}
+	return failed, evidence, nil
 }
 
 // Reconcile applies the effect of decided rounds (stage approved or returned). It is idempotent:
@@ -579,6 +573,11 @@ func (p *Progress) approved(ctx context.Context, d Decided, correlation string) 
 			return err
 		}
 	}
+	if p.hook != nil {
+		if err := p.hook.RoundApproved(ctx, d.ProjectID, d.Stage, d.Round, correlation); err != nil {
+			return err
+		}
+	}
 	return p.flow.UnblockReady(ctx, d.ProjectID, correlation)
 }
 
@@ -588,7 +587,7 @@ func (p *Progress) rejected(ctx context.Context, d Decided, correlation string) 
 	if err != nil {
 		return err
 	}
-	if err := p.flow.SetStageState(ctx, d.ProjectID, d.Stage, "returned"); err != nil {
+	if err := p.flow.SetStageState(ctx, d.ProjectID, d.Stage, domainworkflow.StageReturned); err != nil {
 		return err
 	}
 	for _, output := range outputs {
@@ -603,14 +602,51 @@ func (p *Progress) rejected(ctx context.Context, d Decided, correlation string) 
 			return err
 		}
 	}
-	waves, err := p.flow.QueueRework(ctx, d.ProjectID, d.Stage, correlation)
+	// Routing by finding (MARCO-5): with a blocking finding of the stage active, the rework is the
+	// finding cycle in its destination stage; the stage is returned without rework waves and is redone
+	// when its findings stop blocking it (ResumeReturned). The other failed checks of the round are the
+	// consequence of the open findings (a REL-QA reprovado for the failed CT, for instance).
+	waves := []string{}
+	findings, err := p.store.ProjectFindings(ctx, d.ProjectID)
 	if err != nil {
 		return err
 	}
+	blocked := false
+	for _, f := range findings {
+		blocked = blocked || (f.Blocking() && p.definition.GateStage(f.OriginStage) == d.Stage)
+	}
+	if !blocked {
+		if waves, err = p.flow.QueueRework(ctx, d.ProjectID, d.Stage, correlation); err != nil {
+			return err
+		}
+	}
 	return p.emit(ctx, d.ProjectID, correlation, "br.easycode.stage.returned.v1", "stages/"+d.Stage, map[string]any{
 		"stage": d.Stage, "gate": stage.Gate, "round": d.Round, "rework_waves": waves, "actor": orchestrator,
-		"transition": transition("stage", domainworkflow.StageAwaitingGate, "returned"),
+		"transition": transition("stage", domainworkflow.StageAwaitingGate, domainworkflow.StageReturned),
 	})
+}
+
+// ResumeReturned redoes a stage returned only for blocking findings once none of its findings blocks it
+// anymore: the stage agents run again over the corrected work (routing by finding).
+func (p *Progress) ResumeReturned(ctx context.Context, projectID, stageID, correlation string) ([]string, error) {
+	record, err := p.store.Stage(ctx, projectID, stageID)
+	if err != nil || record.State != domainworkflow.StageReturned {
+		return nil, err
+	}
+	active, err := p.store.ActiveWaves(ctx, projectID, stageID)
+	if err != nil || active > 0 {
+		return nil, err
+	}
+	findings, err := p.store.ProjectFindings(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+	for _, f := range findings {
+		if f.Blocking() && p.definition.GateStage(f.OriginStage) == stageID {
+			return nil, nil
+		}
+	}
+	return p.flow.QueueRework(ctx, projectID, stageID, correlation)
 }
 
 // roundCorrelation is stable per round, so the effects of a decision share it.

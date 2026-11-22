@@ -48,10 +48,13 @@ func BasicWorkflow() (Workflow, error) {
 	return Workflow{Definition: definition, JSON: encoded, Hash: hex.EncodeToString(sum[:])}, nil
 }
 
-// StandardAgents are the agents with a harness in the platform (MARCO-4: the Phase 1 agents plus DBA
-// and Designer). The stages of workflow-padrao run by other agents (QA, Segurança, the Release of the
-// orchestrator) enter the workflow in force when their agents do.
-var StandardAgents = []string{"requirements-agent", "architect-agent", "dba-agent", "designer-agent", "developer-agent"}
+// StandardAgents are the agents with a harness in the platform (MARCO-5: the seven agents). The stages
+// of workflow-padrao run by other agents (the Release of the orchestrator, MARCO-6) enter the workflow in
+// force when their agents do.
+var StandardAgents = []string{"requirements-agent", "architect-agent", "dba-agent", "designer-agent", "developer-agent", "qa-agent", "security-agent"}
+
+// TeamAgents are the agents of MARCO-4 (without QA and Segurança), kept for the regressions of that marco.
+var TeamAgents = []string{"requirements-agent", "architect-agent", "dba-agent", "designer-agent", "developer-agent"}
 
 // StandardWorkflow loads workflow-padrao.yaml (Phase 2) restricted to the stages whose every agent is
 // in agents: other stages, the parallel activities of missing agents and the dependencies on them are
@@ -103,6 +106,21 @@ func StandardWorkflow(agents []string) (Workflow, error) {
 		stages = append(stages, stage)
 	}
 	definition.Stages = stages
+	var activities []workflow.Activity
+	for _, activity := range definition.Activities {
+		if !available[activity.Agent] || !kept[activity.RequiredFor] {
+			continue
+		}
+		var dependencies []string
+		for _, dependency := range activity.DependsOn {
+			if kept[dependency] {
+				dependencies = append(dependencies, dependency)
+			}
+		}
+		activity.DependsOn = dependencies
+		activities = append(activities, activity)
+	}
+	definition.Activities = activities
 	if err := definition.Validate(); err != nil {
 		return Workflow{}, err
 	}

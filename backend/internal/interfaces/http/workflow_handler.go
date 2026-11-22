@@ -54,6 +54,7 @@ type stageSummaryJSON struct {
 	ReevaluationPending  bool      `json:"reevaluation_pending"`
 	ActiveWaves          int       `json:"active_waves"`
 	Cost                 moneyJSON `json:"cost"`
+	ReopenedByFinding    *string   `json:"reopened_by_finding"`
 }
 
 type workflowJSON struct {
@@ -148,12 +149,14 @@ func (a *api) stageSummaries(view appworkflow.View) []stageSummaryJSON {
 	stages := []stageSummaryJSON{}
 	for _, stage := range view.Stages {
 		item := stageSummaryJSON{
-			ID: stage.ID, Name: stage.Name, ShortName: stage.ShortName, Type: "stage", Agent: stage.Agent, DependsOn: stage.DependsOn,
+			ID: stage.ID, Name: stage.Name, ShortName: stage.ShortName, Type: "stage", Agent: stage.Agent, DependsOn: stage.DependsOn, ReopenedByFinding: optional(stage.ReopenedByFinding),
 			RequiredCapabilities: stage.RequiredCapabilities, State: optional(stage.State), Gate: optional(stage.Gate),
 			CurrentRound: optional(stage.CurrentRound), GateState: optional(stage.GateState), ReevaluationPending: stage.ReevaluationPending,
 			ActiveWaves: stage.ActiveWaves, Cost: moneyJSON(stage.Cost),
 		}
-		if stage.State == "approved" {
+		if stage.Type == "parallel_activity" {
+			item.Type, item.Gate, item.ApprovedInGate = stage.Type, nil, optional(stage.ApprovedInGate)
+		} else if stage.State == "approved" {
 			item.ApprovedInGate = item.Gate
 		}
 		stages = append(stages, item)

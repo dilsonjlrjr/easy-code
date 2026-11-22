@@ -85,8 +85,27 @@ func TestStandardWorkflowPutsDataAndDesignBetweenArchitectureAndImplementation(t
 	for _, stage := range wf.Definition.Stages {
 		ids = append(ids, stage.ID)
 	}
-	if wf.Definition.ID != "workflow-padrao" || wf.Definition.Phase != 2 || fmt.Sprint(ids) != "[requirements architecture data design validation implementation]" {
+	if wf.Definition.ID != "workflow-padrao" || wf.Definition.Phase != 2 || fmt.Sprint(ids) != "[requirements architecture data design validation implementation qa security]" {
 		t.Fatalf("stages: %s %v", wf.Definition.ID, ids)
+	}
+	// MARCO-5 (US-22 CA-1, US-23 CA-1): the QA plan after the requirements and the threat model after the
+	// architecture run as parallel activities approved in gate.validation; QA after the implementation and
+	// Segurança after QA. The Release (orchestrator, MARCO-6) is not in force yet.
+	plan, _ := wf.Definition.Activity("qa-plan")
+	threats, _ := wf.Definition.Activity("security-threats")
+	qa, _ := wf.Definition.Stage("qa")
+	security, _ := wf.Definition.Stage("security")
+	if plan.Agent != "qa-agent" || plan.AgentMode != "PLANO" || fmt.Sprint(plan.DependsOn) != "[requirements]" || plan.RequiredFor != "validation" ||
+		threats.Agent != "security-agent" || threats.AgentMode != "AMEACAS" || fmt.Sprint(threats.DependsOn) != "[architecture]" ||
+		fmt.Sprint(qa.DependsOn) != "[implementation]" || qa.AgentMode != "EXECUCAO" || fmt.Sprint(security.DependsOn) != "[qa]" || security.AgentMode != "AUDITORIA" {
+		t.Fatalf("parallel activities and QA/Segurança: %+v %+v %+v %+v", plan, threats, qa, security)
+	}
+	if wf.Definition.GateStage("qa-plan") != "validation" || !wf.Definition.Returns.Internal("implementation") || wf.Definition.Returns.DefaultByCategory["defect"] != "implementation" {
+		t.Fatalf("returns: %+v", wf.Definition.Returns)
+	}
+	team, err := specs.StandardWorkflow(specs.TeamAgents)
+	if err != nil || len(team.Definition.Stages) != 6 || len(team.Definition.Activities) != 0 {
+		t.Fatalf("MARCO-4 team without QA and Segurança: %v %+v", err, team.Definition)
 	}
 	data, _ := wf.Definition.Stage("data")
 	design, _ := wf.Definition.Stage("design")

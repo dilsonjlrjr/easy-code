@@ -68,6 +68,19 @@ func (a *api) register(router *Router) {
 		router.Handle(fasthttp.MethodPost, p+"/{round}/approval", auth(a.approveGate))
 		router.Handle(fasthttp.MethodPost, p+"/{round}/rejection", auth(a.rejectGate))
 	}
+	if a.deps.Findings != nil {
+		p := APIPrefix + "/projects/{projectId}/findings"
+		router.Handle(fasthttp.MethodGet, p, auth(a.listFindings))
+		router.Handle(fasthttp.MethodGet, p+"/{findingId}", auth(a.getFinding))
+		router.Handle(fasthttp.MethodPost, p+"/{findingId}/risk-acceptance", auth(a.acceptFindingRisk))
+		router.Handle(fasthttp.MethodPost, p+"/{findingId}/extra-round", auth(a.authorizeFindingExtraRound))
+		router.Handle(fasthttp.MethodPost, p+"/{findingId}/scope-change", auth(a.decideFindingScopeChange))
+		router.Handle(fasthttp.MethodPost, p+"/{findingId}/discard", auth(a.discardFinding))
+	}
+	if a.deps.Traceability != nil {
+		router.Handle(fasthttp.MethodGet, APIPrefix+"/projects/{projectId}/artifacts/{artifactId}/links", auth(a.getArtifactTraceability))
+		router.Handle(fasthttp.MethodGet, APIPrefix+"/projects/{projectId}/coverage", auth(a.getCoverageMatrix))
+	}
 	if a.deps.Repository != nil {
 		router.Handle(fasthttp.MethodGet, APIPrefix+"/projects/{projectId}/repository", auth(a.getRepository))
 		// Git smart HTTP, read-only (outside openapi.yaml): HTTP Basic with the session token.

@@ -1,3 +1,10 @@
 <!doctype html>
 <html lang="pt-BR"><head><meta charset="utf-8"><title>Reservar sala</title></head>
-<body><main><h1>Reservar sala</h1><form><label>Sala <input name="sala"></label><button>Reservar</button></form></main></body></html>
+<body><main><h1>Reservar sala</h1><form><label>Sala <input name="sala"></label><button>Reservar</button></form>
+<p data-state="vazio">Nenhuma reserva.</p><p data-state="carregando">Carregando…</p><p data-state="erro">Conflito de horário.</p>
+<p data-state="sucesso">Reserva feita.</p><p data-state="sem_permissao">Sem permissão.</p></main>
+<script>
+  // PL-45: o visualizador abre a página no estado pedido por ?state=<estado>
+  const state = new URLSearchParams(location.search).get("state") || "vazio";
+  document.querySelectorAll("[data-state]").forEach((el) => { el.hidden = el.dataset.state !== state; });
+</script></body></html>

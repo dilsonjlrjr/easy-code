@@ -127,7 +127,7 @@ func work(ctx context.Context, proc process.Process) error {
 		})
 	}()
 	go parts.executor.Run(ctx, waveWake)
-	go runReconcile(ctx, jobs, parts.progress, reconcileWake, cfg.Worker.CommandPollInterval)
+	go runReconcile(ctx, jobs, parts.progress, parts.findings, reconcileWake, cfg.Worker.CommandPollInterval)
 	commandWake := make(chan struct{}, 1)
 	commandSignal := func() {
 		select {

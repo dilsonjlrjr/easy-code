@@ -42,6 +42,8 @@ type Dependencies struct {
 	Skills        SkillUseCases // US-43
 	Agents        AgentUseCases // US-43
 	Gates         GateUseCases
+	Findings      FindingUseCases      // US-32, US-33
+	Traceability  TraceabilityUseCases // US-28
 	Pending       PendingUseCases
 	// Repository serves getRepository and the git clone (US-42).
 	Repository RepositoryUseCases

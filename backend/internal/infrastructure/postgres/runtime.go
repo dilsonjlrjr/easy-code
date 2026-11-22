@@ -45,6 +45,8 @@ SELECT w.id, w.public_id::text, w.code, pr.public_id::text, w.stage, w.agent, w.
   FROM easycode.waves w JOIN easycode.projects pr ON pr.id = w.project_id JOIN easycode.stages s ON s.id = w.stage_id
  WHERE w.agent = ANY($1::text[]) AND pr.state = 'in_progress'
    AND (w.state = 'queued' OR (w.state = 'running' AND (w.lease_owner IS NULL OR w.lease_until < now())))
+   -- a stage blocked by a reopened dependency runs nothing until it is unblocked (US-34 CA-1)
+   AND s.state <> 'blocked'
    -- waves of a stage run one at a time, in order (one implementation wave per task, PL-20)
    AND NOT EXISTS (SELECT 1 FROM easycode.waves o WHERE o.project_id = w.project_id AND o.stage = w.stage AND o.id < w.id
                      AND o.state NOT IN ('completed', 'canceled'))
@@ -143,8 +145,8 @@ func (l Ledger) Inputs(ctx context.Context, c runtime.Claimed) (runtime.Inputs, 
 SELECT pr.business_need, pr.artifact_language, ac.instruction_version, ac.instruction_hash, coalesce(w.task, ''),
        (SELECT c.items FROM easycode.project_constraints c WHERE c.project_id = pr.id AND c.defined_at <= w.created_at
          ORDER BY c.version DESC LIMIT 1),
-       coalesce((SELECT g.reason FROM easycode.gate_rounds g WHERE g.project_id = pr.id AND g.stage = w.stage AND g.state = 'rejected'
-                  ORDER BY g.number DESC LIMIT 1), '')
+       CASE WHEN w.purpose = 'execution' THEN coalesce((SELECT g.reason FROM easycode.gate_rounds g WHERE g.project_id = pr.id AND g.stage = w.stage
+                  AND g.state = 'rejected' ORDER BY g.number DESC LIMIT 1), '') ELSE '' END
   FROM easycode.waves w JOIN easycode.projects pr ON pr.id = w.project_id
   JOIN easycode.agent_configurations ac ON ac.id = w.agent_configuration_id
  WHERE w.id = $1`, c.WaveID).Scan(&in.BusinessNeed, &in.Language, &in.InstructionVersion, &in.InstructionHash, &in.Task, &constraints, &in.Feedback)
@@ -184,6 +186,9 @@ SELECT v.path, v.author FROM easycode.waves w JOIN easycode.artifacts a ON a.pro
 	if in.Opinions, err = l.opinions(ctx, c.WaveID); err != nil {
 		return in, err
 	}
+	if in.Finding, err = l.finding(ctx, c.WaveID); err != nil {
+		return in, err
+	}
 	skills, err := loadedSkills(ctx, q, c.WaveID)
 	if err != nil {
 		return in, err
@@ -211,6 +216,42 @@ SELECT wm.role, m.id, m.provider, m.name FROM easycode.wave_models wm JOIN easyc
 		in.Models[role] = ref
 	}
 	return in, rows.Err()
+}
+
+// finding is the ACH of a rework or revalidation wave (header fields are untrusted text for the agent).
+func (l Ledger) finding(ctx context.Context, waveID int64) (*runtime.FindingBrief, error) {
+	var brief runtime.FindingBrief
+	var header []byte
+	err := conn(ctx, l.pool).QueryRow(WithOperation(ctx, "waves.finding"), `
+SELECT a.code, a.title, f.severity, v.header, coalesce((SELECT max(c.number) FROM easycode.finding_cycles c WHERE c.finding_id = f.artifact_id), 0),
+       coalesce((SELECT array_agg(fa.reference ORDER BY fa.id) FROM easycode.finding_affected_artifacts fa WHERE fa.finding_id = f.artifact_id), '{}')
+  FROM easycode.waves w JOIN easycode.findings f ON f.artifact_id = w.finding_id JOIN easycode.artifacts a ON a.id = f.artifact_id
+  JOIN easycode.artifact_versions v ON v.artifact_id = a.id AND v.version = a.current_version
+ WHERE w.id = $1`, waveID).Scan(&brief.Code, &brief.Title, &brief.Severity, &header, &brief.Cycle, &brief.Affected)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("wave finding: %w", classify(err))
+	}
+	var fields struct {
+		Evidence   string `json:"evidencia"`
+		Suggestion string `json:"correcao_sugerida"`
+	}
+	_ = json.Unmarshal(header, &fields)
+	brief.Evidence, brief.Suggestion = fields.Evidence, fields.Suggestion
+	return &brief, nil
+}
+
+// Pause implements runtime.Ledger: checkpoint_reached of a wave asked to pause by policy.
+func (l Ledger) Pause(ctx context.Context, lease runtime.Lease) (bool, error) {
+	tag, err := conn(ctx, l.pool).Exec(WithOperation(ctx, "waves.pause_at_checkpoint"), `
+UPDATE easycode.waves SET state = 'paused', pause_mode = 'cooperative', lease_owner = NULL, lease_until = NULL
+ WHERE id = $1 AND lease_owner = $2 AND lease_epoch = $3 AND state = 'pausing'`, lease.WaveID, lease.Owner, lease.Epoch)
+	if err != nil {
+		return false, fmt.Errorf("pause wave: %w", classify(err))
+	}
+	return tag.RowsAffected() == 1, nil
 }
 
 // opinions are the review opinions recorded by the earlier completed waves of other agents in the

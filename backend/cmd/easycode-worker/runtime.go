@@ -12,6 +12,7 @@ import (
 	"go.opentelemetry.io/otel/propagation"
 
 	appartifact "easycode/internal/application/artifact"
+	appfinding "easycode/internal/application/finding"
 	appgate "easycode/internal/application/gate"
 	"easycode/internal/application/runtime"
 	appwave "easycode/internal/application/wave"
@@ -26,14 +27,16 @@ import (
 	sandboxapi "easycode/internal/interfaces/sandbox"
 )
 
-// harnessAgents are the agents with a harness (MARCO-4: Requisitos, Arquiteto, DBA, Designer and
-// Desenvolvedor); the workflow in force has only their stages (specs.StandardWorkflow).
+// harnessAgents are the agents with a harness (MARCO-5: the seven agents); the workflow in force has only
+// their stages and parallel activities (specs.StandardWorkflow).
 var harnessAgents = specs.StandardAgents
 
-// runtimeParts is the agent runtime of the worker: executor, gate progress and the answer handler.
+// runtimeParts is the agent runtime of the worker: executor, gate progress, finding machine and the
+// answer handler.
 type runtimeParts struct {
 	executor *runtime.Executor
 	progress *appgate.Progress
+	findings *appfinding.Service
 	answers  *appwave.AnswerHandler
 }
 
@@ -61,7 +64,18 @@ func newRuntime(cfg config.Config, pool *pgxpool.Pool, propagator propagation.Te
 		}
 		agents[name] = runtime.Agent{Steps: steps, Policy: &policy, Modes: stageModes(wf, name)}
 	}
-	progress := appgate.NewProgress(tx, postgres.NewGates(pool), store, validator, stageFlow{workflows, orchestrator}, outbox, wf.Definition)
+	governance, err := specs.Governance()
+	if err != nil {
+		return runtimeParts{}, err
+	}
+	progress, err := appgate.NewProgress(tx, postgres.NewGates(pool), store, validator, stageFlow{workflows, orchestrator}, outbox, wf.Definition, governance)
+	if err != nil {
+		return runtimeParts{}, err
+	}
+	repository := git.New(cfg.ReposDir)
+	progress.WithRepository(repository, specs.HeaderParser{})
+	findings := appfinding.NewService(tx, postgres.NewFindings(pool), store, orchestrator, progress, postgres.NewWaves(pool, wf.Definition), outbox, wf.Definition)
+	progress.WithHook(findings)
 	worker := cfg.Worker.ID
 	if worker == "" {
 		worker, _ = os.Hostname()
@@ -70,8 +84,9 @@ func newRuntime(cfg config.Config, pool *pgxpool.Pool, propagator propagation.Te
 		stageOutputs(wf), runtime.Settings{Worker: worker, Lease: cfg.Worker.WaveLease, MaxCorrections: cfg.Worker.MaxArtifactCorrections,
 			RetryBackoff: 2 * time.Second, Poll: cfg.Worker.CommandPollInterval, Image: cfg.Sandbox.Image,
 			ProjectLimits: sandbox.Limits{CPU: cfg.Sandbox.CPU, MemoryMiB: cfg.Sandbox.MemoryMiB, DiskMiB: cfg.Sandbox.DiskMiB, Time: cfg.Sandbox.CommandTime}}, logger).
-		WithRepository(git.New(cfg.ReposDir), stageAttachments(wf))
-	return runtimeParts{executor: executor, progress: progress, answers: appwave.NewAnswerHandler(postgres.NewWaves(pool, wf.Definition), outbox)}, nil
+		WithRepository(repository, stageAttachments(wf)).WithFindings(findings)
+	return runtimeParts{executor: executor, progress: progress, findings: findings,
+		answers: appwave.NewAnswerHandler(postgres.NewWaves(pool, wf.Definition), outbox)}, nil
 }
 
 // stageFlow joins the stage writes of the workflow adapter and the orchestrator for the gate.
@@ -89,16 +104,26 @@ func instruction(agent string) (string, string, error) {
 	return string(defaults.Instruction), defaults.InstructionHash, err
 }
 
-// stageModes is the agent mode in each stage the agent runs in (agent_mode of the workflow); a
-// participant of a stage led by another agent gives its review opinion (PARECER).
+// stageModes is the agent mode in each stage or parallel activity the agent runs in (agent_mode of the
+// workflow); a participant of a stage led by another agent gives its review opinion (PARECER).
 func stageModes(wf specs.Workflow, agent string) map[string]string {
+	return stageModesOf(wf.Definition, agent)
+}
+
+// stageModesOf is stageModes over a definition.
+func stageModesOf(definition domainworkflow.Definition, agent string) map[string]string {
 	modes := map[string]string{}
-	for _, stage := range wf.Definition.Stages {
+	for _, stage := range definition.Stages {
 		switch {
 		case stage.IsReviewer(agent):
 			modes[stage.ID] = domainworkflow.ModeReview
 		case stage.Agent == agent:
 			modes[stage.ID] = stage.AgentMode
+		}
+	}
+	for _, activity := range definition.Activities {
+		if activity.Agent == agent {
+			modes[activity.ID] = activity.AgentMode
 		}
 	}
 	return modes
@@ -108,12 +133,12 @@ func stageModes(wf specs.Workflow, agent string) map[string]string {
 // (attachment: true in the workflow, such as openapi.yaml and estrutura.md); a folder ends with "/".
 func stageAttachments(wf specs.Workflow) func(string) []string {
 	return func(stage string) []string {
-		definition, ok := wf.Definition.Stage(stage)
-		if !ok {
+		outputs := stageOutputList(wf, stage)
+		if outputs == nil {
 			return nil
 		}
 		var paths []string
-		for _, output := range definition.Outputs {
+		for _, output := range outputs {
 			if output.Attachment {
 				paths = append(paths, output.Path)
 				if dir := path.Dir(output.Path); strings.HasSuffix(dir, "/api") {
@@ -125,16 +150,23 @@ func stageAttachments(wf specs.Workflow) func(string) []string {
 	}
 }
 
+// stageOutputList is the output list of a stage or parallel activity.
+func stageOutputList(wf specs.Workflow, stage string) []domainworkflow.Output {
+	if definition, ok := wf.Definition.Stage(stage); ok {
+		return definition.Outputs
+	}
+	if activity, ok := wf.Definition.Activity(stage); ok {
+		return activity.Outputs
+	}
+	return nil
+}
+
 func stageOutputs(wf specs.Workflow) func(string) []string {
 	return func(stage string) []string {
-		definition, ok := wf.Definition.Stage(stage)
-		if !ok {
-			return nil
-		}
 		var types []string
 		seen := map[string]bool{}
-		for _, output := range definition.Outputs {
-			if output.Required && output.Type != "" && !seen[output.Type] {
+		for _, output := range stageOutputList(wf, stage) {
+			if output.Required && output.Type != "" && !output.Attachment && !seen[output.Type] {
 				seen[output.Type] = true
 				types = append(types, output.Type)
 			}
@@ -143,13 +175,17 @@ func stageOutputs(wf specs.Workflow) func(string) []string {
 	}
 }
 
-// runReconcile applies the effect of gate decisions when events commit and at every poll.
-func runReconcile(ctx context.Context, jobs jobRunner, progress *appgate.Progress, wake <-chan struct{}, poll time.Duration) {
+// runReconcile applies the effect of gate and finding decisions when events commit and at every poll.
+func runReconcile(ctx context.Context, jobs jobRunner, progress *appgate.Progress, findings *appfinding.Service, wake <-chan struct{}, poll time.Duration) {
 	ticker := time.NewTicker(poll)
 	defer ticker.Stop()
 	for {
 		jobs.run(ctx, "apply_gate_decisions", true, func(ctx context.Context) ([]slog.Attr, error) {
 			applied, err := progress.Reconcile(ctx)
+			return []slog.Attr{slog.Int("applied", applied)}, err
+		})
+		jobs.run(ctx, "apply_finding_decisions", true, func(ctx context.Context) ([]slog.Attr, error) {
+			applied, err := findings.Reconcile(ctx)
 			return []slog.Attr{slog.Int("applied", applied)}, err
 		})
 		select {

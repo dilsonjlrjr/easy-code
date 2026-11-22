@@ -28,7 +28,31 @@ type ArtifactStore interface {
 	Parse(content []byte) (domainartifact.Document, string, error)
 	StoreVersion(ctx context.Context, in artifact.Input) (artifact.Stored, error)
 	SubmitForReview(ctx context.Context, projectID, waveCode, agent string, stored artifact.Stored, correlation string) error
+	// Current returns the current version of an artifact (nil when it does not exist).
+	Current(ctx context.Context, projectID, code string) (*artifact.Current, error)
+	// UpdateTracking merges tracking fields into the header of the current version (no new version).
+	UpdateTracking(ctx context.Context, projectID, code string, fields map[string]any) error
 }
+
+// FindingProgress applies the finding effects of a completed wave (findings it wrote, rework and
+// revalidation cycles, reevaluation; US-32, US-34).
+type FindingProgress interface {
+	WaveCompleted(ctx context.Context, outcome WaveOutcome) error
+}
+
+// WaveOutcome is what a completed wave delivered, for the finding machine.
+type WaveOutcome struct {
+	ProjectID, Wave, Stage, Agent, Purpose, Commit, Correlation string
+	Findings                                                    []string // ACH written by the wave
+	Revalidation                                                *Revalidation
+}
+
+// trackingFields are the fields an agent may change in an approved artifact (estados.yaml tracking_fields).
+var trackingFields = map[string][]string{
+	"T": {"situacao", "justificativa", "registro_dev"}, "CT": {"execucao"}, "AMEACAS": {"conferencia"},
+}
+
+var freeFields = []string{"estado", "substituido_por", "revisado_por"}
 
 // StageProgress moves the stage after a wave of it completes (submit_to_gate and the gate round).
 type StageProgress interface {
@@ -97,6 +121,13 @@ type Executor struct {
 	now          func() time.Time
 	repository   Repository
 	attachments  func(stage string) []string
+	findings     FindingProgress
+}
+
+// WithFindings makes the executor apply the finding effects of every completed wave.
+func (e *Executor) WithFindings(findings FindingProgress) *Executor {
+	e.findings = findings
+	return e
 }
 
 // WithRepository makes the executor read the project repository as the wave base and commit every
@@ -200,14 +231,20 @@ func correlation(c Claimed) string {
 func (e *Executor) claimedEvents(ctx context.Context, c Claimed) error {
 	waveSubject := "waves/" + c.Code
 	switch {
-	case c.WasQueued:
-		if err := e.emit(ctx, c, "br.easycode.wave.started.v1", waveSubject, with(e.base(c), map[string]any{
-			"actor": orchestratorActor, "attempt": c.Attempt,
-			"transition": map[string]any{"machine": "wave", "from_state": "queued", "to_state": "running"},
-		})); err != nil {
-			return err
+	case c.WasQueued || !c.Crashed:
+		// queued → running (dispatch), or a wave resumed by policy (paused → running, its stage unblocked)
+		if c.WasQueued {
+			if err := e.emit(ctx, c, "br.easycode.wave.started.v1", waveSubject, with(e.base(c), map[string]any{
+				"actor": orchestratorActor, "attempt": c.Attempt,
+				"transition": map[string]any{"machine": "wave", "from_state": "queued", "to_state": "running"},
+			})); err != nil {
+				return err
+			}
 		}
-		if c.StageState == "ready" || c.StageState == "returned" || c.StageState == "reopened" {
+		// Only the waves that redo the stage work move it (revalidation and reevaluation waves run beside it);
+		// an activity runs again from completed (estados.yaml, machine activity).
+		moves := c.Purpose == "" || c.Purpose == PurposeExecution || c.Purpose == PurposeRework || c.Purpose == PurposeEditReview
+		if moves && (c.StageState == "ready" || c.StageState == "returned" || c.StageState == "reopened" || c.StageState == "completed") {
 			if err := e.ledger.SetStageState(ctx, c.ProjectID, c.Stage, "running"); err != nil {
 				return err
 			}
@@ -256,10 +293,13 @@ func (e *Executor) execute(ctx context.Context, c Claimed) error {
 		Instruction: text, BusinessNeed: inputs.BusinessNeed, Constraints: inputs.Constraints, Language: inputs.Language,
 		WritablePaths: agent.WritablePaths, Outputs: e.outputs(c.Stage), Models: inputs.Models, Feedback: inputs.Feedback,
 		Policy: agent.Policy, Approved: inputs.Approved, Mode: agent.ModeIn(c.Stage), Task: inputs.Task, Image: e.settings.Image,
-		Opinions: inputs.Opinions, Skills: inputs.Skills, SkillFiles: inputs.SkillFiles,
+		Opinions: inputs.Opinions, Skills: inputs.Skills, SkillFiles: inputs.SkillFiles, Purpose: c.Purpose, Finding: inputs.Finding,
 	}
-	if wave.Reviewing() {
-		wave.Outputs = nil // the delivery of a participant wave is its opinion
+	if wave.Purpose == "" {
+		wave.Purpose = PurposeExecution
+	}
+	if wave.Reviewing() || (wave.Purpose != PurposeExecution && wave.Purpose != PurposeEditReview) {
+		wave.Outputs = nil // the delivery of a participant, rework, revalidation or reevaluation wave is not the full stage output
 	}
 	if agent.Policy != nil {
 		wave.Limits = agent.Policy.Ceiling.Min(e.settings.ProjectLimits)
@@ -327,6 +367,9 @@ func (e *Executor) loop(ctx context.Context, c Claimed, agent Agent, wave WaveCo
 		switch result.Type {
 		case StepContinue:
 			if err := e.saveStep(ctx, c, write, nil); err != nil {
+				return err
+			}
+			if paused, err := e.pauseIfAsked(ctx, c); err != nil || paused {
 				return err
 			}
 			cp = result.New
@@ -549,9 +592,88 @@ type schemaProblem struct {
 
 // deliver validates the outputs (artifact.schema_valid, guard of wave: complete) and either
 // completes the wave or returns the errors to the agent, failing after the correction limit.
+// pauseIfAsked stops the wave at the checkpoint when it was asked to pause by policy (the stage was
+// blocked by a reopened dependency, US-34 CA-1): pausing → paused (checkpoint_reached).
+func (e *Executor) pauseIfAsked(ctx context.Context, c Claimed) (bool, error) {
+	var paused bool
+	err := e.tx.InTx(ctx, func(ctx context.Context) error {
+		var err error
+		if paused, err = e.ledger.Pause(ctx, c.Lease); err != nil || !paused {
+			return err
+		}
+		return e.emit(ctx, c, "br.easycode.wave.paused.v1", "waves/"+c.Code, with(e.base(c), map[string]any{
+			"actor": orchestratorActor, "cause": "dependency_reopened", "mode": "cooperative",
+			"transition": map[string]any{"machine": "wave", "from_state": "pausing", "to_state": "paused"},
+		}))
+	})
+	return paused, err
+}
+
+// tracked is a write that only changes the tracking fields of an approved artifact.
+type tracked struct {
+	code   string
+	fields map[string]any
+}
+
+// splitTracking separates the writes on approved artifacts: allowed when only their tracking fields
+// changed (the T of the Dev, CT.execucao of the QA, AMEACAS.conferencia of the Segurança), refused
+// otherwise; the other outputs are new versions.
+func (e *Executor) splitTracking(ctx context.Context, c Claimed, wave WaveContext, outputs []Output) ([]Output, []tracked, []schemaProblem, error) {
+	var versions []Output
+	var updates []tracked
+	var problems []schemaProblem
+	for _, output := range outputs {
+		if _, approved := wave.Approved[output.Path]; !approved {
+			versions = append(versions, output)
+			continue
+		}
+		document, artifactType, err := e.artifacts.Parse(output.Content)
+		if err != nil {
+			versions = append(versions, output) // validate reports the schema errors
+			continue
+		}
+		code, _ := document.Header["id"].(string)
+		current, err := e.artifacts.Current(ctx, c.ProjectID, code)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		fields := trackingFields[artifactType]
+		if current == nil || len(fields) == 0 {
+			problems = append(problems, schemaProblem{Artifact: output.Path, Message: "approved artifact: only a finding reopens it"})
+			continue
+		}
+		strip := func(header map[string]any) string {
+			copied := map[string]any{}
+			for k, v := range header {
+				copied[k] = v
+			}
+			for _, k := range append(append([]string{}, fields...), freeFields...) {
+				delete(copied, k)
+			}
+			encoded, _ := json.Marshal(copied)
+			return string(encoded)
+		}
+		if strip(document.Header) != strip(current.Header) || strings.TrimSpace(document.Body) != strings.TrimSpace(current.Body) {
+			problems = append(problems, schemaProblem{Artifact: output.Path, Message: "approved artifact: only the tracking fields " + strings.Join(fields, ", ") + " may change"})
+			continue
+		}
+		update := tracked{code: code, fields: map[string]any{}}
+		for _, k := range fields {
+			if v, ok := document.Header[k]; ok {
+				update.fields[k] = v
+			}
+		}
+		updates = append(updates, update)
+	}
+	return versions, updates, problems, nil
+}
+
 func (e *Executor) deliver(ctx context.Context, c Claimed, agent Agent, wave WaveContext, write StepWrite, result StepResult) (Checkpoint, bool, error) {
-	artifacts := e.artifactOutputs(c.Stage, result.Outputs)
-	problems := e.validate(wave, artifacts)
+	artifacts, updates, problems, err := e.splitTracking(ctx, c, wave, e.artifactOutputs(c.Stage, result.Outputs))
+	if err != nil {
+		return Checkpoint{}, true, err
+	}
+	problems = append(problems, e.validate(wave, artifacts)...)
 	if len(problems) > 0 {
 		evidence, _ := json.Marshal(problems)
 		if agent.Steps.Corrections(result.New) >= e.settings.MaxCorrections {
@@ -580,7 +702,6 @@ func (e *Executor) deliver(ctx context.Context, c Claimed, agent Agent, wave Wav
 		for _, output := range result.Outputs {
 			files[output.Path] = output.Content
 		}
-		var err error
 		if sha, err = e.repository.Commit(ctx, c.ProjectID, Commit{Wave: c.Code, Agent: c.Agent, Message: commitMessage(c, wave), Files: files}); err != nil {
 			return Checkpoint{}, true, err
 		}
@@ -588,6 +709,12 @@ func (e *Executor) deliver(ctx context.Context, c Claimed, agent Agent, wave Wav
 	return Checkpoint{}, true, e.saveStep(ctx, c, write, func(ctx context.Context) error {
 		refs := []map[string]any{}
 		var versions []CommittedVersion
+		findings := []string{}
+		for _, update := range updates {
+			if err := e.artifacts.UpdateTracking(ctx, c.ProjectID, update.code, update.fields); err != nil {
+				return err
+			}
+		}
 		for _, output := range artifacts {
 			stored, err := e.artifacts.StoreVersion(ctx, artifact.Input{ProjectID: c.ProjectID, WaveCode: c.Code, Agent: c.Agent,
 				Path: output.Path, Content: output.Content, CorrelationID: correlation(c)})
@@ -599,6 +726,9 @@ func (e *Executor) deliver(ctx context.Context, c Claimed, agent Agent, wave Wav
 			}
 			refs = append(refs, map[string]any{"artifact": stored.Code, "version": stored.Version})
 			versions = append(versions, CommittedVersion{Code: stored.Code, Version: stored.Version})
+			if stored.Type == "ACH" {
+				findings = append(findings, stored.Code)
+			}
 		}
 		if err := e.ledger.RecordWaveCheck(ctx, c.Lease, "artifact.schema_valid", true, nil); err != nil {
 			return err
@@ -613,6 +743,11 @@ func (e *Executor) deliver(ctx context.Context, c Claimed, agent Agent, wave Wav
 			if err := e.ledger.RecordCommit(ctx, c.Lease, sha, versions); err != nil {
 				return err
 			}
+			if wave.Task != "" {
+				if err := e.recordTask(ctx, c.ProjectID, wave.Task, sha); err != nil {
+					return err
+				}
+			}
 		}
 		totals, executionMs, cycleMs, err := e.ledger.Complete(ctx, c.Lease)
 		if err != nil {
@@ -621,7 +756,7 @@ func (e *Executor) deliver(ctx context.Context, c Claimed, agent Agent, wave Wav
 		completed := with(e.base(c), map[string]any{
 			"actor": orchestratorActor, "tokens": tokens(totals.Usage), "cost": money(totals.UsefulCost, totals.Currency),
 			"lost_cost": money(totals.LostCost, totals.Currency), "execution_duration_ms": executionMs, "cycle_duration_ms": cycleMs,
-			"artifacts": refs, "findings": []string{},
+			"artifacts": refs, "findings": findings,
 			"transition": map[string]any{"machine": "wave", "from_state": "running", "to_state": "completed"},
 		})
 		if wave.Task != "" {
@@ -630,8 +765,34 @@ func (e *Executor) deliver(ctx context.Context, c Claimed, agent Agent, wave Wav
 		if err := e.emit(ctx, c, "br.easycode.wave.completed.v1", "waves/"+c.Code, completed); err != nil {
 			return err
 		}
+		if e.findings != nil {
+			if err := e.findings.WaveCompleted(ctx, WaveOutcome{ProjectID: c.ProjectID, Wave: c.Code, Stage: c.Stage, Agent: c.Agent, Purpose: wave.Purpose,
+				Commit: sha, Correlation: correlation(c), Findings: findings, Revalidation: result.Revalidation}); err != nil {
+				return err
+			}
+		}
 		return e.progress.WaveCompleted(ctx, c.ProjectID, c.Stage, correlation(c))
 	})
+}
+
+// recordTask fills the Dev record of the task of the wave (T tracking fields, t.dev_record_present):
+// the wave commit enters registro_dev.commits and the task is concluded, unless the Dev justified it.
+func (e *Executor) recordTask(ctx context.Context, projectID, task, sha string) error {
+	current, err := e.artifacts.Current(ctx, projectID, task)
+	if err != nil || current == nil {
+		return err
+	}
+	record, _ := current.Header["registro_dev"].(map[string]any)
+	if record == nil {
+		record = map[string]any{}
+	}
+	commits, _ := record["commits"].([]any)
+	record["commits"] = append(commits, sha)
+	fields := map[string]any{"registro_dev": record}
+	if situation, _ := current.Header["situacao"].(string); situation != "justificada" {
+		fields["situacao"] = "concluida"
+	}
+	return e.artifacts.UpdateTracking(ctx, projectID, task, fields)
 }
 
 // CheckReviewOpinion is the wave record of the opinion of a participant (evidence: the opinion), read

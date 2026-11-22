@@ -21,6 +21,10 @@ type permissionsDocument struct {
 				Categories []string `json:"categories"`
 			} `json:"execute_command"`
 		} `json:"tools"`
+		Writes []struct {
+			Operation string   `json:"operation"`
+			Paths     []string `json:"paths"`
+		} `json:"writes"`
 		Limits *struct {
 			CPU         float64 `json:"cpu"`
 			MemoryMiB   int     `json:"memory_mib"`
@@ -59,6 +63,11 @@ func AgentPolicy(agent string) (permission.Policy, error) {
 		policy := permission.Policy{
 			Agent: agent, ReadPaths: entry.Tools.ReadFile, WritePaths: entry.Tools.WriteFile, AskUser: entry.AskUser,
 			Execute: entry.Tools.ExecuteCommand.Allowed, Categories: entry.Tools.ExecuteCommand.Categories, Commands: doc.CommandCategories,
+		}
+		for _, write := range entry.Writes {
+			if write.Operation == "tracking_fields" {
+				policy.TrackingPaths = append(policy.TrackingPaths, write.Paths...)
+			}
 		}
 		if entry.Limits != nil {
 			policy.Ceiling = sandbox.Limits{CPU: entry.Limits.CPU, MemoryMiB: entry.Limits.MemoryMiB, DiskMiB: entry.Limits.DiskMiB,

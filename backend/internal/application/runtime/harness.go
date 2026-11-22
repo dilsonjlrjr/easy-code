@@ -138,8 +138,12 @@ func verifies(policy permission.Policy) bool {
 // fenced as untrusted data.
 func (a *ToolAgent) Start(_ context.Context, wave WaveContext) (Checkpoint, string, error) {
 	policy := policyOf(wave)
+	finding := "nenhum"
+	if wave.Finding != nil {
+		finding = wave.Finding.Code
+	}
 	system := strings.NewReplacer("{SKILLS}", orNone(wave.Skills), "{RESTRICOES}", orNone(wave.Constraints), "{MODO}", orNone(wave.Mode),
-		"{TAREFAS}", orNone(wave.Task), "{ACHADO}", "nenhum").Replace(wave.Instruction) + "\n\n" + toolGuide(wave, policy)
+		"{TAREFAS}", orNone(wave.Task), "{ACHADO}", finding).Replace(wave.Instruction) + "\n\n" + toolGuide(wave, policy)
 	var user strings.Builder
 	if strings.TrimSpace(wave.BusinessNeed) != "" {
 		user.WriteString("Necessidade de negócio do projeto:\n<entrada_nao_confiavel>\n" + wave.BusinessNeed + "\n</entrada_nao_confiavel>")
@@ -160,6 +164,22 @@ func (a *ToolAgent) Start(_ context.Context, wave WaveContext) (Checkpoint, stri
 		user.WriteString("\n\nO gate desta etapa foi reprovado. Motivo do aprovador:\n<entrada_nao_confiavel>\n" + wave.Feedback +
 			"\n</entrada_nao_confiavel>\nCorrija o que foi apontado; artefato reescrito sobe a versao e registra no historico.")
 	}
+	if f := wave.Finding; f != nil {
+		fmt.Fprintf(&user, "\n\nAchado %s (severidade %s, ciclo %d): %s\n<entrada_nao_confiavel>\nEvidência: %s\nCorreção sugerida: %s\nArtefatos afetados: %s\n</entrada_nao_confiavel>",
+			f.Code, f.Severity, f.Cycle, f.Title, f.Evidence, f.Suggestion, strings.Join(f.Affected, ", "))
+		switch wave.Purpose {
+		case PurposeRework:
+			user.WriteString("\nEsta é uma onda de retrabalho do achado: corrija o que ele aponta no que é da sua etapa. Artefato reescrito sobe a " +
+				"versao e registra no historico a entrada da versão com `achado: " + f.Code + "`.")
+		case PurposeRevalidation:
+			user.WriteString("\nEsta é a onda de revalidação do achado que você emitiu: repita a verificação ligada a ele e entregue o resultado com " +
+				"finish(resultado, evidencia) — `corrigido` ou `nao_corrigido`, com a evidência.")
+		}
+	}
+	if wave.Purpose == PurposeReevaluation {
+		user.WriteString("\n\nEsta é uma onda de reavaliação: uma dependência desta etapa foi reaberta e aprovada de novo. Compare as entradas " +
+			"com o que a etapa aprovou; havendo impacto, registre um achado em docs/achados/; sem impacto, entregue com finish().")
+	}
 	if wave.Reviewing() {
 		user.WriteString("\n\nEsta é a sua onda de parecer na Validação técnica: leia as entradas da etapa e entregue o seu parecer com " +
 			"finish(parecer, ressalvas). O Arquiteto, que lidera a etapa, registra o parecer no VALIDACAO; não grave o VALIDACAO nesta onda.")
@@ -176,7 +196,7 @@ func (a *ToolAgent) Start(_ context.Context, wave WaveContext) (Checkpoint, stri
 	}
 	state := agentState{System: system, Messages: []provider.Message{{Role: "user", Text: user.String()}}, Files: map[string]string{}}
 	digest := sha256.New()
-	for _, part := range []string{wave.Instruction, wave.BusinessNeed, wave.Constraints, wave.Skills, wave.Feedback, wave.Task, wave.Mode} {
+	for _, part := range []string{wave.Instruction, wave.BusinessNeed, wave.Constraints, wave.Skills, wave.Feedback, wave.Task, wave.Mode, wave.Purpose, finding} {
 		digest.Write([]byte(part + "\x00"))
 	}
 	for _, opinion := range wave.Opinions {
@@ -209,6 +229,10 @@ func toolGuide(wave WaveContext, policy permission.Policy) string {
 		case ToolAskUser:
 			guide.WriteString("- `ask_user(items)`: faz de uma vez as perguntas que mudam escopo ou regra, cada uma com sugestão; a onda espera a resposta.\n")
 		case ToolFinish:
+			if wave.Revalidating() {
+				guide.WriteString("- `finish(resultado, evidencia)`: entrega a revalidação do achado (`corrigido` ou `nao_corrigido`, com a evidência).\n")
+				continue
+			}
 			if wave.Reviewing() {
 				guide.WriteString("- `finish(parecer, ressalvas)`: entrega o seu parecer (`aprovado` ou `reprovado`; reprovado exige ao menos uma ressalva).\n")
 				continue
@@ -286,6 +310,10 @@ var descriptions = map[string]string{
 var reviewFinish = json.RawMessage(`{"type":"object","required":["parecer","ressalvas"],"properties":{"parecer":{"type":"string","enum":["aprovado","reprovado"]},` +
 	`"ressalvas":{"type":"array","items":{"type":"string","minLength":1}}},"additionalProperties":false}`)
 
+// revalidationFinish is finish in a revalidation wave: the result of the cycle is the delivery.
+var revalidationFinish = json.RawMessage(`{"type":"object","required":["resultado","evidencia"],"properties":{"resultado":{"type":"string","enum":["corrigido","nao_corrigido"]},` +
+	`"evidencia":{"type":"string","minLength":1}},"additionalProperties":false}`)
+
 // definitions are the tools the model receives: only the allowed ones (ARQ 2.3, RNF-07).
 func definitions(wave WaveContext, policy permission.Policy) []provider.ToolDefinition {
 	tools := policy.Tools()
@@ -294,6 +322,9 @@ func definitions(wave WaveContext, policy permission.Policy) []provider.ToolDefi
 		definition := provider.ToolDefinition{Name: name, Description: descriptions[name], Schema: schemas[name]}
 		if name == ToolFinish && wave.Reviewing() {
 			definition.Description, definition.Schema = "Entrega o seu parecer na Validação técnica.", reviewFinish
+		}
+		if name == ToolFinish && wave.Revalidating() {
+			definition.Description, definition.Schema = "Entrega o resultado da revalidação do achado.", revalidationFinish
 		}
 		out = append(out, definition)
 	}
@@ -406,6 +437,23 @@ func (a *ToolAgent) tool(ctx context.Context, wave WaveContext, state agentState
 		record := &ToolRecord{Tool: call.Name, Allowed: true, Success: true, Summary: fmt.Sprintf("perguntou %d itens ao usuário", len(args.Items))}
 		next, err := state.encode(number, AfterTool)
 		return StepResult{Type: StepAsk, New: next, Tool: record, Question: args.Items}, err
+	case call.Name == ToolFinish && wave.Revalidating():
+		var args struct {
+			Result   string `json:"resultado"`
+			Evidence string `json:"evidencia"`
+		}
+		if err := json.Unmarshal(call.Args, &args); err != nil || (args.Result != "corrigido" && args.Result != "nao_corrigido") || strings.TrimSpace(args.Evidence) == "" {
+			step = invalid(call.Name, "revalidação inválida", "informe resultado (corrigido ou nao_corrigido) e evidencia")
+			break
+		}
+		result := map[string]string{"corrigido": "fixed", "nao_corrigido": "not_fixed"}[args.Result]
+		state.Pending = state.Pending[1:]
+		state.Results = append(state.Results, provider.ToolResult{ID: call.ID, Content: "revalidação registrada"})
+		state.flushResults()
+		record := &ToolRecord{Tool: call.Name, Allowed: true, Success: true, Summary: "revalidou: " + args.Result}
+		next, err := state.encode(number, AfterTool)
+		return StepResult{Type: StepComplete, New: next, Tool: record, Outputs: state.outputs(),
+			Revalidation: &Revalidation{Result: result, Evidence: clipText(args.Evidence, 4000)}}, err
 	case call.Name == ToolFinish && wave.Reviewing():
 		opinion, problem := reviewOpinion(wave, call.Args)
 		if problem != "" {
@@ -548,7 +596,7 @@ func writeFile(wave WaveContext, policy permission.Policy, state *agentState, ca
 	if !ok {
 		return refuse(call.Name, permission.RefusedPath, "escrita negada fora das pastas permitidas", "Pastas de escrita: "+strings.Join(policy.WritePaths, ", "))
 	}
-	if author, approved := wave.Approved[clean]; approved && author != wave.Agent {
+	if author, approved := wave.Approved[clean]; approved && author != wave.Agent && !policy.CanTrack(clean) {
 		return refuse(call.Name, permission.RefusedForeignArtifact, "escrita negada em artefato aprovado de outro agente",
 			"O artefato foi aprovado e é de "+author+": não o altere. Registre a mudança necessária como achado para a etapa dona (na Fase 1, pergunte ao usuário com ask_user).")
 	}

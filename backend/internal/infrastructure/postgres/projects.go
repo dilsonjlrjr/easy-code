@@ -233,7 +233,23 @@ SELECT (SELECT count(*) FROM easycode.gate_rounds g WHERE g.project_id = $1 AND 
 		return summary, fmt.Errorf("summary counts: %w", classify(err))
 	}
 	summary.AccumulatedCost = project.Money{Value: project.TrimDecimal(cost), Currency: currency}
-	return summary, nil
+	summary.OpenFindings = map[string]int{"critical": 0, "high": 0, "medium": 0, "low": 0}
+	rows, err = q.Query(WithOperation(ctx, "projects.summary_findings"), `
+SELECT severity, count(*) FROM easycode.findings
+ WHERE project_id = $1 AND status IN ('open','in_rework','revalidating','escalated','awaiting_scope') GROUP BY severity`, projectID)
+	if err != nil {
+		return summary, fmt.Errorf("summary findings: %w", classify(err))
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var severity string
+		var n int
+		if err := rows.Scan(&severity, &n); err != nil {
+			return summary, err
+		}
+		summary.OpenFindings[severity] = n
+	}
+	return summary, rows.Err()
 }
 
 // List implements appproject.Repository (projects where the person has a role, updated_at descending).

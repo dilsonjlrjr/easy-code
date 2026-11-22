@@ -21,9 +21,11 @@ pareceres:
   - {participante: designer, parecer: aprovado, ressalvas: []}
 artefatos_conferidos:
   - {id: ARQ, versao: 1}
+  - {id: ADR-01, versao: 1}
+  - {id: T-01, versao: 1}
   - {id: DIC, versao: 1}
   - {id: PERSIST, versao: 1}
-  - {id: TELAS, versao: 1}
+  - {id: TELAS, versao: 2}
 veredito: liberado
 ---
 # Validação técnica 01 — Reserva de salas

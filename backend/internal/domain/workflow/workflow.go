@@ -16,6 +16,10 @@ const (
 	StageRunning      = "running"
 	StageAwaitingGate = "awaiting_gate"
 	StageApproved     = "approved"
+	StageReturned     = "returned"
+	StageReopened     = "reopened"
+	// ActivityCompleted is the final state of a parallel activity run (machine "activity").
+	ActivityCompleted = "completed"
 )
 
 // Output is an artifact a stage produces.
@@ -54,6 +58,71 @@ type Stage struct {
 	ProjectInputs []string      `json:"project_inputs,omitempty"`
 	Outputs       []Output      `json:"outputs"`
 	Gate          string        `json:"gate"`
+	Inputs        []Input       `json:"inputs,omitempty"`
+	// DefaultApproval is what the gate allows (human | human_or_automatic) and DefaultMode the mode of a
+	// new round when the project chose none (PROJETO 7.3, PD-05).
+	DefaultApproval string `json:"default_approval,omitempty"`
+	DefaultMode     string `json:"default_mode,omitempty"`
+	AlwaysHuman     bool   `json:"always_human,omitempty"`
+}
+
+// Input is an artifact type a stage reads, with the stage or activity that produces it.
+type Input struct {
+	Type   string `json:"type"`
+	Origin string `json:"origin"`
+}
+
+// Approval modes of a gate round.
+const (
+	ApprovalHuman     = "human"
+	ApprovalAutomatic = "automatic"
+)
+
+// ApprovalMode is the mode of a new round of the stage gate: the project choice when the stage allows
+// automatic approval, else human; without a choice, the default of the workflow (PD-05).
+func (s Stage) ApprovalMode(configured string) string {
+	if s.AlwaysHuman || s.DefaultApproval != "human_or_automatic" {
+		return ApprovalHuman
+	}
+	if configured == ApprovalHuman || configured == ApprovalAutomatic {
+		return configured
+	}
+	if s.DefaultMode == ApprovalAutomatic {
+		return ApprovalAutomatic
+	}
+	return ApprovalHuman
+}
+
+// Activity is a parallel activity (QA plan, threat model): it runs beside stages and its outputs are
+// approved in the gate of RequiredFor (approved_in_gate).
+type Activity struct {
+	ID             string   `json:"id"`
+	Name           string   `json:"name"`
+	ShortName      string   `json:"short_name"`
+	Agent          string   `json:"agent"`
+	AgentMode      string   `json:"agent_mode,omitempty"`
+	DependsOn      []string `json:"depends_on"`
+	Inputs         []Input  `json:"inputs,omitempty"`
+	Outputs        []Output `json:"outputs"`
+	ApprovedInGate string   `json:"approved_in_gate"`
+	RequiredFor    string   `json:"required_for"`
+}
+
+// Returns are the finding routing rules (workflow returns, PROJETO 6.3).
+type Returns struct {
+	CycleLimit        int               `json:"cycle_limit"`
+	InternalCycle     []string          `json:"internal_cycle"`
+	DefaultByCategory map[string]string `json:"default_destination_by_category"`
+}
+
+// Internal reports whether the rework of a destination stage is an internal cycle (no reopening).
+func (r Returns) Internal(stage string) bool {
+	for _, s := range r.InternalCycle {
+		if s == stage {
+			return true
+		}
+	}
+	return false
 }
 
 // Reviewers are the participants that are not the lead, in the workflow order.
@@ -109,6 +178,102 @@ type Definition struct {
 	Mode    string  `json:"mode"`
 	Phase   int     `json:"fase"`
 	Stages  []Stage `json:"stages"`
+	// Activities are the parallel activities whose agents exist (qa-plan, security-threats).
+	Activities []Activity `json:"parallel_activities,omitempty"`
+	Returns    Returns    `json:"returns"`
+}
+
+// Activity returns the parallel activity with id.
+func (d Definition) Activity(id string) (Activity, bool) {
+	for _, a := range d.Activities {
+		if a.ID == id {
+			return a, true
+		}
+	}
+	return Activity{}, false
+}
+
+// ActivitiesFor are the activities required for a stage (their outputs enter its gate).
+func (d Definition) ActivitiesFor(stage string) []Activity {
+	var out []Activity
+	for _, a := range d.Activities {
+		if a.RequiredFor == stage {
+			out = append(out, a)
+		}
+	}
+	return out
+}
+
+// GateStage is the stage whose gate a stage or activity answers to: the stage itself, or the stage an
+// activity is required for (a finding of qa-plan blocks gate.validation, achado.md section 1).
+func (d Definition) GateStage(id string) string {
+	if a, ok := d.Activity(id); ok {
+		return a.RequiredFor
+	}
+	return id
+}
+
+// AgentOf is the agent of a stage (lead) or activity.
+func (d Definition) AgentOf(id string) string {
+	if a, ok := d.Activity(id); ok {
+		return a.Agent
+	}
+	if s, ok := d.Stage(id); ok {
+		return s.Agent
+	}
+	return ""
+}
+
+// ModeOf is the agent mode of a stage or activity for its agent.
+func (d Definition) ModeOf(id string) string {
+	if a, ok := d.Activity(id); ok {
+		return a.AgentMode
+	}
+	if s, ok := d.Stage(id); ok {
+		return s.AgentMode
+	}
+	return ""
+}
+
+// Dependents are the stages and activities that depend, directly or transitively, on the stage.
+func (d Definition) Dependents(stage string) []string {
+	depends := map[string][]string{}
+	for _, s := range d.Stages {
+		depends[s.ID] = s.DependsOn
+	}
+	for _, a := range d.Activities {
+		depends[a.ID] = a.DependsOn
+	}
+	var out []string
+	seen := map[string]bool{stage: true}
+	changed := true
+	for changed {
+		changed = false
+		for _, id := range d.order() {
+			if seen[id] {
+				continue
+			}
+			for _, dep := range depends[id] {
+				if seen[dep] {
+					seen[id], changed = true, true
+					out = append(out, id)
+					break
+				}
+			}
+		}
+	}
+	return out
+}
+
+func (d Definition) order() []string {
+	ids := make([]string, 0, len(d.Stages)+len(d.Activities))
+	for _, s := range d.Stages {
+		ids = append(ids, s.ID)
+	}
+	for _, a := range d.Activities {
+		ids = append(ids, a.ID)
+	}
+	return ids
 }
 
 // Stage returns the stage with id.
@@ -131,6 +296,9 @@ func (d Definition) Initial() map[string]string {
 		} else {
 			states[stage.ID] = StageBlocked
 		}
+	}
+	for _, a := range d.Activities {
+		states[a.ID] = StageBlocked
 	}
 	return states
 }

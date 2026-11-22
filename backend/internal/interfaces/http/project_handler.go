@@ -108,6 +108,7 @@ type summaryJSON struct {
 	ActiveWaves     []activeWaveJSON `json:"active_waves"`
 	GatesAwaiting   int              `json:"gates_awaiting"`
 	OpenQuestions   int              `json:"open_questions"`
+	OpenFindings    map[string]int   `json:"open_findings"`
 	AccumulatedCost moneyJSON        `json:"accumulated_cost"`
 	StopLimit       *moneyJSON       `json:"stop_limit"`
 }
@@ -153,7 +154,7 @@ func projectOf(v appproject.View) projectJSON {
 	}
 	s := v.Summary
 	out.Summary = summaryJSON{
-		ApprovedStages: s.ApprovedStages, StagesTotal: s.StagesTotal, GatesAwaiting: s.GatesAwaiting, OpenQuestions: s.OpenQuestions,
+		ApprovedStages: s.ApprovedStages, StagesTotal: s.StagesTotal, GatesAwaiting: s.GatesAwaiting, OpenQuestions: s.OpenQuestions, OpenFindings: s.OpenFindings,
 		AccumulatedCost: moneyJSON(s.AccumulatedCost), CurrentStages: []stageStateJSON{}, ActiveWaves: []activeWaveJSON{},
 	}
 	if s.StopLimit != nil {

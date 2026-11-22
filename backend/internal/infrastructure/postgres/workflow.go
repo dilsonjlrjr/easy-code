@@ -167,13 +167,69 @@ VALUES ($1, $2, $3, $4::jsonb, $5)`, internalID, definition.ID, definition.Versi
 			return fmt.Errorf("insert stage %s: %w", stage.ID, classify(err))
 		}
 	}
+	for _, activity := range definition.Activities {
+		_, err := q.Exec(WithOperation(ctx, "stages.insert_activity"), `
+INSERT INTO easycode.stages (project_id, stage, type, state, required_for, required_for_stage_id)
+SELECT $1, $2, 'parallel_activity', 'blocked', s.stage, s.id FROM easycode.stages s WHERE s.project_id = $1 AND s.stage = $3`,
+			internalID, activity.ID, activity.RequiredFor)
+		if err != nil {
+			return fmt.Errorf("insert activity %s: %w", activity.ID, classify(err))
+		}
+	}
 	return nil
+}
+
+// ResumePaused implements appworkflow.Orchestration: resume_by_policy of the waves paused when a
+// dependency was reopened (the executor claims them as running without lease).
+func (w Workflow) ResumePaused(ctx context.Context, projectID, stage string) ([]string, error) {
+	rows, err := conn(ctx, w.pool).Query(WithOperation(ctx, "waves.resume_by_policy"), `
+UPDATE easycode.waves v SET state = 'running', pause_cause = NULL, pause_mode = NULL
+  FROM easycode.projects pr WHERE pr.id = v.project_id AND pr.public_id = $1::uuid AND v.stage = $2
+   AND v.state = 'paused' AND v.pause_cause = 'dependency_reopened'
+RETURNING v.code`, projectID, stage)
+	if err != nil {
+		return nil, fmt.Errorf("resume paused waves: %w", classify(err))
+	}
+	codes, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err == nil && len(codes) > 0 {
+		_, err = conn(ctx, w.pool).Exec(WithOperation(ctx, "waves.notify"), "SELECT pg_notify($1, $2)", ChannelWaves, projectID)
+	}
+	return codes, err
+}
+
+// HasWaves implements appworkflow.Orchestration.
+func (w Workflow) HasWaves(ctx context.Context, projectID, stage string) (bool, error) {
+	var exists bool
+	err := conn(ctx, w.pool).QueryRow(WithOperation(ctx, "waves.stage_pending"), `
+SELECT EXISTS (SELECT 1 FROM easycode.waves v JOIN easycode.projects pr ON pr.id = v.project_id
+                WHERE pr.public_id = $1::uuid AND v.stage = $2 AND v.state NOT IN ('completed','canceled'))`, projectID, stage).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("stage waves: %w", classify(err))
+	}
+	return exists, nil
+}
+
+// ReevaluationPending implements appworkflow.Orchestration.
+func (w Workflow) ReevaluationPending(ctx context.Context, projectID string) (map[string]bool, error) {
+	rows, err := conn(ctx, w.pool).Query(WithOperation(ctx, "stages.reevaluation_pending"), `
+SELECT s.stage FROM easycode.stages s JOIN easycode.projects pr ON pr.id = s.project_id
+ WHERE pr.public_id = $1::uuid AND s.reevaluation_pending`, projectID)
+	if err != nil {
+		return nil, fmt.Errorf("reevaluation pending: %w", classify(err))
+	}
+	stages, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	out := map[string]bool{}
+	for _, s := range stages {
+		out[s] = true
+	}
+	return out, err
 }
 
 // SetStageState implements appworkflow.Orchestration.
 func (w Workflow) SetStageState(ctx context.Context, projectID, stage, state string) error {
 	_, err := conn(ctx, w.pool).Exec(WithOperation(ctx, "stages.set_state"), `
-UPDATE easycode.stages s SET state = $3, updated_at = now() FROM easycode.projects pr
+UPDATE easycode.stages s SET state = $3, updated_at = now(), completed_at = CASE WHEN $3 = 'completed' THEN now() ELSE s.completed_at END
+  FROM easycode.projects pr
  WHERE pr.id = s.project_id AND pr.public_id = $1::uuid AND s.stage = $2`, projectID, stage, state)
 	if err != nil {
 		return fmt.Errorf("stage %s to %s: %w", stage, state, classify(err))
@@ -226,9 +282,12 @@ ON CONFLICT (project_id, name) DO UPDATE SET value = project_counters.value + 1 
 	queued := appworkflow.QueuedWave{Code: domainworkflow.WaveCode(wave.Stage, number)}
 	var waveID int64
 	err = q.QueryRow(WithOperation(ctx, "waves.insert"), `
-INSERT INTO easycode.waves (project_id, stage, stage_id, code, agent, agent_configuration_id, max_retries, execution_timeout, call_timeout, currency, task)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8::interval, $9::interval, $10, nullif($11, '')) RETURNING id, public_id::text`,
-		projectID, wave.Stage, stageID, queued.Code, wave.Agent, configurationID, defaultMaxRetries, defaultExecutionTimeout, defaultCallTimeout, currency, wave.Task).
+INSERT INTO easycode.waves (project_id, stage, stage_id, code, agent, agent_configuration_id, max_retries, execution_timeout, call_timeout, currency, task,
+  purpose, finding_id)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8::interval, $9::interval, $10, nullif($11, ''), coalesce(nullif($12, ''), 'execution'),
+  (SELECT a.id FROM easycode.artifacts a WHERE a.project_id = $1 AND a.code = nullif($13, ''))) RETURNING id, public_id::text`,
+		projectID, wave.Stage, stageID, queued.Code, wave.Agent, configurationID, defaultMaxRetries, defaultExecutionTimeout, defaultCallTimeout, currency, wave.Task,
+		wave.Purpose, wave.Finding).
 		Scan(&waveID, &queued.ID)
 	if err != nil {
 		return appworkflow.QueuedWave{}, fmt.Errorf("insert wave: %w", classify(err))
@@ -297,13 +356,15 @@ SELECT pr.id, wc.definition, o.currency FROM easycode.projects pr JOIN easycode.
 		round, active    int
 		reevaluation     bool
 		cost             string
+		reopenedBy       string
 	}
 	rows, err := q.Query(WithOperation(ctx, "workflow.stages"), `
 SELECT s.stage, s.state, s.reevaluation_pending,
        coalesce((SELECT max(g.number) FROM easycode.gate_rounds g WHERE g.stage_id = s.id), 0),
        coalesce((SELECT g.state FROM easycode.gate_rounds g WHERE g.stage_id = s.id ORDER BY g.number DESC LIMIT 1), ''),
        (SELECT count(*) FROM easycode.waves v WHERE v.stage_id = s.id AND v.state IN ('queued','running','awaiting_user','pausing','paused')),
-       (SELECT coalesce(sum(v.useful_cost + v.lost_cost), 0)::text FROM easycode.waves v WHERE v.stage_id = s.id)
+       (SELECT coalesce(sum(v.useful_cost + v.lost_cost), 0)::text FROM easycode.waves v WHERE v.stage_id = s.id),
+       coalesce((SELECT a.code FROM easycode.artifacts a WHERE a.id = s.reopened_by_finding_id), '')
   FROM easycode.stages s WHERE s.project_id = $1`, internalID)
 	if err != nil {
 		return appworkflow.View{}, fmt.Errorf("read stages: %w", classify(err))
@@ -312,7 +373,7 @@ SELECT s.stage, s.state, s.reevaluation_pending,
 	for rows.Next() {
 		var id string
 		var row stageRow
-		if err := rows.Scan(&id, &row.state, &row.reevaluation, &row.round, &row.gateState, &row.active, &row.cost); err != nil {
+		if err := rows.Scan(&id, &row.state, &row.reevaluation, &row.round, &row.gateState, &row.active, &row.cost, &row.reopenedBy); err != nil {
 			rows.Close()
 			return appworkflow.View{}, err
 		}
@@ -339,6 +400,23 @@ SELECT s.stage, s.state, s.reevaluation_pending,
 			ID: stage.ID, Name: stage.Name, ShortName: stage.ShortName, Agent: stage.Agent, DependsOn: dependsOn,
 			RequiredCapabilities: capabilities, State: row.state, Gate: stage.Gate, CurrentRound: row.round, GateState: row.gateState,
 			ReevaluationPending: row.reevaluation, ActiveWaves: row.active, Cost: project.Money{Value: cost, Currency: currency},
+			Type: "stage", ReopenedByFinding: row.reopenedBy,
+		})
+	}
+	for _, activity := range definition.Activities {
+		row := states[activity.ID]
+		cost := "0"
+		if row.cost != "" {
+			cost = project.TrimDecimal(row.cost)
+		}
+		dependsOn := activity.DependsOn
+		if dependsOn == nil {
+			dependsOn = []string{}
+		}
+		view.Stages = append(view.Stages, appworkflow.StageView{
+			ID: activity.ID, Name: activity.Name, ShortName: activity.ShortName, Agent: activity.Agent, DependsOn: dependsOn,
+			RequiredCapabilities: capabilities, State: row.state, ActiveWaves: row.active, Cost: project.Money{Value: cost, Currency: currency},
+			Type: "parallel_activity", ApprovedInGate: activity.ApprovedInGate,
 		})
 	}
 	return view, nil

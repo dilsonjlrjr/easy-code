@@ -114,8 +114,11 @@ func (o *Orchestrator) emitter(ctx context.Context, projectID, correlation strin
 	}
 }
 
-// UnblockReady moves to ready every blocked stage whose dependencies are all approved and queues
-// its first wave, without human action (US-05 CA-4). Call it in the transaction of the approval effect.
+// UnblockReady moves to ready every blocked stage or activity whose dependencies are all approved and
+// queues its first waves, without human action (US-05 CA-4); a stage blocked by a reopened dependency
+// resumes its paused waves instead (resume_by_policy, US-34 CA-2). An approved stage marked for
+// reevaluation whose dependencies are approved again gets a reevaluation wave. Call it in the
+// transaction of the approval effect.
 func (o *Orchestrator) UnblockReady(ctx context.Context, projectID, correlation string) error {
 	states, err := o.store.StageStates(ctx, projectID)
 	if err != nil {
@@ -123,32 +126,97 @@ func (o *Orchestrator) UnblockReady(ctx context.Context, projectID, correlation 
 	}
 	emit := o.emitter(ctx, projectID, correlation)
 	orchestrator := map[string]any{"type": "orchestrator", "id": "orchestrator"}
+	approved := func(dependencies []string) bool {
+		for _, dependency := range dependencies {
+			if states[dependency] != domainworkflow.StageApproved {
+				return false
+			}
+		}
+		return true
+	}
+	unblock := func(id string, machine string) (bool, error) {
+		if err := o.store.SetStageState(ctx, projectID, id, domainworkflow.StageReady); err != nil {
+			return false, err
+		}
+		if err := emit("br.easycode.stage.unblocked.v1", "stages/"+id, "", map[string]any{
+			"stage": id, "actor": orchestrator, "version_inputs": []any{},
+			"transition": map[string]any{"machine": machine, "from_state": domainworkflow.StageBlocked, "to_state": domainworkflow.StageReady},
+		}); err != nil {
+			return false, err
+		}
+		resumed, err := o.store.ResumePaused(ctx, projectID, id)
+		if err != nil {
+			return false, err
+		}
+		for _, code := range resumed {
+			if err := emit("br.easycode.wave.resumed.v1", "waves/"+code, code, map[string]any{"wave": code, "stage": id, "actor": orchestrator,
+				"cause": "dependency_reapproved", "transition": map[string]any{"machine": "wave", "from_state": "paused", "to_state": "running"}}); err != nil {
+				return false, err
+			}
+		}
+		return o.store.HasWaves(ctx, projectID, id)
+	}
 	for _, stage := range o.workflow.Stages {
-		if states[stage.ID] != domainworkflow.StageBlocked {
+		if states[stage.ID] != domainworkflow.StageBlocked || !approved(stage.DependsOn) {
 			continue
 		}
-		ready := true
-		for _, dependency := range stage.DependsOn {
-			ready = ready && states[dependency] == domainworkflow.StageApproved
-		}
-		if !ready {
-			continue
-		}
-		if err := o.store.SetStageState(ctx, projectID, stage.ID, domainworkflow.StageReady); err != nil {
-			return err
-		}
-		err := emit("br.easycode.stage.unblocked.v1", "stages/"+stage.ID, "", map[string]any{
-			"stage": stage.ID, "actor": orchestrator, "version_inputs": []any{},
-			"transition": map[string]any{"machine": "stage", "from_state": domainworkflow.StageBlocked, "to_state": domainworkflow.StageReady},
-		})
+		pending, err := unblock(stage.ID, "stage")
 		if err != nil {
 			return err
 		}
-		if err := o.queueStageWaves(ctx, projectID, stage, emit, orchestrator); err != nil {
+		if !pending {
+			if err := o.queueStageWaves(ctx, projectID, stage, emit, orchestrator); err != nil {
+				return err
+			}
+		}
+	}
+	for _, activity := range o.workflow.Activities {
+		if states[activity.ID] != domainworkflow.StageBlocked || !approved(activity.DependsOn) {
+			continue
+		}
+		pending, err := unblock(activity.ID, "activity")
+		if err != nil {
+			return err
+		}
+		if !pending {
+			if _, err := o.QueueWave(ctx, projectID, activity.ID, activity.Agent, "execution", "", correlation); err != nil {
+				return err
+			}
+		}
+	}
+	pendingReevaluation, err := o.store.ReevaluationPending(ctx, projectID)
+	if err != nil {
+		return err
+	}
+	for _, stage := range o.workflow.Stages {
+		if !pendingReevaluation[stage.ID] || !approved(stage.DependsOn) {
+			continue
+		}
+		if busy, err := o.store.HasWaves(ctx, projectID, stage.ID); err != nil || busy {
+			if err != nil {
+				return err
+			}
+			continue
+		}
+		code, err := o.QueueWave(ctx, projectID, stage.ID, stage.Agent, "reevaluation", "", correlation)
+		if err != nil {
+			return err
+		}
+		if err := emit("br.easycode.stage.reevaluation_requested.v1", "stages/"+stage.ID, "", map[string]any{
+			"stage": stage.ID, "wave": code, "actor": orchestrator,
+			"transition": map[string]any{"machine": "stage", "from_state": domainworkflow.StageApproved, "to_state": domainworkflow.StageApproved},
+		}); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// QueueWave queues one wave of a stage or activity with a purpose (rework, revalidation and reevaluation
+// waves of the findings and of the reopening, interno.md section 4) and returns its code.
+func (o *Orchestrator) QueueWave(ctx context.Context, projectID, stageID, agent, purpose, finding, correlation string) (string, error) {
+	return o.queueWave(ctx, projectID, stageID, agent, "", purpose, finding, o.emitter(ctx, projectID, correlation),
+		map[string]any{"type": "orchestrator", "id": "orchestrator"})
 }
 
 // TaskStage is the stage whose waves run one approved T each (PL-20).
@@ -161,7 +229,7 @@ func (o *Orchestrator) queueStageWaves(ctx context.Context, projectID string, st
 	emit func(string, string, string, map[string]any) error, orchestrator map[string]any) error {
 	if stage.ID != TaskStage {
 		for _, agent := range stage.Agents() {
-			if _, err := o.queueWave(ctx, projectID, stage, agent, "", emit, orchestrator); err != nil {
+			if _, err := o.queueWave(ctx, projectID, stage.ID, agent, "", "execution", "", emit, orchestrator); err != nil {
 				return err
 			}
 		}
@@ -175,23 +243,32 @@ func (o *Orchestrator) queueStageWaves(ctx context.Context, projectID string, st
 		tasks = []string{""}
 	}
 	for _, task := range tasks {
-		if _, err := o.queueWave(ctx, projectID, stage, stage.Agent, task, emit, orchestrator); err != nil {
+		if _, err := o.queueWave(ctx, projectID, stage.ID, stage.Agent, task, "execution", "", emit, orchestrator); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-// QueueRework queues the new waves of a stage whose gate was rejected (the participants' and the lead's in
-// the validation, which is redone as a whole); it returns the wave codes.
+// QueueRework queues the new waves of a stage whose gate was rejected: the activities approved in its
+// gate (their outputs went back to draft), the participants and the lead in the validation, which is
+// redone as a whole, or the stage agent; it returns the wave codes.
 func (o *Orchestrator) QueueRework(ctx context.Context, projectID, stageID, correlation string) ([]string, error) {
 	stage, ok := o.workflow.Stage(stageID)
 	if !ok {
 		return nil, fmt.Errorf("unknown stage %s", stageID)
 	}
 	var codes []string
+	actor := map[string]any{"type": "orchestrator", "id": "orchestrator"}
+	for _, activity := range o.workflow.ActivitiesFor(stageID) {
+		code, err := o.queueWave(ctx, projectID, activity.ID, activity.Agent, "", "execution", "", o.emitter(ctx, projectID, correlation), actor)
+		if err != nil {
+			return nil, err
+		}
+		codes = append(codes, code)
+	}
 	for _, agent := range stage.Agents() {
-		code, err := o.queueWave(ctx, projectID, stage, agent, "", o.emitter(ctx, projectID, correlation), map[string]any{"type": "orchestrator", "id": "orchestrator"})
+		code, err := o.queueWave(ctx, projectID, stage.ID, agent, "", "execution", "", o.emitter(ctx, projectID, correlation), actor)
 		if err != nil {
 			return nil, err
 		}
@@ -205,9 +282,9 @@ func (o *Orchestrator) queueFirstWave(ctx context.Context, cmd command.Command, 
 	return o.queueStageWaves(ctx, cmd.ProjectID, stage, emit, orchestrator)
 }
 
-func (o *Orchestrator) queueWave(ctx context.Context, projectID string, stage domainworkflow.Stage, agent, task string,
+func (o *Orchestrator) queueWave(ctx context.Context, projectID string, stageID string, agent, task, purpose, finding string,
 	emit func(string, string, string, map[string]any) error, orchestrator map[string]any) (string, error) {
-	pair, err := o.store.ResolvePair(ctx, projectID, stage.ID)
+	pair, err := o.store.ResolvePair(ctx, projectID, stageID)
 	if err != nil {
 		return "", err
 	}
@@ -215,16 +292,23 @@ func (o *Orchestrator) queueWave(ctx context.Context, projectID string, stage do
 	if err != nil {
 		return "", err
 	}
-	wave, err := o.store.QueueWave(ctx, NewWave{ProjectID: projectID, Stage: stage.ID, Agent: agent, Pair: pair, Configuration: configuration, Task: task})
+	if purpose == "" {
+		purpose = "execution"
+	}
+	wave, err := o.store.QueueWave(ctx, NewWave{ProjectID: projectID, Stage: stageID, Agent: agent, Pair: pair, Configuration: configuration, Task: task,
+		Purpose: purpose, Finding: finding})
 	if err != nil {
 		return "", err
 	}
 	created := map[string]any{
-		"wave": wave.Code, "stage": stage.ID, "agent": agent, "purpose": "execution", "actor": orchestrator,
+		"wave": wave.Code, "stage": stageID, "agent": agent, "purpose": purpose, "actor": orchestrator,
 		"transition": map[string]any{"machine": "wave", "from_state": nil, "to_state": "queued"},
 	}
 	if task != "" {
 		created["task"] = task
+	}
+	if finding != "" {
+		created["finding"] = finding
 	}
 	err = emit("br.easycode.wave.created.v1", "waves/"+wave.Code, wave.Code, created)
 	if err != nil {
@@ -233,7 +317,7 @@ func (o *Orchestrator) queueWave(ctx context.Context, projectID string, stage do
 	// US-16 CA-1: each wave records the models it uses.
 	for role, model := range map[string]ModelID{"reasoning": pair.Reasoning, "execution": pair.Execution} {
 		err := emit("br.easycode.wave.model_selected.v1", "waves/"+wave.Code, wave.Code, map[string]any{
-			"wave": wave.Code, "stage": stage.ID, "agent": agent, "purpose": "execution", "actor": orchestrator,
+			"wave": wave.Code, "stage": stageID, "agent": agent, "purpose": purpose, "actor": orchestrator,
 			"provider": model.Provider, "model": model.Name, "role": role, "mode": "manual", "reason": "project_configuration",
 		})
 		if err != nil {

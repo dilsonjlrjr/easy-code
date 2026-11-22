@@ -56,6 +56,8 @@ type Inputs struct {
 	Skills   string // skills of the agent in the project, by description (US-43 RN-1)
 	// SkillFiles are the files of those skills (skills/<name>/<file>), read on demand (US-43 RN-1).
 	SkillFiles map[string]string
+	// Finding is the ACH of a rework or revalidation wave.
+	Finding *FindingBrief
 }
 
 // Totals are the accumulated tokens and costs of the wave (exact decimals, RNF-16).
@@ -109,6 +111,9 @@ type Ledger interface {
 	RecordCommit(ctx context.Context, lease Lease, sha string, versions []CommittedVersion) error
 	// Release frees the lease without changing the state (worker shutting down).
 	Release(ctx context.Context, lease Lease) error
+	// Pause applies checkpoint_reached to a wave in pausing (pause by policy, a dependency of its stage
+	// was reopened, US-34 CA-1): the wave goes to paused and the lease is freed; false when not pausing.
+	Pause(ctx context.Context, lease Lease) (bool, error)
 	SetStageState(ctx context.Context, projectID, stage, state string) error
 }
 

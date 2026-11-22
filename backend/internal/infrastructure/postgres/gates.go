@@ -14,11 +14,12 @@ import (
 	appgate "easycode/internal/application/gate"
 	appproject "easycode/internal/application/project"
 	"easycode/internal/domain/failure"
+	domainfinding "easycode/internal/domain/finding"
 	"easycode/internal/domain/identity"
 	domainworkflow "easycode/internal/domain/workflow"
 )
 
-// Gates stores gate rounds, their checks and decisions.
+// Gates stores gate rounds, their checks and decisions, and is the read port of the checks.
 type Gates struct {
 	pool *pgxpool.Pool
 }
@@ -44,15 +45,15 @@ SELECT count(*) FROM easycode.waves w JOIN easycode.projects pr ON pr.id = w.pro
 }
 
 // OpenRound implements appgate.Store.
-func (g Gates) OpenRound(ctx context.Context, projectID, stage string, outputs []artifact.Stored) (int, error) {
+func (g Gates) OpenRound(ctx context.Context, projectID, stage, mode string, outputs []artifact.Stored) (int, error) {
 	q := conn(ctx, g.pool)
 	var roundID int64
 	var number int
 	err := q.QueryRow(WithOperation(ctx, "gate_rounds.open"), `
 INSERT INTO easycode.gate_rounds (project_id, stage, stage_id, number, approval_mode)
-SELECT pr.id, s.stage, s.id, coalesce((SELECT max(r.number) FROM easycode.gate_rounds r WHERE r.stage_id = s.id), 0) + 1, 'human'
+SELECT pr.id, s.stage, s.id, coalesce((SELECT max(r.number) FROM easycode.gate_rounds r WHERE r.stage_id = s.id), 0) + 1, $3
   FROM easycode.projects pr JOIN easycode.stages s ON s.project_id = pr.id AND s.stage = $2 WHERE pr.public_id = $1::uuid
-RETURNING id, number`, projectID, stage).Scan(&roundID, &number)
+RETURNING id, number`, projectID, stage, mode).Scan(&roundID, &number)
 	if err != nil {
 		return 0, fmt.Errorf("open gate round: %w", classify(err))
 	}
@@ -72,20 +73,16 @@ SELECT $1, v.id FROM easycode.artifact_versions v JOIN easycode.artifacts ar ON 
 const roundByKey = `(SELECT r.id FROM easycode.gate_rounds r JOIN easycode.projects pr ON pr.id = r.project_id
  WHERE pr.public_id = $1::uuid AND r.stage = $2 AND r.number = $3)`
 
-// RecordRoundCheck implements appgate.Store.
-func (g Gates) RecordRoundCheck(ctx context.Context, projectID, stage string, round int, check string, passed bool, evidence json.RawMessage) error {
-	result := "failed"
-	if passed {
-		result = "passed"
-	}
+// RecordCheck implements appgate.Store.
+func (g Gates) RecordCheck(ctx context.Context, projectID, stage string, round int, result appgate.CheckResult) error {
 	var raw any
-	if len(evidence) > 0 {
-		raw = string(evidence)
+	if len(result.Evidence) > 0 {
+		raw = string(result.Evidence)
 	}
 	_, err := conn(ctx, g.pool).Exec(WithOperation(ctx, "check_executions.round"), `
 INSERT INTO easycode.check_executions (project_id, round_id, evaluation, check_id, type, severity, result, evidence)
-SELECT r.project_id, r.id, r.current_evaluation, $4, 'automatic', 'blocks', $5, $6::jsonb FROM easycode.gate_rounds r WHERE r.id = `+roundByKey,
-		projectID, stage, round, check, result, raw)
+SELECT r.project_id, r.id, r.current_evaluation, $4, $5, $6, $7, $8::jsonb FROM easycode.gate_rounds r WHERE r.id = `+roundByKey,
+		projectID, stage, round, result.Check, result.Type, result.Severity, result.Status, raw)
 	if err != nil {
 		return fmt.Errorf("record round check: %w", classify(err))
 	}
@@ -97,12 +94,54 @@ func (g Gates) SetRoundState(ctx context.Context, projectID, stage string, round
 	_, err := conn(ctx, g.pool).Exec(WithOperation(ctx, "gate_rounds.set_state"), `
 UPDATE easycode.gate_rounds SET state = $4,
        decided_by_type = CASE WHEN $4 IN ('approved','rejected') THEN 'orchestrator' ELSE decided_by_type END,
-       decided_at = CASE WHEN $4 IN ('approved','rejected') THEN now() ELSE decided_at END
+       decided_at = CASE WHEN $4 IN ('approved','rejected') THEN now() ELSE decided_at END,
+       invalidated_at = CASE WHEN $4 = 'invalidated' THEN now() ELSE invalidated_at END
  WHERE id = `+roundByKey, projectID, stage, round, state)
 	if err != nil {
 		return fmt.Errorf("gate round to %s: %w", state, classify(err))
 	}
 	return nil
+}
+
+// Reevaluate implements appgate.Store: awaiting_human → evaluating with a new evaluation (the partial
+// approvals are discarded by gate_rounds_discard_partials).
+func (g Gates) Reevaluate(ctx context.Context, projectID, stage string, round int, finding string) error {
+	_, err := conn(ctx, g.pool).Exec(WithOperation(ctx, "gate_rounds.reevaluate"), `
+UPDATE easycode.gate_rounds SET state = 'evaluating', current_evaluation = current_evaluation + 1,
+       reevaluated_by_finding_id = (SELECT a.id FROM easycode.artifacts a JOIN easycode.projects pr ON pr.id = a.project_id
+                                     WHERE pr.public_id = $1::uuid AND a.code = $4)
+ WHERE state = 'awaiting_human' AND id = `+roundByKey, projectID, stage, round, finding)
+	if err != nil {
+		return fmt.Errorf("reevaluate round: %w", classify(err))
+	}
+	return nil
+}
+
+// ActiveRound implements appgate.Store.
+func (g Gates) ActiveRound(ctx context.Context, projectID, stage string) (int, string, error) {
+	var number int
+	var state string
+	err := conn(ctx, g.pool).QueryRow(WithOperation(ctx, "gate_rounds.active"), `
+SELECT r.number, r.state FROM easycode.gate_rounds r JOIN easycode.projects pr ON pr.id = r.project_id
+ WHERE pr.public_id = $1::uuid AND r.stage = $2 AND r.state IN ('evaluating','awaiting_human')`, projectID, stage).Scan(&number, &state)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, "", nil
+	}
+	if err != nil {
+		return 0, "", fmt.Errorf("active round: %w", classify(err))
+	}
+	return number, state, nil
+}
+
+// RoundMode implements appgate.Store.
+func (g Gates) RoundMode(ctx context.Context, projectID, stage string, round int) (string, error) {
+	var mode string
+	err := conn(ctx, g.pool).QueryRow(WithOperation(ctx, "gate_rounds.mode"),
+		`SELECT approval_mode FROM easycode.gate_rounds WHERE id = `+roundByKey, projectID, stage, round).Scan(&mode)
+	if err != nil {
+		return "", fmt.Errorf("round mode: %w", classify(err))
+	}
+	return mode, nil
 }
 
 // Decided implements appgate.Store.
@@ -119,6 +158,24 @@ SELECT pr.public_id::text, s.stage, r.number, r.state
 		var d appgate.Decided
 		return d, row.Scan(&d.ProjectID, &d.Stage, &d.Round, &d.State)
 	})
+}
+
+// LastRound implements appgate.Store: the last round of the stage and its failed blocking checks.
+func (g Gates) LastRound(ctx context.Context, projectID, stage string) (int, []string, error) {
+	var number int
+	var failed []string
+	err := conn(ctx, g.pool).QueryRow(WithOperation(ctx, "gate_rounds.last"), `
+SELECT r.number, coalesce((SELECT array_agg(c.check_id ORDER BY c.check_id) FROM easycode.check_executions c
+                            WHERE c.round_id = r.id AND c.evaluation = r.current_evaluation AND c.severity = 'blocks' AND c.result = 'failed'), '{}')
+  FROM easycode.gate_rounds r JOIN easycode.projects pr ON pr.id = r.project_id
+ WHERE pr.public_id = $1::uuid AND r.stage = $2 ORDER BY r.number DESC LIMIT 1`, projectID, stage).Scan(&number, &failed)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, nil, nil
+	}
+	if err != nil {
+		return 0, nil, fmt.Errorf("last round: %w", classify(err))
+	}
+	return number, failed, nil
 }
 
 // Rounds implements appgate.DecisionStore.
@@ -155,7 +212,8 @@ func (g Gates) Round(ctx context.Context, projectID, stage string, round int) (a
 	var decidedAt *time.Time
 	err := q.QueryRow(WithOperation(ctx, "gate_rounds.get"), `
 SELECT r.id, r.state, r.approval_mode, r.opened_at, r.decided_by_type, r.decided_at, r.reason, u.sub, u.display_name,
-       coalesce((SELECT w.code FROM easycode.waves w WHERE w.project_id = r.project_id AND w.stage = r.stage AND w.purpose = 'rework'
+       r.current_evaluation, coalesce((SELECT a.code FROM easycode.artifacts a WHERE a.id = r.reevaluated_by_finding_id), ''),
+       coalesce((SELECT w.code FROM easycode.waves w WHERE w.project_id = r.project_id AND w.stage = r.stage AND w.purpose IN ('execution','rework')
                     AND r.state = 'rejected' AND w.created_at >= r.decided_at
                     AND NOT EXISTS (SELECT 1 FROM easycode.gate_rounds n WHERE n.project_id = r.project_id AND n.stage = r.stage
                                       AND n.number > r.number AND n.opened_at <= w.created_at)
@@ -164,7 +222,7 @@ SELECT r.id, r.state, r.approval_mode, r.opened_at, r.decided_by_type, r.decided
   LEFT JOIN LATERAL (SELECT gc.user_id FROM easycode.gate_confirmations gc WHERE gc.round_id = r.id ORDER BY gc.decided_at DESC LIMIT 1) c ON true
   LEFT JOIN easycode.users u ON u.id = c.user_id
  WHERE pr.public_id = $1::uuid AND r.stage = $2 AND r.number = $3`, projectID, stage, round).Scan(&roundID, &view.State, &view.ApprovalMode,
-		&view.OpenedAt, &byType, &decidedAt, &reason, &sub, &name, &view.ReworkWave)
+		&view.OpenedAt, &byType, &decidedAt, &reason, &sub, &name, &view.Evaluation, &view.ReevaluatedBy, &view.ReworkWave)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return view, failure.New(failure.KindNotFound, failure.CodeNotFound, nil)
 	}
@@ -185,16 +243,29 @@ SELECT ar.code, ar.type, v.version, ar.state FROM easycode.gate_round_artifacts 
 		return view, err
 	}
 	rows, err = q.Query(WithOperation(ctx, "check_executions.round_list"), `
-SELECT c.check_id, c.type, c.severity, c.result, c.evidence FROM easycode.check_executions c JOIN easycode.gate_rounds r ON r.id = c.round_id
- WHERE c.round_id = $1 AND c.evaluation = r.current_evaluation ORDER BY c.check_id`, roundID)
+SELECT c.check_id, c.type, c.severity, c.result, c.evidence, cu.sub, cu.display_name, c.confirmed_at
+  FROM easycode.check_executions c JOIN easycode.gate_rounds r ON r.id = c.round_id
+  LEFT JOIN easycode.users cu ON cu.id = c.confirmed_by
+ WHERE c.round_id = $1 AND c.evaluation = r.current_evaluation ORDER BY c.severity DESC, c.check_id`, roundID)
 	if err != nil {
 		return view, fmt.Errorf("round checks: %w", classify(err))
 	}
 	view.Checks, err = pgx.CollectRows(rows, func(row pgx.CollectableRow) (appgate.CheckView, error) {
 		var c appgate.CheckView
-		return c, row.Scan(&c.Check, &c.Type, &c.Severity, &c.Status, &c.Evidence)
+		var csub, cname *string
+		var at *time.Time
+		if err := row.Scan(&c.Check, &c.Type, &c.Severity, &c.Status, &c.Evidence, &csub, &cname, &at); err != nil {
+			return c, err
+		}
+		if csub != nil && at != nil {
+			c.ConfirmedBy = &appgate.DecisionView{ByType: "human", By: appproject.UserRef{Subject: *csub, Name: *cname}, At: *at}
+		}
+		return c, nil
 	})
 	if err != nil {
+		return view, err
+	}
+	if err := g.roundFindings(ctx, projectID, stage, &view); err != nil {
 		return view, err
 	}
 	if byType != nil && decidedAt != nil {
@@ -207,7 +278,7 @@ SELECT c.check_id, c.type, c.severity, c.result, c.evidence FROM easycode.check_
 			decision.By = appproject.UserRef{Subject: *sub, Name: *name}
 		}
 		for _, check := range view.Checks {
-			if check.Status == "failed" {
+			if check.Status == "failed" && check.Severity == "blocks" {
 				decision.FailedChecks = append(decision.FailedChecks, check.Check)
 			}
 		}
@@ -216,9 +287,30 @@ SELECT c.check_id, c.type, c.severity, c.result, c.evidence FROM easycode.check_
 	return view, nil
 }
 
+// roundFindings lists the active findings of the gate scope (origin in the stage or in an activity
+// required for it; the Release sees the project).
+func (g Gates) roundFindings(ctx context.Context, projectID, stage string, view *appgate.RoundView) error {
+	findings, err := loadFindings(ctx, conn(ctx, g.pool), "findings.round_scope", projectID, `f.status IN ('open','in_rework','revalidating','escalated','awaiting_scope')
+ AND ($2 = 'release' OR f.origin_stage = $2 OR f.origin_stage IN (SELECT a.stage FROM easycode.stages a WHERE a.project_id = f.project_id AND a.required_for = $2))`, stage)
+	if err != nil {
+		return err
+	}
+	view.BlockingFindings, view.NonBlockingFindings = []appgate.FindingRef{}, []appgate.FindingRef{}
+	for _, f := range findings {
+		ref := appgate.FindingRef{Code: f.Code, Title: f.Title, Severity: f.Severity, Category: f.Category, Status: f.Status,
+			DestinationStage: f.DestinationStage, OriginStage: f.OriginStage, Author: f.Author, Cycles: len(f.Cycles), OpenedAt: f.OpenedAt}
+		if f.Blocking() {
+			view.BlockingFindings = append(view.BlockingFindings, ref)
+		} else {
+			view.NonBlockingFindings = append(view.NonBlockingFindings, ref)
+		}
+	}
+	return nil
+}
+
 // Decide implements appgate.DecisionStore (api role, synchronous decision; triggers check the
-// approver role, the blocking checks and the confirmations).
-func (g Gates) Decide(ctx context.Context, p identity.Principal, projectID, stage string, round int, approve bool, reason string) error {
+// approver role, the blocking checks, the findings and the confirmations).
+func (g Gates) Decide(ctx context.Context, p identity.Principal, projectID, stage string, round int, approve bool, reason string, confirmed []string) error {
 	q := conn(ctx, g.pool)
 	var roundID int64
 	err := q.QueryRow(WithOperation(ctx, "gate_rounds.lock"), roundByKey+` FOR UPDATE`, projectID, stage, round).Scan(&roundID)
@@ -232,10 +324,20 @@ func (g Gates) Decide(ctx context.Context, p identity.Principal, projectID, stag
 	if !approve {
 		decision, state = "reject", "rejected"
 	}
+	const user = `(SELECT uu.id FROM easycode.users uu JOIN easycode.organizations oo ON oo.id = uu.organization_id WHERE oo.public_id = $1::uuid AND uu.sub = $2)`
+	// Human checks: confirmed when approving, failed when rejecting (they were not confirmed).
+	_, err = q.Exec(WithOperation(ctx, "check_executions.confirm_human"), `
+UPDATE easycode.check_executions c SET result = CASE WHEN $4 AND c.check_id = ANY($5::text[]) THEN 'passed' ELSE 'failed' END,
+       confirmed_by = `+user+`, confirmed_at = now()
+  FROM easycode.gate_rounds r
+ WHERE r.id = $3 AND c.round_id = r.id AND c.evaluation = r.current_evaluation AND c.type = 'human' AND c.result = 'pending'`,
+		p.OrganizationID, p.Subject, roundID, approve, confirmed)
+	if err != nil {
+		return fmt.Errorf("confirm human checks: %w", classify(err))
+	}
 	_, err = q.Exec(WithOperation(ctx, "gate_confirmations.insert"), `
 INSERT INTO easycode.gate_confirmations (round_id, evaluation, user_id, decision, reason, origin)
-SELECT $3, r.current_evaluation, u.id, $4, nullif($5, ''), 'web' FROM easycode.gate_rounds r,
-  (SELECT uu.id FROM easycode.users uu JOIN easycode.organizations oo ON oo.id = uu.organization_id WHERE oo.public_id = $1::uuid AND uu.sub = $2) u
+SELECT $3, r.current_evaluation, u.id, $4, nullif($5, ''), 'web' FROM easycode.gate_rounds r, `+user+` u(id)
  WHERE r.id = $3`, p.OrganizationID, p.Subject, roundID, decision, reason)
 	if err != nil {
 		return fmt.Errorf("record decision: %w", classify(err))
@@ -250,17 +352,19 @@ UPDATE easycode.gate_rounds SET state = $2, decided_by_type = 'human', decided_a
 }
 
 // LastExecution implements appgate.Store: the last sandbox execution of the category in the last
-// completed wave of the stage (code.build_green, tests.executed_green).
+// completed wave of the stage that ran the category.
 func (g Gates) LastExecution(ctx context.Context, projectID, stage, category string) (*appgate.Execution, error) {
 	var e appgate.Execution
 	err := conn(ctx, g.pool).QueryRow(WithOperation(ctx, "tool_executions.last_of_stage"), `
 WITH last_wave AS (
   SELECT w.id, w.code FROM easycode.waves w JOIN easycode.projects pr ON pr.id = w.project_id
-   WHERE pr.public_id = $1::uuid AND w.stage = $2 AND w.state = 'completed' ORDER BY w.finished_at DESC, w.id DESC LIMIT 1)
-SELECT lw.code, t.public_id::text, t.exit_code, coalesce(t.end_reason, ''), t.tests_total, t.tests_failed
+   WHERE pr.public_id = $1::uuid AND w.stage = $2 AND w.state = 'completed' AND w.purpose IN ('execution','rework')
+   ORDER BY w.finished_at DESC, w.id DESC LIMIT 1)
+SELECT lw.code, t.public_id::text, t.category, coalesce(t.command, ''), t.exit_code, coalesce(t.end_reason, ''), t.tests_total, t.tests_failed
   FROM last_wave lw JOIN easycode.tool_executions t ON t.wave_id = lw.id
  WHERE t.category = $3 AND t.permission = 'allowed'
- ORDER BY t.started_at DESC, t.id DESC LIMIT 1`, projectID, stage, category).Scan(&e.Wave, &e.ID, &e.ExitCode, &e.EndReason, &e.TestsTotal, &e.TestsFailed)
+ ORDER BY t.started_at DESC, t.id DESC LIMIT 1`, projectID, stage, category).Scan(&e.Wave, &e.ID, &e.Category, &e.Command, &e.ExitCode, &e.EndReason,
+		&e.TestsTotal, &e.TestsFailed)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
@@ -268,6 +372,22 @@ SELECT lw.code, t.public_id::text, t.exit_code, coalesce(t.end_reason, ''), t.te
 		return nil, fmt.Errorf("last execution: %w", classify(err))
 	}
 	return &e, nil
+}
+
+// WaveExecutions implements appgate.Store.
+func (g Gates) WaveExecutions(ctx context.Context, projectID, wave string) ([]appgate.Execution, error) {
+	rows, err := conn(ctx, g.pool).Query(WithOperation(ctx, "tool_executions.of_wave"), `
+SELECT w.code, t.public_id::text, t.category, coalesce(t.command, ''), t.exit_code, coalesce(t.end_reason, ''), t.tests_total, t.tests_failed
+  FROM easycode.waves w JOIN easycode.projects pr ON pr.id = w.project_id JOIN easycode.tool_executions t ON t.wave_id = w.id
+ WHERE pr.public_id = $1::uuid AND w.code = $2 AND t.permission = 'allowed' AND t.category IS NOT NULL
+ ORDER BY t.started_at, t.id`, projectID, wave)
+	if err != nil {
+		return nil, fmt.Errorf("wave executions: %w", classify(err))
+	}
+	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (appgate.Execution, error) {
+		var e appgate.Execution
+		return e, row.Scan(&e.Wave, &e.ID, &e.Category, &e.Command, &e.ExitCode, &e.EndReason, &e.TestsTotal, &e.TestsFailed)
+	})
 }
 
 // ReviewOpinions implements appgate.Store: the opinion of the last completed wave of each agent in the
@@ -295,4 +415,112 @@ SELECT DISTINCT ON (w.agent) w.agent, ce.evidence FROM easycode.waves w JOIN eas
 		}
 	}
 	return out, rows.Err()
+}
+
+// ProjectArtifacts implements appgate.Store: every artifact of the project in its current version.
+func (g Gates) ProjectArtifacts(ctx context.Context, projectID string) ([]appgate.ArtifactRecord, error) {
+	rows, err := conn(ctx, g.pool).Query(WithOperation(ctx, "artifacts.project_records"), `
+SELECT ar.code, ar.type, ar.state, ar.current_version, v.path, v.author, v.wave_code, coalesce(w.stage, ''), coalesce(w.state, ''),
+       coalesce(w.purpose, ''), coalesce(fa.code, ''), coalesce(rb.code, ''), v.git_commit IS NOT NULL,
+       ar.state <> 'approved' OR EXISTS (SELECT 1 FROM easycode.gate_round_artifacts ga JOIN easycode.gate_rounds r ON r.id = ga.round_id
+                                          WHERE ga.artifact_version_id = v.id AND r.state IN ('approved','invalidated') AND r.decided_at IS NOT NULL),
+       v.header, v.body
+  FROM easycode.artifacts ar JOIN easycode.projects pr ON pr.id = ar.project_id
+  JOIN easycode.artifact_versions v ON v.artifact_id = ar.id AND v.version = ar.current_version
+  LEFT JOIN easycode.waves w ON w.id = v.wave_id
+  LEFT JOIN easycode.artifacts fa ON fa.id = v.finding_id
+  LEFT JOIN easycode.artifacts rb ON rb.id = ar.replaced_by_id
+ WHERE pr.public_id = $1::uuid ORDER BY ar.type, length(ar.code), ar.code`, projectID)
+	if err != nil {
+		return nil, fmt.Errorf("project artifacts: %w", classify(err))
+	}
+	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (appgate.ArtifactRecord, error) {
+		var a appgate.ArtifactRecord
+		var header []byte
+		if err := row.Scan(&a.Code, &a.Type, &a.State, &a.Version, &a.Path, &a.Author, &a.WaveCode, &a.WaveStage, &a.WaveState, &a.WavePurpose,
+			&a.Finding, &a.ReplacedBy, &a.Committed, &a.ApprovedByRound, &header, &a.Body); err != nil {
+			return a, err
+		}
+		return a, json.Unmarshal(header, &a.Header)
+	})
+}
+
+// ProjectFindings implements appgate.Store.
+func (g Gates) ProjectFindings(ctx context.Context, projectID string) ([]domainfinding.Finding, error) {
+	return loadFindings(ctx, conn(ctx, g.pool), "findings.project", projectID, "")
+}
+
+// RoundWaves implements appgate.Store: waves of the stages completed, failed or canceled after since.
+func (g Gates) RoundWaves(ctx context.Context, projectID string, stages []string, since time.Time) ([]appgate.WaveRecord, error) {
+	rows, err := conn(ctx, g.pool).Query(WithOperation(ctx, "waves.round_window"), `
+SELECT w.code, w.stage, w.agent, w.purpose, w.state, coalesce(w.failure_cause, ''),
+       (SELECT count(*) FROM easycode.tool_executions t WHERE t.wave_id = w.id AND t.status = 'limit_exceeded'),
+       (SELECT count(*) FROM easycode.wave_models m WHERE m.wave_id = w.id),
+       (SELECT count(*) FROM easycode.model_calls c WHERE c.wave_id = w.id),
+       EXISTS (SELECT 1 FROM easycode.wave_checkpoints k WHERE k.wave_id = w.id)
+  FROM easycode.waves w JOIN easycode.projects pr ON pr.id = w.project_id
+ WHERE pr.public_id = $1::uuid AND w.stage = ANY($2) AND w.state IN ('completed','failed','canceled')
+   AND coalesce(w.finished_at, w.created_at) > $3
+ ORDER BY w.id`, projectID, stages, since)
+	if err != nil {
+		return nil, fmt.Errorf("round waves: %w", classify(err))
+	}
+	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (appgate.WaveRecord, error) {
+		var w appgate.WaveRecord
+		err := row.Scan(&w.Code, &w.Stage, &w.Agent, &w.Purpose, &w.State, &w.FailureCause, &w.LimitExceeded, &w.Models, &w.Calls, &w.FinalCheckpoint)
+		w.Finished = w.State != "failed"
+		return w, err
+	})
+}
+
+// Stage implements appgate.Store.
+func (g Gates) Stage(ctx context.Context, projectID, stage string) (appgate.StageRecord, error) {
+	var r appgate.StageRecord
+	var since *time.Time
+	err := conn(ctx, g.pool).QueryRow(WithOperation(ctx, "stages.record"), `
+SELECT s.state, s.reevaluation_pending,
+       (SELECT max(coalesce(x.decided_at, x.invalidated_at)) FROM easycode.gate_rounds x WHERE x.stage_id = s.id AND x.state <> 'evaluating' AND x.state <> 'awaiting_human')
+  FROM easycode.stages s JOIN easycode.projects pr ON pr.id = s.project_id WHERE pr.public_id = $1::uuid AND s.stage = $2`, projectID, stage).
+		Scan(&r.State, &r.ReevaluationPending, &since)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return r, nil
+	}
+	if err != nil {
+		return r, fmt.Errorf("stage record: %w", classify(err))
+	}
+	if since != nil {
+		r.Since = *since
+	}
+	return r, nil
+}
+
+// Settings implements appgate.Store.
+func (g Gates) Settings(ctx context.Context, projectID, gate string) (appgate.Settings, error) {
+	var s appgate.Settings
+	err := conn(ctx, g.pool).QueryRow(WithOperation(ctx, "gate_configurations.get"), `
+SELECT c.approval_mode, c.promoted_checks FROM easycode.gate_configurations c JOIN easycode.projects pr ON pr.id = c.project_id
+ WHERE pr.public_id = $1::uuid AND c.gate = $2`, projectID, gate).Scan(&s.Mode, &s.Promoted)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return appgate.Settings{}, nil
+	}
+	if err != nil {
+		return s, fmt.Errorf("gate settings: %w", classify(err))
+	}
+	return s, nil
+}
+
+// RecordedCommits implements appgate.Store.
+func (g Gates) RecordedCommits(ctx context.Context, projectID string) ([]string, error) {
+	rows, err := conn(ctx, g.pool).Query(WithOperation(ctx, "commits.recorded"), `
+SELECT DISTINCT w.git_commit FROM easycode.waves w JOIN easycode.projects pr ON pr.id = w.project_id
+ WHERE pr.public_id = $1::uuid AND w.git_commit IS NOT NULL
+UNION
+SELECT DISTINCT c.commit_or_version FROM easycode.finding_cycles c JOIN easycode.findings f ON f.artifact_id = c.finding_id
+  JOIN easycode.projects pr ON pr.id = f.project_id
+ WHERE pr.public_id = $1::uuid AND c.commit_or_version ~ '^[0-9a-f]{40}$'
+ORDER BY 1`, projectID)
+	if err != nil {
+		return nil, fmt.Errorf("recorded commits: %w", classify(err))
+	}
+	return pgx.CollectRows(rows, pgx.RowTo[string])
 }

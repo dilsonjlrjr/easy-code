@@ -9,6 +9,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -255,4 +256,31 @@ func (r Repositories) UploadPack(ctx context.Context, projectID string, advertis
 		return fmt.Errorf("git upload-pack: %w: %s", err, strings.TrimSpace(stderr.String()))
 	}
 	return nil
+}
+
+// shaPattern is a full commit id (SHA-1 or SHA-256).
+var shaPattern = regexp.MustCompile(`^([0-9a-f]{40}|[0-9a-f]{64})$`)
+
+// Reachable reports whether a recorded commit is still an ancestor of main (project.history_preserved,
+// t.dev_record_present): history rewritten or a commit unknown to the repository is false.
+func (r Repositories) Reachable(ctx context.Context, projectID, sha string) (bool, error) {
+	if !shaPattern.MatchString(sha) {
+		return false, nil
+	}
+	dir, err := r.Path(projectID)
+	if err != nil {
+		return false, err
+	}
+	if !r.hasHead(ctx, dir) {
+		return false, nil
+	}
+	cmd := r.command(ctx, dir, "merge-base", "--is-ancestor", sha, "refs/heads/"+MainBranch)
+	if err := cmd.Run(); err != nil {
+		var exit *exec.ExitError
+		if errors.As(err, &exit) {
+			return false, nil // 1: not an ancestor; 128: unknown commit
+		}
+		return false, err
+	}
+	return true, nil
 }

@@ -73,6 +73,26 @@ type Repository interface {
 	// CurrentHeaders returns code → header of the current version of every artifact of the type that is
 	// not superseded (traceability checks of the gate).
 	CurrentHeaders(ctx context.Context, projectID, artifactType string) (map[string]map[string]any, error)
+	// Current returns the current version (nil when the artifact does not exist).
+	Current(ctx context.Context, projectID, code string) (*Current, error)
+	// MergeHeader merges fields into the header of the current version (tracking fields, allowed by
+	// artifact_versions_immutable even after the commit).
+	MergeHeader(ctx context.Context, projectID, code string, fields map[string]any) error
+	// Reopen creates the next version of an approved artifact in draft for a finding rework (copy of the
+	// current one with the history entry of the finding, owned by the rework wave, US-34 CA-1).
+	Reopen(ctx context.Context, version NewVersion, finding string) error
+}
+
+// Current is the current version of an artifact.
+type Current struct {
+	Code    string
+	Type    string
+	State   string
+	Version int
+	Path    string
+	Author  string
+	Header  map[string]any
+	Body    string
 }
 
 // Input is one artifact file written by an agent in a wave.
@@ -289,4 +309,41 @@ func (s *Store) Headers(ctx context.Context, projectID, artifactType string) (ma
 // Header returns the header of the current version (checks of the gate round).
 func (s *Store) Header(ctx context.Context, projectID, code string) (map[string]any, error) {
 	return s.repo.CurrentHeader(ctx, projectID, code)
+}
+
+// Current returns the current version of an artifact (nil when it does not exist).
+func (s *Store) Current(ctx context.Context, projectID, code string) (*Current, error) {
+	return s.repo.Current(ctx, projectID, code)
+}
+
+// UpdateTracking merges tracking fields into the current version (T of the Dev, CT.execucao), without a
+// new version: the artifact stays approved (estados.yaml tracking_fields).
+func (s *Store) UpdateTracking(ctx context.Context, projectID, code string, fields map[string]any) error {
+	return s.repo.MergeHeader(ctx, projectID, code, fields)
+}
+
+// Reopen takes an approved artifact back to draft in a new version for the rework of a finding: the
+// version copies the current one, cites the finding in the history and belongs to the rework wave, which
+// rewrites it (artifact machine approved → draft, US-34 CA-1). It returns the new version.
+func (s *Store) Reopen(ctx context.Context, projectID, code, waveCode, agent, finding string) (int, error) {
+	current, err := s.repo.Current(ctx, projectID, code)
+	if err != nil || current == nil {
+		return 0, err
+	}
+	header := map[string]any{}
+	for k, v := range current.Header {
+		header[k] = v
+	}
+	next := current.Version + 1
+	history, _ := header["historico"].([]any)
+	header["historico"] = append(append([]any{}, history...), map[string]any{"versao": next, "data": s.now().UTC().Format("2006-01-02"),
+		"onda": waveCode, "descricao": "reaberto pelo achado " + finding, "achado": finding})
+	header["versao"], header["estado"] = next, headerStates[domainartifact.StateDraft]
+	encoded, err := json.Marshal(header)
+	if err != nil {
+		return 0, err
+	}
+	sum := sha256.Sum256(append(encoded, []byte(current.Body)...))
+	return next, s.repo.Reopen(ctx, NewVersion{ProjectID: projectID, Code: code, Type: current.Type, Version: next, WaveCode: waveCode, Author: agent,
+		Description: "reaberto pelo achado " + finding, Path: current.Path, Header: encoded, Body: current.Body, ContentHash: hex.EncodeToString(sum[:])}, finding)
 }

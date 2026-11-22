@@ -62,10 +62,43 @@ type WaveContext struct {
 	// SkillFiles are the full files of the skills of the wave (skills/<name>/<file>), untrusted data read
 	// with read_file only when the agent needs them (US-43 RN-1).
 	SkillFiles map[string]string
+	// Purpose is execution, rework, revalidation or reevaluation; Finding is the ACH of a rework or
+	// revalidation wave (its evidence and suggestion are untrusted input).
+	Purpose string
+	Finding *FindingBrief
+}
+
+// Wave purposes (waves.purpose).
+const (
+	PurposeExecution    = "execution"
+	PurposeRework       = "rework"
+	PurposeRevalidation = "revalidation"
+	PurposeReevaluation = "reevaluation"
+	PurposeEditReview   = "edit_review"
+)
+
+// FindingBrief is the finding a rework or revalidation wave works on.
+type FindingBrief struct {
+	Code       string
+	Title      string
+	Severity   string
+	Evidence   string
+	Suggestion string
+	Affected   []string
+	Cycle      int
 }
 
 // Reviewing reports whether the wave only gives the agent's review opinion (participant wave).
 func (w WaveContext) Reviewing() bool { return w.Mode == workflow.ModeReview }
+
+// Revalidating reports whether the wave revalidates a finding of its agent (finish with the result).
+func (w WaveContext) Revalidating() bool { return w.Purpose == PurposeRevalidation }
+
+// Revalidation is the result the author of a finding records in its revalidation wave.
+type Revalidation struct {
+	Result   string // fixed | not_fixed
+	Evidence string
+}
 
 // ModelRef is a model of the wave pair.
 type ModelRef struct {
@@ -134,6 +167,8 @@ type StepResult struct {
 	TaskFailed *TaskFailure
 	// Opinion is the review opinion delivered by a participant wave (Type = complete).
 	Opinion *workflow.ReviewOpinion
+	// Revalidation is the result delivered by a revalidation wave (Type = complete).
+	Revalidation *Revalidation
 }
 
 // Steps is implemented by the agent harness: one unit of work per Next, never touching the database.

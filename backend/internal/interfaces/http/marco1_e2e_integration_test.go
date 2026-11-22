@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/valyala/fasthttp"
 
 	appartifact "easycode/internal/application/artifact"
@@ -29,6 +30,7 @@ import (
 	appwave "easycode/internal/application/wave"
 	appworkflow "easycode/internal/application/workflow"
 	"easycode/internal/domain/provider"
+	domainworkflow "easycode/internal/domain/workflow"
 	"easycode/internal/infrastructure/oidc/oidctest"
 	"easycode/internal/infrastructure/postgres"
 	"easycode/internal/infrastructure/postgres/postgrestest"
@@ -170,7 +172,7 @@ func newWorker(t *testing.T, db *postgrestest.Database, gateway runtime.Gateway)
 		t.Fatal(err)
 	}
 	store := appartifact.NewStore(tx, specs.HeaderParser{}, validator, postgres.NewArtifacts(pool), outbox)
-	progress := appgate.NewProgress(tx, postgres.NewGates(pool), store, validator, flow{workflows, orchestrator}, outbox, wf.Definition)
+	progress := newProgress(t, tx, pool, store, validator, flow{workflows, orchestrator}, outbox, wf.Definition)
 	ledger := postgres.NewLedger(pool)
 	logger := slog.New(slog.NewJSONHandler(io.Discard, nil))
 	executor := func(name string) *runtime.Executor {
@@ -189,6 +191,21 @@ func newWorker(t *testing.T, db *postgrestest.Database, gateway runtime.Gateway)
 type flow struct {
 	postgres.Workflow
 	*appworkflow.Orchestrator
+}
+
+// newProgress builds the governance engine of the worker over the embedded gates.yaml and checagens.yaml.
+func newProgress(t *testing.T, tx postgres.TxRunner, pool *pgxpool.Pool, store *appartifact.Store, validator *specs.ArtifactValidator,
+	stages flow, outbox postgres.Outbox, definition domainworkflow.Definition) *appgate.Progress {
+	t.Helper()
+	composition, err := specs.Governance()
+	if err != nil {
+		t.Fatal(err)
+	}
+	progress, err := appgate.NewProgress(tx, postgres.NewGates(pool), store, validator, stages, outbox, definition, composition)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return progress
 }
 
 func (f flow) SetStageState(ctx context.Context, projectID, stage, state string) error {
@@ -427,10 +444,13 @@ SELECT organization_id, 'anthropic', $1, $2, '0000', id FROM easycode.users WHER
 	}
 	live.json(t, "GET", base+"/stages/unknown", "", nil, 404)
 	round := live.json(t, "GET", base+"/gates/gate.requirements/rounds/1", "", nil, 200)
-	checks := round["checks"].([]any)
-	if round["state"] != "awaiting_human" || len(checks) != 1 || checks[0].(map[string]any)["check"] != "artifact.schema_valid" || checks[0].(map[string]any)["status"] != "passed" {
+	// US-31 CA-1: every check of gates.yaml for gate.requirements ran, with its result; the human ones wait
+	// for the approver.
+	if checks := checksOf(t, round); round["state"] != "awaiting_human" || checks["artifact.schema_valid"] != "passed" || checks["rnf.min_categories"] != "passed" ||
+		checks["traceability.backlog_covers_us"] != "passed" || checks["us.criteria_testable"] != "pending" || len(checks) < 30 {
 		t.Fatalf("gate round: %v", round)
 	}
+	confirmed := confirmedChecks(t, round)
 	// US-02 CA-5, CA-8: the administrator transfers the lead to Bruno, who gives himself the approver
 	// role and cannot approve within 24 h; CA-2: a member cannot approve.
 	bruno := live.as(t, oidctest.User{Subject: "bruno", Name: "Bruno Lima"})
@@ -440,7 +460,7 @@ SELECT organization_id, 'anthropic', $1, $2, '0000', id FROM easycode.users WHER
 	bruno.json(t, "PUT", base+"/members/carla", `{"roles":["member"]}`, nil, 200)
 	for name, who := range map[string]liveAPI{"member": carla, "self-assigned approver": bruno} {
 		csrf := who.json(t, "GET", "/api/v1/me", "", nil, 200)["csrf_token"].(string)
-		rc := who.send("POST", base+"/gates/gate.requirements/rounds/1/approval", `{"confirmed_human_checks":[]}`,
+		rc := who.send("POST", base+"/gates/gate.requirements/rounds/1/approval", confirmed,
 			mergeHeaders(key(), map[string]string{"X-CSRF-Token": csrf}))
 		want := map[string]int{"member": 403, "self-assigned approver": 409}[name]
 		if rc.Response.StatusCode() != want || (want == 409 && (decode(t, rc)["type"] != "urn:easycode:problem:separation-of-duties" || decode(t, rc)["reason"] != "approver_grace_period")) {
@@ -465,7 +485,7 @@ SELECT organization_id, 'anthropic', $1, $2, '0000', id FROM easycode.users WHER
 	stale := live
 	stale.cookie = login(t, live.harness, devUser, time.Now().Add(-11*time.Minute))
 	staleCSRF := stale.json(t, "GET", "/api/v1/me", "", nil, 200)["csrf_token"].(string)
-	rc := stale.send("POST", base+"/gates/gate.requirements/rounds/1/approval", `{"confirmed_human_checks":[]}`,
+	rc := stale.send("POST", base+"/gates/gate.requirements/rounds/1/approval", confirmed,
 		mergeHeaders(key(), map[string]string{"X-CSRF-Token": staleCSRF}))
 	if rc.Response.StatusCode() != 401 || decode(t, rc)["type"] != "urn:easycode:problem:reauthentication-required" {
 		t.Fatalf("US-06 CA-5: %d %s", rc.Response.StatusCode(), rc.Response.Body())
@@ -474,8 +494,14 @@ SELECT organization_id, 'anthropic', $1, $2, '0000', id FROM easycode.users WHER
 		mergeHeaders(key(), map[string]string{"X-CSRF-Token": staleCSRF}), 400)
 
 	me := live.json(t, "GET", "/api/v1/me", "", nil, 200)
-	live.json(t, "POST", base+"/gates/gate.requirements/rounds/1/approval", `{"confirmed_human_checks":[]}`, mergeHeaders(key(), nil), 403)
-	approved := live.json(t, "POST", base+"/gates/gate.requirements/rounds/1/approval", `{"confirmed_human_checks":[]}`,
+	live.json(t, "POST", base+"/gates/gate.requirements/rounds/1/approval", confirmed, mergeHeaders(key(), nil), 403)
+	// US-06 RN-3: approving without confirming the human checks is refused with the missing ones.
+	pending := live.send("POST", base+"/gates/gate.requirements/rounds/1/approval", `{"confirmed_human_checks":[]}`,
+		mergeHeaders(key(), map[string]string{"X-CSRF-Token": me["csrf_token"].(string)}))
+	if pending.Response.StatusCode() != 400 || decode(t, pending)["type"] != "urn:easycode:problem:pending-human-check" {
+		t.Fatalf("US-06 RN-3: %d %s", pending.Response.StatusCode(), pending.Response.Body())
+	}
+	approved := live.json(t, "POST", base+"/gates/gate.requirements/rounds/1/approval", confirmed,
 		mergeHeaders(key(), map[string]string{"X-CSRF-Token": me["csrf_token"].(string)}), 200)
 	if approved["state"] != "approved" {
 		t.Fatalf("approval: %v", approved)

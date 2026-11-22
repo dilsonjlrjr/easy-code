@@ -21,6 +21,11 @@ type StageView struct {
 	ReevaluationPending  bool
 	ActiveWaves          int
 	Cost                 project.Money
+	// Type is stage or parallel_activity; ApprovedInGate is the gate of an activity (approved_in_gate).
+	Type           string
+	ApprovedInGate string
+	// ReopenedByFinding is the ACH that reopened the stage (US-34), "" when none.
+	ReopenedByFinding string
 }
 
 // View is getWorkflow: the stages of the workflow in force (US-05 CA-5, US-49 CA-1).

@@ -49,6 +49,8 @@ check-specs:
 	@cmp -s ../../specs/dominio/workflow/workflow-basico.yaml $(SPECS_DIR)/workflow/workflow-basico.yaml || { echo "drift: workflow-basico.yaml (make sync-specs)"; exit 1; }
 	@cmp -s ../../specs/dominio/workflow/workflow-padrao.yaml $(SPECS_DIR)/workflow/workflow-padrao.yaml || { echo "drift: workflow-padrao.yaml (make sync-specs)"; exit 1; }
 	@cmp -s ../../specs/dominio/governanca/permissoes.yaml $(SPECS_DIR)/governanca/permissoes.yaml || { echo "drift: permissoes.yaml (make sync-specs)"; exit 1; }
+	@cmp -s ../../specs/dominio/governanca/gates.yaml $(SPECS_DIR)/governanca/gates.yaml || { echo "drift: gates.yaml (make sync-specs)"; exit 1; }
+	@cmp -s ../../specs/dominio/governanca/checagens.yaml $(SPECS_DIR)/governanca/checagens.yaml || { echo "drift: checagens.yaml (make sync-specs)"; exit 1; }
 	@diff -rq ../../specs/dominio/artefatos $(SPECS_DIR)/artefatos --exclude=README.md
 	@diff -rq ../../agentes/instrucoes $(SPECS_DIR)/agentes --exclude=README.md
 	@diff -rq ../../agentes/skills $(SPECS_DIR)/skills --exclude=README.md
@@ -57,7 +59,7 @@ check-specs:
 
 sync-specs:
 	cp ../../specs/dominio/workflow/workflow-basico.yaml ../../specs/dominio/workflow/workflow-padrao.yaml $(SPECS_DIR)/workflow/
-	cp ../../specs/dominio/governanca/permissoes.yaml $(SPECS_DIR)/governanca/
+	cp ../../specs/dominio/governanca/permissoes.yaml ../../specs/dominio/governanca/gates.yaml ../../specs/dominio/governanca/checagens.yaml $(SPECS_DIR)/governanca/
 	cp ../../specs/dominio/artefatos/*.schema.json $(SPECS_DIR)/artefatos/
 	cp ../../agentes/referencia/reserva-de-salas.md $(SPECS_DIR)/referencia/
 	rm -rf $(SPECS_DIR)/skills && cp -r ../../agentes/skills $(SPECS_DIR)/skills && rm $(SPECS_DIR)/skills/README.md

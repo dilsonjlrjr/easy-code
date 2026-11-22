@@ -48,7 +48,7 @@ const (
 func teamDeps(t *testing.T) func(*httpapi.Dependencies, *postgrestest.Database) {
 	return func(d *httpapi.Dependencies, db *postgrestest.Database) {
 		pool := db.PoolAs("easycode_api")
-		wf, err := specs.StandardWorkflow(specs.StandardAgents)
+		wf, err := specs.StandardWorkflow(specs.TeamAgents)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -83,7 +83,7 @@ func newTeamWorker(t *testing.T, db *postgrestest.Database, gateway runtime.Gate
 	pool := db.PoolAs("easycode_worker")
 	tx := postgres.NewTxRunner(pool)
 	outbox := postgres.NewOutbox(pool)
-	wf, err := specs.StandardWorkflow(specs.StandardAgents)
+	wf, err := specs.StandardWorkflow(specs.TeamAgents)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,11 +102,11 @@ func newTeamWorker(t *testing.T, db *postgrestest.Database, gateway runtime.Gate
 		t.Fatal(err)
 	}
 	store := appartifact.NewStore(tx, specs.HeaderParser{}, validator, postgres.NewArtifacts(pool), outbox)
-	progress := appgate.NewProgress(tx, postgres.NewGates(pool), store, validator, flow{workflows, orchestrator}, outbox, wf.Definition)
+	progress := newProgress(t, tx, pool, store, validator, flow{workflows, orchestrator}, outbox, wf.Definition)
 	ledger := postgres.NewLedger(pool)
 	models := runtime.NewGatewayModels(gateway, postgres.NewProviderKeys(pool), ledger, ledger)
 	agents := map[string]runtime.Agent{}
-	for _, name := range specs.StandardAgents {
+	for _, name := range specs.TeamAgents {
 		policy, err := specs.AgentPolicy(name)
 		if err != nil {
 			t.Fatal(err)
@@ -286,8 +286,8 @@ func (s *teamScript) next(system string) provider.Message {
 }
 
 func newTeamScript(t *testing.T) *teamScript {
-	team := folderFiles(t, "testdata/reserva-equipe", "")
-	architecture := folderFiles(t, "testdata/reserva-arquitetura", "")
+	team := folderFiles(t, "testdata/reserva-equipe")
+	architecture := folderFiles(t, "testdata/reserva-arquitetura")
 	archFiles := map[string]string{
 		"docs/arquitetura/ARQ.md": architecture["ARQ.md"], "docs/arquitetura/adr/ADR-01.md": architecture["ADR-01.md"],
 		"docs/arquitetura/tarefas/T-01.md": architecture["T-01.md"], "docs/arquitetura/estrutura.md": architecture["estrutura.md"],
@@ -438,17 +438,17 @@ func runTeam(t *testing.T, live liveAPI, work teamWorker, base string) teamOutco
 			t.Fatalf("%s: %v", code, w)
 		}
 	}
-	// US-20 CA-4: VALIDACAO with the result before the Implementação.
+	// US-20 CA-4: VALIDACAO with the result before the Implementação. gate.validation allows automatic
+	// approval and it is the default (workflow-padrao default_mode automatic, gates.yaml): with every
+	// blocking check green and no rejected opinion the orchestrator approves the round (PROJETO 7.3).
 	validation := live.json(t, "GET", base+"/gates/gate.validation/rounds/1", "", nil, 200)
-	if checks := checksOf(t, validation); validation["state"] != "awaiting_human" || checks["artifact.schema_valid"] != "passed" ||
-		checks["validacao.review_opinions_recorded"] != "passed" || checks["validacao.verdict_unblocked"] != "passed" {
+	decision, _ := validation["decision"].(map[string]any)
+	if checks := checksOf(t, validation); validation["state"] != "approved" || validation["approval_mode"] != "automatic" || checks["artifact.schema_valid"] != "passed" ||
+		checks["validacao.review_opinions_recorded"] != "passed" || checks["validacao.verdict_unblocked"] != "passed" ||
+		decision["record"].(map[string]any)["per"].(map[string]any)["type"] != "orchestrator" {
 		t.Fatalf("US-20 CA-4: gate.validation %v", validation)
 	}
 	record("gate.validation", validation)
-	if states := waveStates(t, live, base); states["DEV-01"] != "" {
-		t.Fatalf("US-20 CA-4: no implementation before the validation is approved: %v", states)
-	}
-	live.approve(t, base, "gate.validation", 1)
 	work.reconcile(t)
 	if states := waveStates(t, live, base); states["DEV-01"] != "queued" {
 		t.Fatalf("implementation unblocked after the validation: %v", states)
@@ -693,7 +693,7 @@ func TestMarco4CancelWave(t *testing.T) {
 func TestMarco4SkillsPerProject(t *testing.T) {
 	live := newLiveAPI(t, teamDeps(t), func(d *httpapi.Dependencies, db *postgrestest.Database) {
 		pool := db.PoolAs("easycode_api")
-		wf, _ := specs.StandardWorkflow(specs.StandardAgents)
+		wf, _ := specs.StandardWorkflow(specs.TeamAgents)
 		projects := postgres.NewProjects(pool, wf.Definition.ID, len(wf.Definition.Stages))
 		d.Skills = appskill.NewService(postgres.NewSkills(pool))
 		d.Agents = appskill.NewAgents(postgres.NewTxRunner(pool), projects, specs.AgentProfiles{}, postgres.NewSkills(pool), postgres.NewSkills(pool), postgres.NewAuditTrail(pool))

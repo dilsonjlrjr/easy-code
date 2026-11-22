@@ -41,12 +41,14 @@ type WaveRef struct {
 
 // Summary holds the dashboard indicators (ProjectSummary).
 type Summary struct {
-	CurrentStages   []StageState
-	ApprovedStages  int
-	StagesTotal     int
-	ActiveWaves     []WaveRef
-	GatesAwaiting   int
-	OpenQuestions   int
+	CurrentStages  []StageState
+	ApprovedStages int
+	StagesTotal    int
+	ActiveWaves    []WaveRef
+	GatesAwaiting  int
+	OpenQuestions  int
+	// OpenFindings counts the active findings by severity (US-50, PL-72).
+	OpenFindings    map[string]int
 	AccumulatedCost project.Money
 	StopLimit       *project.Money
 }
