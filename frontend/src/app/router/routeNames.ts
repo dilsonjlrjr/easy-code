@@ -13,6 +13,7 @@ export const ROUTE_NAMES = {
   artifact: 'artifact',
   pendingItems: 'pending-items',
   agents: 'agents',
+  projectAgents: 'project-agents',
   settings: 'settings',
   login: 'login',
   accessDenied: 'access-denied',
@@ -32,6 +33,7 @@ export const NAVIGATION_SECTIONS: Partial<Record<RouteName, RouteName>> = {
   [ROUTE_NAMES.wave]: ROUTE_NAMES.projects,
   [ROUTE_NAMES.gate]: ROUTE_NAMES.projects,
   [ROUTE_NAMES.artifact]: ROUTE_NAMES.projects,
+  [ROUTE_NAMES.projectAgents]: ROUTE_NAMES.agents,
 }
 
 /** Tabs of Settings in MARCO-1 (ESP-23): providers and models, price table. */

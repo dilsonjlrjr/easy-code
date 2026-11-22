@@ -67,6 +67,7 @@
 
 /* Field labels and hints at full opacity: with Vuetify's medium emphasis they fail 4.5:1 (RNF-18, axe). */
 .v-field-label,
-.v-messages {
+.v-messages,
+.v-radio-group .v-label {
   opacity: 1 !important;
 }

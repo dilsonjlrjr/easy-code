@@ -39,6 +39,12 @@ export const routes: RouteRecordRaw[] = [
     meta: { titleKey: 'pages.artifact.title', layout: 'shell' },
   },
   {
+    path: '/projects/:projectId/agents/:agent?',
+    name: ROUTE_NAMES.projectAgents,
+    component: () => import('@/features/agents/pages/ProjectAgentsPage.vue'),
+    meta: { titleKey: 'pages.agents.title', layout: 'shell' },
+  },
+  {
     path: '/projects/:projectId',
     component: () => import('@/features/projects/pages/ProjectPage.vue'),
     meta: { titleKey: 'pages.project.title', layout: 'shell' },

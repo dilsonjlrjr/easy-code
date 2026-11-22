@@ -68,6 +68,15 @@ watch([stageId, () => store.revision], () => void loader.run(), { immediate: tru
       <div class="d-flex flex-wrap align-center ga-3 mb-4">
         <StateLabel machine="stage" :state="stage.state ?? 'not_started'" />
         <span class="text-body-2">{{ $t(`agents.${stage.agent}`) }}</span>
+        <!-- ESP-09/ESP-10: the agent skills and configuration live in "Agentes e skills" (PL-31). -->
+        <router-link
+          v-if="stage.agent !== 'orchestrator'"
+          :to="{ name: ROUTE_NAMES.projectAgents, params: { projectId, agent: stage.agent } }"
+          class="text-body-2"
+          data-testid="stage-agent-link"
+        >
+          {{ $t('projects.stage.agentConfiguration') }}
+        </router-link>
         <router-link
           v-if="stage.gate && stage.current_round"
           :to="{

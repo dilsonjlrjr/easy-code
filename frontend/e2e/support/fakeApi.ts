@@ -66,6 +66,9 @@ export interface ProjectState {
     Record<string, { current: Json; versions: Json[]; byVersion: Partial<Record<number, Json>> }>
   >
   streams: StreamScript[]
+  /** `ProjectAgent` items (US-43); each configuration version bumps the agent ETag. */
+  agents: Json[]
+  agentEtags: Record<string, number>
 }
 
 export function problem(slug: string, status: number, extra: Json = {}): Json {
@@ -133,6 +136,8 @@ export class FakeApi {
     { id: 'openai', name: 'OpenAI', key: { status: 'missing', last_test: null } },
   ]
   models: ModelState[] = []
+  /** Skill library (`Skill`, US-43, US-44): native catalog and organization skills. */
+  skills: Json[] = []
   prices: Record<string, Json[]> = {}
   projects: Partial<Record<string, ProjectState>> = {}
   commands: Record<string, Json> = {}
@@ -244,6 +249,8 @@ export class FakeApi {
       stageDetails: {},
       artifacts: {},
       streams: [],
+      agents: [],
+      agentEtags: {},
       ...state,
     }
     this.projects[id] = full
@@ -489,6 +496,22 @@ export class FakeApi {
       }
     }
 
+    // Skill library (US-43 CA-1).
+    if (first === 'skills' && !second) {
+      const agent = url.searchParams.get('agent')
+      const origin = url.searchParams.get('origin')
+      const items = this.skills.filter(
+        (skill) =>
+          (!origin || skill.origin === origin) &&
+          (!agent || ((skill.agents as string[] | undefined) ?? []).includes(agent)),
+      )
+      return { status: 200, body: { items, next_cursor: null } }
+    }
+    if (first === 'skills' && second && !third) {
+      const skill = this.skills.find((item) => item.id === second)
+      return skill ? { status: 200, body: skill } : { status: 404, body: problem('not-found', 404) }
+    }
+
     // Projects (US-03, US-05, US-16).
     if (first === 'projects' && !second) {
       if (method === 'POST') return this.createProject(input)
@@ -562,6 +585,7 @@ export class FakeApi {
     }
     if (third === 'gates' && fourth && fifth === 'rounds')
       return this.gateRounds(state, method, fourth, sixth, seventh, input, headers)
+    if (third === 'agents') return this.agents(state, method, fourth, fifth, input, headers)
     if (third === 'members') return this.members(state, method, fourth, input)
     if (third === 'start') return this.startWorkflow(state)
     if (third === 'commands' && fourth) return { status: 200, body: this.commands[fourth] }
@@ -681,6 +705,62 @@ export class FakeApi {
     }
     this.commands[id] = command
     return command
+  }
+
+  /**
+   * listProjectAgents, getProjectAgent and modifyAgentConfiguration (US-43): only the lead writes;
+   * `If-Match` must match (412); a skill version that is not `unblocked` → 409 `blocked-skill`.
+   */
+  private agents(
+    state: ProjectState,
+    method: string,
+    agentId: string | undefined,
+    action: string | undefined,
+    input: Json,
+    headers: Record<string, string>,
+  ): { status: number; body?: unknown; headers?: Record<string, string> } {
+    if (!agentId) return { status: 200, body: { items: state.agents } }
+    const agent = state.agents.find((item) => item.agent === agentId)
+    if (!agent) return { status: 404, body: problem('not-found', 404) }
+    const etag = () => `"${String(state.agentEtags[agentId] ?? 1)}"`
+    if (!action) return { status: 200, body: agent, headers: { ETag: etag() } }
+    if (action !== 'configuration' || method !== 'PUT')
+      return { status: 404, body: problem('not-found', 404) }
+    const roles = (state.project.my_roles as string[] | undefined) ?? []
+    if (!roles.includes('lead')) return { status: 403, body: problem('forbidden', 403) }
+    if (!headers['if-match']) return { status: 428, body: problem('required-precondition', 428) }
+    if (headers['if-match'] !== etag())
+      return { status: 412, body: problem('failed-precondition', 412) }
+    const chosen = (input.skills as Array<{ skill: string; version: number }> | undefined) ?? []
+    const pinned: Json[] = []
+    for (const item of chosen) {
+      const skill = this.skills.find((entry) => entry.id === item.skill)
+      const versions = (skill?.versions as Json[] | undefined) ?? []
+      const status =
+        versions.find((entry) => entry.version === item.version)?.status ??
+        (skill?.current_version === item.version ? skill.status : undefined)
+      if (status !== 'unblocked')
+        return { status: 409, body: problem('blocked-skill', 409, { skill: item.skill }) }
+      const current = Number(skill?.current_version ?? item.version)
+      pinned.push({
+        skill: item.skill,
+        version: item.version,
+        available_version: current > item.version ? current : null,
+      })
+    }
+    const previous = agent.configuration as Json
+    const configuration = {
+      ...previous,
+      version: Number(previous.version) + 1,
+      tools: input.tools ?? previous.tools,
+      adjustment_instructions: input.adjustment_instructions,
+      skills: pinned,
+      created_at: '2026-11-22T10:20:00-03:00',
+      created_by: { id: this.user.id, name: this.user.name },
+    }
+    agent.configuration = configuration
+    state.agentEtags[agentId] = (state.agentEtags[agentId] ?? 1) + 1
+    return { status: 200, body: configuration, headers: { ETag: etag() } }
   }
 
   /**
