@@ -16,4 +16,11 @@ func (a *api) register(router *Router) {
 		router.Handle(fasthttp.MethodPut, APIPrefix+"/providers/{provider}/key", auth(a.saveProviderKey))
 		router.Handle(fasthttp.MethodDelete, APIPrefix+"/providers/{provider}/key", auth(a.removeProviderKey))
 	}
+	if a.deps.Pricing != nil {
+		router.Handle(fasthttp.MethodGet, APIPrefix+"/models", auth(a.listModels))
+		router.Handle(fasthttp.MethodPut, APIPrefix+"/providers/{provider}/models/{model}", auth(a.recordModel))
+		router.Handle(fasthttp.MethodGet, APIPrefix+"/providers/{provider}/models/{model}/prices", auth(a.listModelPrices))
+		router.Handle(fasthttp.MethodPost, APIPrefix+"/providers/{provider}/models/{model}/prices", auth(a.recordModelPrice))
+		router.Handle(fasthttp.MethodPatch, APIPrefix+"/providers/{provider}/models/{model}/prices/{effectivePeriodId}", auth(a.correctModelPrice))
+	}
 }

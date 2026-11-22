@@ -30,6 +30,7 @@ type Dependencies struct {
 	AttachmentLimitBytes int
 
 	Providers ProviderUseCases
+	Pricing   PricingUseCases
 }
 
 // ServerSettings configures the fasthttp server.

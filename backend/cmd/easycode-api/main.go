@@ -14,6 +14,7 @@ import (
 
 	apphealth "easycode/internal/application/health"
 	"easycode/internal/application/idempotency"
+	apppricing "easycode/internal/application/pricing"
 	"easycode/internal/application/providerkey"
 	appsession "easycode/internal/application/session"
 	"easycode/internal/infrastructure/config"
@@ -150,6 +151,7 @@ func productDependencies(cfg config.Config, pool *pgxpool.Pool, logger *slog.Log
 		Idempotency:          idempotency.NewGuard(tx, postgres.NewIdempotencyKeys(pool)),
 		PublicOrigin:         cfg.Identity.PublicOrigin,
 		AttachmentLimitBytes: cfg.Providers.AttachmentLimitBytes,
+		Pricing:              apppricing.NewService(tx, postgres.NewCatalog(pool), trail),
 	}
 	if cfg.Providers.SealingPublicKeyFile == "" {
 		logger.Warn("provider key routes disabled: no sealing public key", slog.String("variable", config.EnvSealingPublicKey))
