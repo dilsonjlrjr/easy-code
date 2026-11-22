@@ -27,6 +27,12 @@ export const routes: RouteRecordRaw[] = [
     meta: { titleKey: 'pages.wave.title', layout: 'shell' },
   },
   {
+    path: '/projects/:projectId/gates/:gateId/rounds/:round(\\d+)?',
+    name: ROUTE_NAMES.gate,
+    component: () => import('@/features/gates/pages/GatePage.vue'),
+    meta: { titleKey: 'pages.gate.title', layout: 'shell' },
+  },
+  {
     path: '/projects/:projectId/artifacts/:artifactId',
     name: ROUTE_NAMES.artifact,
     component: () => import('@/features/artifacts/pages/ArtifactPage.vue'),
@@ -60,6 +66,18 @@ export const routes: RouteRecordRaw[] = [
         name: ROUTE_NAMES.projectConfiguration,
         component: () => import('@/features/projects/components/ProjectConfigurationTab.vue'),
         meta: { titleKey: 'pages.project.configuration', layout: 'shell' },
+      },
+      {
+        path: 'members',
+        name: ROUTE_NAMES.projectMembers,
+        component: () => import('@/features/members/components/ProjectMembersTab.vue'),
+        meta: { titleKey: 'pages.project.members', layout: 'shell' },
+      },
+      {
+        path: 'stages/:stageId',
+        name: ROUTE_NAMES.stage,
+        component: () => import('@/features/projects/components/StageDetail.vue'),
+        meta: { titleKey: 'pages.stage.title', layout: 'shell' },
       },
     ],
   },
