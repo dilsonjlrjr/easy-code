@@ -76,6 +76,28 @@ function waitingDependencies(stage: StageSummary): string {
           </h3>
           <p class="text-body-2 mb-2">{{ $t(`agents.${stage.agent}`) }}</p>
           <StateLabel machine="stage" :state="stageState(stage)" />
+          <!-- US-34 / ESP-06 3: the finding that reopened it and the reevaluation mark. -->
+          <p
+            v-if="stage.state === 'reopened' && stage.reopened_by_finding"
+            class="text-body-2 mt-2"
+          >
+            {{ $t('projects.stage.reopenedBy') }}
+            <router-link
+              :to="{
+                name: ROUTE_NAMES.finding,
+                params: {
+                  projectId: store.project?.id ?? '',
+                  findingId: stage.reopened_by_finding,
+                },
+              }"
+              class="monospace"
+            >
+              {{ stage.reopened_by_finding }}
+            </router-link>
+          </p>
+          <p v-if="stage.reevaluation_pending" class="text-body-2 mt-2">
+            {{ $t('projects.stage.reevaluationPending') }}
+          </p>
           <p v-if="parallelText(stage)" class="text-body-2 mt-2">
             {{ $t('projects.workflow.parallelWith', { stages: parallelText(stage) }) }}
           </p>

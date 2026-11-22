@@ -39,6 +39,12 @@ export const routes: RouteRecordRaw[] = [
     meta: { titleKey: 'pages.artifact.title', layout: 'shell' },
   },
   {
+    path: '/projects/:projectId/findings/:findingId',
+    name: ROUTE_NAMES.finding,
+    component: () => import('@/features/findings/pages/FindingPage.vue'),
+    meta: { titleKey: 'pages.finding.title', layout: 'shell' },
+  },
+  {
     path: '/projects/:projectId/agents/:agent?',
     name: ROUTE_NAMES.projectAgents,
     component: () => import('@/features/agents/pages/ProjectAgentsPage.vue'),
@@ -78,6 +84,12 @@ export const routes: RouteRecordRaw[] = [
         name: ROUTE_NAMES.projectMembers,
         component: () => import('@/features/members/components/ProjectMembersTab.vue'),
         meta: { titleKey: 'pages.project.members', layout: 'shell' },
+      },
+      {
+        path: 'findings',
+        name: ROUTE_NAMES.projectFindings,
+        component: () => import('@/features/findings/components/ProjectFindingsTab.vue'),
+        meta: { titleKey: 'pages.project.findings', layout: 'shell' },
       },
       {
         path: 'stages/:stageId',

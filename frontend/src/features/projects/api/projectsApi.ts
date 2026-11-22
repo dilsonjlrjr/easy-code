@@ -19,6 +19,7 @@ import type {
   WaveState,
 } from '@/shared/api/contract'
 import type { ArtifactSummary } from '@/features/artifacts/api/artifactsApi'
+import type { FindingSummary } from '@/features/findings/api/findingsApi'
 import type { HttpClient } from '@/shared/api/httpClient'
 import { idempotencyHeaders } from '@/shared/api/idempotencyKey'
 
@@ -29,6 +30,8 @@ export interface ProjectSummary {
   active_waves?: Array<{ wave: string; agent: AgentId; state: WaveState }>
   gates_awaiting: number
   open_questions: number
+  /** Open findings by severity (ESP-30 2, PL-72). */
+  open_findings?: Partial<Record<'critical' | 'high' | 'medium' | 'low', number>>
   accumulated_cost: Money
   stop_limit?: Money | null
 }
@@ -140,6 +143,13 @@ export interface StageSummary {
   gate?: string | null
   current_round?: number | null
   gate_state?: GateState | null
+  /** Approved stage marked for a reevaluation wave after a reopening (US-34 CA-2). */
+  reevaluation_pending?: boolean
+  /**
+   * The finding that reopened the stage (US-34, ESP-06 3, ESP-08 6). Not in openapi yet: reported
+   * as a contract gap; the `stage.reopened` event already carries it as `finding`.
+   */
+  reopened_by_finding?: string | null
   active_waves?: number
   cost?: Money
 }
@@ -167,16 +177,7 @@ export interface WaveSummary {
   cost_total?: Money
 }
 
-/** openapi `FindingSummary` (the fields the stage view shows). */
-export interface FindingSummary {
-  id: string
-  title: string
-  severity: string
-  category: string
-  status: string
-  destination_stage: StageId
-  blocking: boolean
-}
+export type { FindingSummary }
 
 /** openapi `Stage`: agent, waves (rework included), artifacts, time, tokens, cost, findings, approval (US-49 CA-2). */
 export interface Stage extends StageSummary {

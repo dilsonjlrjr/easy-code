@@ -45,6 +45,22 @@ const showsTasks = computed(() => ['architecture', 'implementation'].includes(st
 const isImplementation = computed(() => stageId.value === 'implementation')
 /** US-20 CA-3: Data Modeling and Design run in parallel after Architecture (ESP-09, ESP-10). */
 const parallel = computed(() => parallelStages(store.workflow?.stages ?? [], stageId.value))
+/** ESP-16 3.2 / ESP-12 ER-12-3: critical or high findings of this stage that block its gate. */
+const blockingFindings = computed(
+  () =>
+    stage.value?.findings?.filter(
+      (finding) => finding.blocking && finding.origin_stage === stageId.value,
+    ) ?? [],
+)
+/** US-34 CA-1: blocked because a stage it depends on was reopened by a finding. */
+const blockedByReopening = computed(
+  () =>
+    stage.value?.state === 'blocked' &&
+    (store.workflow?.stages ?? []).some(
+      (item) => item.state === 'reopened' && stage.value?.depends_on.includes(item.id),
+    ),
+)
+const isApprover = computed(() => store.project?.my_roles.includes('approver') ?? false)
 
 function siblingName(id: string): string {
   const key = `stages.${id}`
@@ -75,6 +91,14 @@ watch([stageId, () => store.revision], () => void loader.run(), { immediate: tru
     <template v-else-if="stage">
       <div class="d-flex flex-wrap align-center ga-3 mb-4">
         <StateLabel machine="stage" :state="stage.state ?? 'not_started'" />
+        <!-- ER-06-20: derived marks stay apart from the state label. -->
+        <span
+          v-if="stage.reevaluation_pending"
+          class="text-body-2"
+          data-testid="stage-reevaluation"
+        >
+          {{ $t('projects.stage.reevaluationPending') }}
+        </span>
         <span class="text-body-2">{{ $t(`agents.${stage.agent}`) }}</span>
         <!-- ESP-09/ESP-10: the agent skills and configuration live in "Agentes e skills" (PL-31). -->
         <router-link
@@ -96,6 +120,55 @@ watch([stageId, () => store.revision], () => void loader.run(), { immediate: tru
           {{ $t('projects.stage.openGate', { round: stage.current_round }) }}
         </router-link>
       </div>
+
+      <!-- US-34 / ESP-08 6: the finding that reopened the stage, in link. -->
+      <p
+        v-if="stage.state === 'reopened' && stage.reopened_by_finding"
+        class="text-body-2 mb-2"
+        data-testid="stage-reopened-by"
+      >
+        {{ $t('projects.stage.reopenedBy') }}
+        <router-link
+          :to="{
+            name: ROUTE_NAMES.finding,
+            params: { projectId, findingId: stage.reopened_by_finding },
+          }"
+          class="monospace"
+        >
+          {{ stage.reopened_by_finding }}
+        </router-link>
+      </p>
+      <p v-if="blockedByReopening" class="text-body-2 mb-2" data-testid="stage-blocked-reopening">
+        {{ $t('projects.stage.blockedByReopening') }}
+      </p>
+      <p v-if="stage.reevaluation_pending" class="text-body-2 mb-2">
+        {{ $t('projects.stage.reevaluationHelp') }}
+      </p>
+      <v-alert
+        v-if="blockingFindings.length > 0"
+        type="error"
+        variant="tonal"
+        class="mb-4"
+        data-testid="stage-blocking-findings"
+      >
+        <p>{{ $t('projects.stage.blockingFindingsNotice') }}</p>
+        <ul class="plain-list">
+          <li v-for="finding in blockingFindings" :key="finding.id">
+            <span class="monospace">{{ finding.id }}</span> ·
+            {{ $t(`findings.severity.${finding.severity}`) }} ·
+            {{ $t(`states.finding.${finding.status}`) }} ·
+            <router-link
+              :to="{
+                name: ROUTE_NAMES.finding,
+                params: { projectId, findingId: finding.id },
+                hash: finding.status === 'escalated' && isApprover ? '#decision' : '',
+              }"
+            >
+              {{ $t('projects.stage.decideFinding', { id: finding.id }) }}
+            </router-link>
+          </li>
+        </ul>
+      </v-alert>
 
       <p v-if="parallel.length > 0" class="text-body-2 mb-4" data-testid="stage-parallel">
         {{ $t('projects.stage.parallelWith') }}
@@ -202,11 +275,23 @@ watch([stageId, () => store.revision], () => void loader.run(), { immediate: tru
       </p>
       <ul v-else class="plain-list" data-testid="stage-findings">
         <li v-for="finding in stage.findings" :key="finding.id" class="text-body-2 mb-1">
-          <span class="monospace">{{ finding.id }}</span> · {{ finding.title }} ·
-          {{ finding.severity }} · {{ finding.status }}
+          <router-link
+            :to="{ name: ROUTE_NAMES.finding, params: { projectId, findingId: finding.id } }"
+            class="monospace"
+          >
+            {{ finding.id }}
+          </router-link>
+          · {{ finding.title }} · {{ $t(`findings.severity.${finding.severity}`) }} ·
+          {{ $t(`states.finding.${finding.status}`) }}
           <template v-if="finding.blocking"> · {{ $t('projects.stage.blocking') }}</template>
         </li>
       </ul>
+      <router-link
+        :to="{ name: ROUTE_NAMES.projectFindings, params: { projectId } }"
+        class="d-inline-block text-body-2 mt-2"
+      >
+        {{ $t('projects.stage.allFindings') }}
+      </router-link>
     </template>
   </section>
 </template>

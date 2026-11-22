@@ -21,6 +21,15 @@ export const DESCRIBED_EVENTS = new Set([
   'stage.approved',
   'stage.returned',
   'stage.blocked',
+  'stage.reopened',
+  'finding.open',
+  'finding.rework_started',
+  'finding.revalidation_started',
+  'finding.closed',
+  'finding.escalated',
+  'finding.scope_change_decided',
+  'finding.accepted',
+  'finding.discarded',
   'gate.opened',
   'gate.awaiting_approval',
   'gate.approved',
@@ -68,6 +77,10 @@ export function describeEvent(t: Translate, event: CloudEvent): string {
     model: text(data.model),
     attempt: text(data.attempt),
     task: text(data.task),
+    // `finding.*` events name the finding in the subject (`findings/ACH-07`); `stage.reopened` in data.
+    finding: text(
+      data.finding ?? (event.subject.startsWith('findings/') ? event.subject.slice(9) : ''),
+    ),
     // `wave.task_failed`: build, tests or lint (catalog labels, never free text).
     cause:
       typeof data.cause === 'string' && ['build', 'tests', 'lint'].includes(data.cause)

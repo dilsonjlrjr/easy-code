@@ -16,7 +16,7 @@ import {
   gateRoundOf,
   noticesUrl,
   oldestFirst,
-  PHASE_ONE_TYPES,
+  SHOWN_TYPES,
   pendingItemsApi,
   waveOfQuestion,
   type PendingItem,
@@ -29,7 +29,7 @@ import {
  * and go live through `watchNotices`.
  */
 type Filter = 'all' | PendingItemType
-const FILTERS: readonly Filter[] = ['all', ...PHASE_ONE_TYPES]
+const FILTERS: readonly Filter[] = ['all', ...SHOWN_TYPES]
 const RELOAD_DELAY_MS = 300
 const RELEVANT_GROUPS = ['gate.', 'wave.question_', 'finding.', 'project.budget_']
 const TYPE_ICONS: Record<PendingItemType, string> = {
@@ -48,7 +48,7 @@ const { message, announce } = useAnnouncer()
 
 const initialType = route.query.type
 const filter = ref<Filter>(
-  typeof initialType === 'string' && (PHASE_ONE_TYPES as string[]).includes(initialType)
+  typeof initialType === 'string' && (SHOWN_TYPES as string[]).includes(initialType)
     ? (initialType as PendingItemType)
     : 'all',
 )
@@ -205,6 +205,13 @@ function destination(item: PendingItem): RouteLocationRaw {
     const waveId = waveOfQuestion(item.target.id)
     if (waveId) return { name: ROUTE_NAMES.wave, params: { projectId, waveId } }
   }
+  // US-32 CA-4: the escalated finding opens on its decision (ESP-20).
+  if (item.target.type === 'finding')
+    return {
+      name: ROUTE_NAMES.finding,
+      params: { projectId, findingId: item.target.id },
+      hash: '#decision',
+    }
   if (item.type === 'budget')
     return { name: ROUTE_NAMES.projectConfiguration, params: { projectId } }
   return { name: ROUTE_NAMES.project, params: { projectId } }

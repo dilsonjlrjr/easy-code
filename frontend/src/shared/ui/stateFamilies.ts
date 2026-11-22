@@ -9,7 +9,8 @@ import {
 /** ESP-00 3.2: each state belongs to one family, which fixes its color; the text is always shown. */
 export type StateFamily = 'working' | 'waiting-person' | 'approved' | 'problem' | 'stopped'
 
-export type StateMachine = 'project' | 'stage' | 'wave' | 'artifact' | 'gate' | 'command'
+export type StateMachine =
+  'project' | 'stage' | 'wave' | 'artifact' | 'gate' | 'command' | 'finding'
 
 const FAMILIES: Record<StateMachine, Record<string, StateFamily>> = {
   project: {
@@ -57,6 +58,16 @@ const FAMILIES: Record<StateMachine, Record<string, StateFamily>> = {
     pending: 'working',
     applied: 'approved',
     refused: 'problem',
+  },
+  finding: {
+    open: 'problem',
+    in_rework: 'working',
+    revalidating: 'working',
+    escalated: 'waiting-person',
+    awaiting_scope: 'waiting-person',
+    accepted: 'approved',
+    closed: 'approved',
+    discarded: 'stopped',
   },
 }
 

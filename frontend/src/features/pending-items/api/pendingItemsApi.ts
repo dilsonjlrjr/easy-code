@@ -2,10 +2,11 @@ import { apiClient } from '@/shared/api/apiClient'
 import type { AgentId, Page, StageId } from '@/shared/api/contract'
 import { joinUrl, type HttpClient } from '@/shared/api/httpClient'
 
-/** openapi `PendingItemType`. Phase 1 shows only gates and questions (US-48 RN-1, CA-19-10). */
+/** openapi `PendingItemType`. Phase 1 showed gates and questions (US-48 RN-1, CA-19-10). */
 export type PendingItemType = 'gate' | 'question' | 'finding_escalated' | 'budget'
 
-export const PHASE_ONE_TYPES: readonly PendingItemType[] = ['gate', 'question']
+/** Types with a filter: escalated findings join in MARCO-5 (US-32 CA-4); budget comes with US-39. */
+export const SHOWN_TYPES: readonly PendingItemType[] = ['gate', 'question', 'finding_escalated']
 
 export interface PendingItem {
   type: PendingItemType

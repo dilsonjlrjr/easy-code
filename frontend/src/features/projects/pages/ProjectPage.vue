@@ -22,7 +22,7 @@ import { currentProjectApi, useCurrentProjectStore } from '../stores/currentProj
 import { useProjectNoticesStore } from '../stores/projectNotices'
 
 const REFRESH_DELAY_MS = 250
-const REFRESHING_GROUPS = ['project.', 'stage.', 'wave.', 'gate.']
+const REFRESHING_GROUPS = ['project.', 'stage.', 'wave.', 'gate.', 'finding.']
 
 const { t } = useI18n()
 const route = useRoute()
@@ -61,10 +61,18 @@ const openQuestionWave = computed(() =>
   project.value?.summary?.active_waves?.find((wave) => wave.state === 'awaiting_user'),
 )
 
+/** ESP-30 2: the findings tab carries the count of open findings (`summary.open_findings`, PL-72). */
+const findingsTabLabel = computed(() => {
+  const open = project.value?.summary?.open_findings
+  const total = open ? Object.values(open).reduce((sum, value) => sum + value, 0) : 0
+  return total > 0 ? t('pages.project.findingsCount', { n: total }) : t('pages.project.findings')
+})
+
 const tabs = computed(() => [
   { name: ROUTE_NAMES.project, label: t('pages.project.workflow') },
   { name: ROUTE_NAMES.projectWaves, label: t('pages.project.waves') },
   { name: ROUTE_NAMES.projectArtifacts, label: t('pages.project.artifacts') },
+  { name: ROUTE_NAMES.projectFindings, label: findingsTabLabel.value },
   { name: ROUTE_NAMES.projectConfiguration, label: t('pages.project.configuration') },
   { name: ROUTE_NAMES.projectMembers, label: t('pages.project.members') },
 ])

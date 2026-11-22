@@ -153,3 +153,94 @@ test('US-02 CA-8 / CA-12-12: a self-assigned approver within 24 h is refused and
   )
   await expect(page.getByTestId('gate-waiting')).toContainText('Aguardando você')
 })
+
+test('US-31 CA-1 / CA-2 / CA-12-8: a failed blocking check rejects the round without a human and shows why', async ({
+  page,
+}) => {
+  const api = apiWithGate()
+  const state = api.project(PROJECT_ID)
+  state.gates['gate.requirements'] = [
+    gateRound('gate.requirements', 'requirements', 1, {
+      state: 'rejected',
+      available_actions: [],
+      checks: [
+        {
+          check: 'schema.valid',
+          name: 'Artefatos válidos no esquema',
+          type: 'automatic',
+          failure_severity: 'blocks',
+          status: 'failed',
+          evidence: [{ reference: 'US-04', message: 'campo criterios_aceite ausente' }],
+        },
+        {
+          check: 'us.size',
+          name: 'Histórias de tamanho adequado',
+          type: 'automatic',
+          failure_severity: 'alert',
+          status: 'failed',
+          evidence: [{ reference: 'US-02', message: 'história grande' }],
+        },
+      ],
+      decision: {
+        result: 'rejected',
+        record: { per: { type: 'orchestrator' }, when: '2026-11-22T09:05:00-03:00', origin: null },
+        failed_checks: ['schema.valid'],
+      },
+    }),
+  ]
+  await api.install(page)
+  await page.goto(GATE_PATH)
+
+  await expect(page.getByTestId('check-schema.valid')).toContainText('falhou (bloqueia)')
+  await expect(page.getByTestId('check-schema.valid')).toContainText(
+    'campo criterios_aceite ausente',
+  )
+  await expect(page.getByTestId('check-us.size')).toContainText('alerta')
+  await expect(page.getByTestId('check-counts')).toContainText(
+    'Passaram: 0. Alertas: 1. Bloqueantes que falharam: 1.',
+  )
+  await expect(page.getByTestId('gate-decision')).toContainText('Reprovado')
+  await expect(page.getByTestId('gate-decision')).toContainText('Orquestrador')
+  await expect(page.getByTestId('decision-failed-checks')).toHaveText(
+    'Artefatos válidos no esquema',
+  )
+  await expect(page.getByRole('button', { name: 'Aprovar' })).toHaveCount(0)
+  await expectNoSeriousA11yViolations(page)
+})
+
+test('US-31 CA-3 / CA-12-9: a critical or high finding opened while waiting makes the round evaluate and approval unavailable', async ({
+  page,
+}) => {
+  const api = apiWithGate()
+  const state = api.project(PROJECT_ID)
+  state.gates['gate.requirements'] = [
+    gateRound('gate.requirements', 'requirements', 1, {
+      state: 'evaluating',
+      available_actions: [],
+      blocking_findings: [
+        {
+          id: 'ACH-04',
+          title: 'Critério ambíguo',
+          severity: 'high',
+          category: 'requisito_ambiguo',
+          status: 'open',
+          origin_stage: 'requirements',
+          destination_stage: 'requirements',
+          author: 'qa-agent',
+          blocking: true,
+        },
+      ],
+    }),
+  ]
+  await api.install(page)
+  await page.goto(GATE_PATH)
+
+  await expect(page.getByTestId('gate-evaluating')).toContainText('Avaliando checagens')
+  const blocked = page.getByTestId('gate-blocked')
+  await expect(blocked).toContainText('A aprovação está indisponível.')
+  await expect(blocked).toContainText('Não existe aprovar mesmo assim')
+  await expect(page.getByRole('button', { name: 'Aprovar' })).toHaveCount(0)
+  await expectNoSeriousA11yViolations(page)
+  await blocked.getByRole('link', { name: 'ACH-04' }).click()
+  await expect(page).toHaveURL(new RegExp(`/projects/${PROJECT_ID}/findings/ACH-04$`))
+})

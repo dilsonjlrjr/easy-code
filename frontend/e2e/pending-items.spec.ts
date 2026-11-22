@@ -56,7 +56,12 @@ test('US-48 CA-1 / CA-19-10 / CA-19-13: items show type, project, stage and age,
   await page.goto('/pending')
 
   const filters = page.getByRole('group', { name: 'Filtrar por tipo' }).getByRole('button')
-  await expect(filters).toHaveText(['Todas (2)', 'Gates (1)', 'Perguntas (1)'])
+  await expect(filters).toHaveText([
+    'Todas (2)',
+    'Gates (1)',
+    'Perguntas (1)',
+    'Achados escalados (0)',
+  ])
   await expect(filters.first()).toHaveAttribute('aria-pressed', 'true')
 
   const items = page.getByTestId('pending-list').locator(':scope > li')

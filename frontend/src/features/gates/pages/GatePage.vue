@@ -103,9 +103,34 @@ const breadcrumbs = computed(() => [
   { title: t('gates.heading', { stage: stageName.value }) },
 ])
 const notFound = computed(() => isApiError(loader.error.value) && loader.error.value.status === 404)
-const separationOfDuties = computed(() =>
-  hasProblemSlug(decisionFailure.value, 'separation-of-duties'),
+/** ER-12-8 / ER-12-9: the refusal says which separation rule applied (openapi `Problem.reason`). */
+const separationOfDuties = computed(() => {
+  if (!hasProblemSlug(decisionFailure.value, 'separation-of-duties')) return undefined
+  const reason = decisionFailure.value.problem?.reason
+  return reason === 'risk_acceptance_same_cycle' || reason === 'approver_grace_period'
+    ? `gates.separation.${reason}`
+    : 'gates.separation.generic'
+})
+/** US-31 CA-2 / ER-12-1: the failed blocking checks and the blocking findings, by name. */
+const failedBlockingChecks = computed(
+  () =>
+    round.value?.checks.filter(
+      (check) =>
+        check.failure_severity === 'blocks' &&
+        (check.status === 'failed' || check.status === 'error'),
+    ) ?? [],
 )
+const blockingFindings = computed(() => round.value?.blocking_findings ?? [])
+/** Why approving is not possible now (no "approve anyway", US-31 RN-1). */
+const approvalBlocked = computed(() => {
+  const state = round.value?.state
+  if (state !== 'awaiting_human' && state !== 'evaluating') return false
+  return failedBlockingChecks.value.length > 0 || blockingFindings.value.length > 0
+})
+const failedCheckNames = computed(() => {
+  const names = new Map(round.value?.checks.map((check) => [check.check, check.name]) ?? [])
+  return (round.value?.decision?.failed_checks ?? []).map((id) => names.get(id) ?? id)
+})
 
 async function loadRound(): Promise<void> {
   const rounds = await gatesApi.listRounds(projectId.value, gateId.value)
@@ -309,7 +334,14 @@ function isWaveReference(reference: string): boolean {
   return WAVE_REFERENCE.test(reference)
 }
 
+/** ESP-15 3.2: a failed alert reads "alert", a failed blocking check "failed (blocks)". */
 function checkStatus(check: CheckResult): string {
+  if (check.status === 'failed')
+    return t(
+      check.failure_severity === 'alert'
+        ? 'gates.checkStatus.alert'
+        : 'gates.checkStatus.failedBlocks',
+    )
   return t(`gates.checkStatus.${check.status}`)
 }
 </script>
@@ -375,6 +407,44 @@ function checkStatus(check: CheckResult): string {
           {{ $t('gates.reauthenticating') }}
         </v-alert>
         <v-alert
+          v-if="round.state === 'evaluating'"
+          type="info"
+          variant="tonal"
+          class="my-4"
+          data-testid="gate-evaluating"
+        >
+          {{ $t('gates.evaluating') }}
+        </v-alert>
+        <!-- US-31 CA-2, CA-3 / ER-12-1: why approval is unavailable, by name and in text. -->
+        <v-alert
+          v-if="approvalBlocked"
+          type="error"
+          variant="tonal"
+          class="my-4"
+          data-testid="gate-blocked"
+        >
+          <p class="font-weight-medium">{{ $t('gates.blocked.title') }}</p>
+          <p v-if="failedBlockingChecks.length > 0" class="mt-1">
+            {{
+              $t('gates.blocked.checks', {
+                checks: failedBlockingChecks.map((check) => check.name).join(', '),
+              })
+            }}
+          </p>
+          <p v-if="blockingFindings.length > 0" class="mt-1">
+            {{ $t('gates.blocked.findings') }}
+            <template v-for="(finding, index) in blockingFindings" :key="finding.id">
+              <router-link
+                :to="{ name: ROUTE_NAMES.finding, params: { projectId, findingId: finding.id } }"
+                class="monospace"
+                >{{ finding.id }}</router-link><span v-if="index < blockingFindings.length - 1"
+                >,
+              </span>
+            </template>
+          </p>
+          <p class="mt-1">{{ $t('gates.blocked.noOverride') }}</p>
+        </v-alert>
+        <v-alert
           v-if="separationOfDuties"
           type="error"
           variant="tonal"
@@ -382,7 +452,7 @@ function checkStatus(check: CheckResult): string {
           class="my-4"
           data-testid="decision-failure"
         >
-          {{ $t('gates.separationOfDuties') }}
+          {{ $t(separationOfDuties) }}
         </v-alert>
         <ProblemAlert
           v-else-if="decisionFailure && !approveDialog && !rejectDialog"
@@ -410,9 +480,6 @@ function checkStatus(check: CheckResult): string {
             {{ $t('gates.reject') }}
           </v-btn>
         </div>
-        <p v-else-if="isApprover && awaitingHuman && counts.blocking > 0" class="text-body-2 my-4">
-          {{ $t('gates.blockedByChecks') }}
-        </p>
 
         <section v-if="round.decision" aria-labelledby="decision-heading" class="my-6">
           <h2 id="decision-heading" class="text-h6 mb-2">{{ $t('gates.decision') }}</h2>
@@ -428,6 +495,24 @@ function checkStatus(check: CheckResult): string {
             <template v-if="round.decision.reason">
               <dt>{{ $t('gates.reason') }}</dt>
               <dd class="pre-wrap">{{ round.decision.reason }}</dd>
+            </template>
+            <template v-if="failedCheckNames.length">
+              <dt>{{ $t('gates.failedChecks') }}</dt>
+              <dd data-testid="decision-failed-checks">{{ failedCheckNames.join(', ') }}</dd>
+            </template>
+            <template v-if="round.decision.blocking_findings?.length">
+              <dt>{{ $t('gates.blockingFindings') }}</dt>
+              <dd>
+                <template v-for="(id, index) in round.decision.blocking_findings" :key="id">
+                  <router-link
+                    :to="{ name: ROUTE_NAMES.finding, params: { projectId, findingId: id } }"
+                    class="monospace"
+                    >{{ id }}</router-link><span
+                    v-if="index < round.decision.blocking_findings.length - 1"
+                    >,
+                  </span>
+                </template>
+              </dd>
             </template>
             <template v-if="round.decision.comment">
               <dt>{{ $t('gates.comment') }}</dt>
@@ -536,8 +621,14 @@ function checkStatus(check: CheckResult): string {
               :key="finding.id"
               class="text-body-2 mb-1"
             >
-              <span class="monospace">{{ finding.id }}</span> · {{ finding.title }} ·
-              {{ finding.severity }}
+              <router-link
+                :to="{ name: ROUTE_NAMES.finding, params: { projectId, findingId: finding.id } }"
+                class="monospace"
+              >
+                {{ finding.id }}
+              </router-link>
+              · {{ finding.title }} · {{ $t(`findings.severity.${finding.severity}`) }} ·
+              {{ $t(`states.finding.${finding.status}`) }}
               <template v-if="finding.blocking"> · {{ $t('projects.stage.blocking') }}</template>
             </li>
           </ul>

@@ -69,6 +69,12 @@ export interface ProjectState {
   /** `ProjectAgent` items (US-43); each configuration version bumps the agent ETag. */
   agents: Json[]
   agentEtags: Record<string, number>
+  /** `Finding` items (US-32, US-33, US-34), in the server order (severity, then opening). */
+  findings: Json[]
+  /** `Traceability` by root artifact id (US-28 CA-1). */
+  links: Partial<Record<string, Json>>
+  /** `CoverageMatrix` items of every priority (US-28 CA-2); the query filters them. */
+  coverage: Json[]
 }
 
 export function problem(slug: string, status: number, extra: Json = {}): Json {
@@ -130,6 +136,12 @@ export class FakeApi {
   recentlyAuthenticated = true
   /** The user assigned the approver role to themselves less than 24 h ago (US-02 CA-8). */
   selfAssignedApprover = false
+  /** The user accepted a risk in this cycle: they do not approve gate.release (US-33 RN-2). */
+  acceptedRiskThisCycle = false
+  /** `today` of the fake, the floor of `valid_until` (PL-47). */
+  today = '2026-11-22'
+  /** Page size of `listFindings` (CA-30-9). */
+  findingsPageSize = 50
   attachmentLimit = 1024 * 1024
   providers: ProviderState[] = [
     { id: 'anthropic', name: 'Anthropic', key: { status: 'missing', last_test: null } },
@@ -251,6 +263,9 @@ export class FakeApi {
       streams: [],
       agents: [],
       agentEtags: {},
+      findings: [],
+      links: {},
+      coverage: [],
       ...state,
     }
     this.projects[id] = full
@@ -583,6 +598,20 @@ export class FakeApi {
         headers: { ETag: `"${String(state.etag)}"` },
       }
     }
+    if (third === 'findings')
+      return this.findings(state, method, fourth, fifth, input, headers, url)
+    if (third === 'coverage') {
+      const priorities = url.searchParams.getAll('priority')
+      const wanted = priorities.length ? priorities : ['must']
+      return {
+        status: 200,
+        body: { items: state.coverage.filter((item) => wanted.includes(String(item.priority))) },
+      }
+    }
+    if (third === 'artifacts' && fourth && fifth === 'links') {
+      const graph = state.links[fourth]
+      return graph ? { status: 200, body: graph } : { status: 404, body: problem('not-found', 404) }
+    }
     if (third === 'gates' && fourth && fifth === 'rounds')
       return this.gateRounds(state, method, fourth, sixth, seventh, input, headers)
     if (third === 'agents') return this.agents(state, method, fourth, fifth, input, headers)
@@ -820,7 +849,15 @@ export class FakeApi {
     if (round.state !== 'awaiting_human')
       return { status: 409, body: problem('state-conflict', 409) }
     if (this.selfAssignedApprover)
-      return { status: 409, body: problem('separation-of-duties', 409) }
+      return {
+        status: 409,
+        body: problem('separation-of-duties', 409, { reason: 'approver_grace_period' }),
+      }
+    if (gateId === 'gate.release' && action === 'approval' && this.acceptedRiskThisCycle)
+      return {
+        status: 409,
+        body: problem('separation-of-duties', 409, { reason: 'risk_acceptance_same_cycle' }),
+      }
     const checks = (round.checks as Json[] | undefined) ?? []
     const human = checks.filter((check) => check.type === 'human').map((check) => check.check)
     const record = {
@@ -858,6 +895,156 @@ export class FakeApi {
       (item) => (item.target as Json).id !== `${gateId}/${String(round.round)}`,
     )
     return { status: 200, body: round }
+  }
+
+  /**
+   * listFindings, getFinding and the decisions (US-32, US-33): approver only; risk acceptance, extra
+   * round and scope change need the anti-CSRF token and a recent authentication (ADR-19).
+   */
+  private findings(
+    state: ProjectState,
+    method: string,
+    findingId: string | undefined,
+    action: string | undefined,
+    input: Json,
+    headers: Record<string, string>,
+    url: URL,
+  ): { status: number; body?: unknown } {
+    const SUMMARY = [
+      'id',
+      'title',
+      'severity',
+      'category',
+      'status',
+      'origin_stage',
+      'destination_stage',
+      'author',
+      'blocking',
+      'cycles',
+      'acceptance_expired',
+      'opened_at',
+    ]
+    if (!findingId) {
+      const statuses = url.searchParams.getAll('status')
+      const severities = url.searchParams.getAll('severity')
+      const destination = url.searchParams.get('destination_stage')
+      const filtered = state.findings.filter(
+        (item) =>
+          (!statuses.length || statuses.includes(String(item.status))) &&
+          (!severities.length || severities.includes(String(item.severity))) &&
+          (!destination || item.destination_stage === destination),
+      )
+      const start = Number(url.searchParams.get('cursor') ?? 0)
+      const page = filtered.slice(start, start + this.findingsPageSize)
+      const next = start + this.findingsPageSize
+      return {
+        status: 200,
+        body: {
+          items: page.map((item) =>
+            Object.fromEntries(Object.entries(item).filter(([key]) => SUMMARY.includes(key))),
+          ),
+          next_cursor: next < filtered.length ? String(next) : null,
+        },
+      }
+    }
+    const finding = state.findings.find((item) => item.id === findingId)
+    if (!finding) return { status: 404, body: problem('not-found', 404) }
+    if (method === 'GET') return { status: 200, body: finding }
+    const roles = (state.project.my_roles as string[] | undefined) ?? []
+    if (!roles.includes('approver')) return { status: 403, body: problem('forbidden', 403) }
+    const event: Record<string, string> = {
+      'risk-acceptance': 'accept_risk',
+      'extra-round': 'authorize_new_rework',
+      'scope-change': 'decide_scope_change',
+      discard: 'discard',
+    }
+    const decision = action ? event[action] : undefined
+    if (!decision) return { status: 404, body: problem('not-found', 404) }
+    if (decision !== 'discard') {
+      if (headers['x-csrf-token'] !== 'csrf-dev')
+        return { status: 403, body: problem('invalid-csrf', 403) }
+      if (!this.recentlyAuthenticated)
+        return { status: 401, body: problem('reauthentication-required', 401) }
+    }
+    const actions = (finding.available_actions as string[] | undefined) ?? []
+    if (!actions.includes(decision))
+      return {
+        status: 409,
+        body: problem('state-conflict', 409, { current_state: finding.status }),
+      }
+    const justification = typeof input.justification === 'string' ? input.justification.trim() : ''
+    if (justification.length < 10)
+      return {
+        status: 400,
+        body: problem('validation', 400, {
+          errors: [{ field: 'justification', message: 'required' }],
+        }),
+      }
+    const who = { id: this.user.id, name: this.user.name }
+    const when = '2026-11-22T10:20:00-03:00'
+    const escalations = (finding.escalations as Json[] | undefined) ?? []
+    const lastEscalation = escalations.at(-1)
+    if (decision === 'accept_risk') {
+      const validUntil = typeof input.valid_until === 'string' ? input.valid_until : null
+      if (validUntil && validUntil < this.today)
+        return {
+          status: 400,
+          body: problem('validation', 400, {
+            errors: [{ field: 'valid_until', message: 'before today' }],
+          }),
+        }
+      if (finding.status === 'escalated' && lastEscalation) {
+        Object.assign(lastEscalation, {
+          decision: 'accept_risk',
+          authorized_by: who,
+          decided_at: when,
+          justification,
+        })
+      }
+      finding.status = 'accepted'
+      finding.blocking = false
+      finding.acceptance_expired = false
+      finding.acceptance = { per: who, when, origin: 'web', justification, valid_until: validUntil }
+      finding.available_actions = ['accept_risk']
+      this.acceptedRiskThisCycle = true
+    } else if (decision === 'authorize_new_rework') {
+      if (lastEscalation) {
+        Object.assign(lastEscalation, {
+          decision: 'new_rework',
+          authorized_by: who,
+          decided_at: when,
+          justification,
+        })
+      }
+      const cycles = (finding.cycle_history as Json[] | undefined) ?? []
+      const number = cycles.length + 1
+      const wave = `DEV-${String(10 + number).padStart(2, '0')}`
+      finding.cycle_history = [...cycles, { number, rework_wave: wave, result: null }]
+      finding.cycles = number
+      finding.status = 'in_rework'
+      finding.available_actions = ['accept_risk', 'discard']
+    } else if (decision === 'decide_scope_change') {
+      if (lastEscalation) {
+        Object.assign(lastEscalation, {
+          decision: 'scope_change',
+          authorized_by: who,
+          decided_at: when,
+          justification,
+          modified_by: input.modified_by,
+          starting_point_artifacts: input.starting_point_artifacts,
+        })
+      }
+      finding.status = 'awaiting_scope'
+      finding.available_actions = []
+    } else {
+      finding.status = 'discarded'
+      finding.blocking = false
+      finding.discard_reason =
+        input.reason === 'duplicate' ? `duplicate of ${String(input.duplicate_of)}` : 'no_evidence'
+      finding.available_actions = []
+    }
+    this.pendingItems = this.pendingItems.filter((item) => (item.target as Json).id !== findingId)
+    return { status: 200, body: finding }
   }
 
   /** US-54 CA-3 / PL-13: the whole list becomes the next version; new items get the next RESTR-NN. */
@@ -1131,6 +1318,35 @@ export function gateRound(gate: string, stage: string, round: number, overrides:
     blocking_findings: [],
     non_blocking_findings: [],
     available_actions: ['approve', 'reject'],
+    ...overrides,
+  }
+}
+
+/** A finding (`Finding`) of the Security agent, open and blocking (ESP-20). */
+export function finding(id: string, overrides: Json = {}): Json {
+  return {
+    id,
+    title: 'Senha em texto puro no log de autenticação',
+    severity: 'high',
+    category: 'vulnerabilidade',
+    status: 'open',
+    origin_stage: 'security',
+    destination_stage: 'implementation',
+    author: 'security-agent',
+    blocking: true,
+    cycles: 0,
+    acceptance_expired: false,
+    opened_at: '2026-11-22T09:30:00-03:00',
+    affected_artifacts: [{ artifact: 'T-03', version: 2 }],
+    origin_wave: 'SEG-01',
+    cycle_history: [],
+    escalations: [],
+    acceptance: null,
+    resolution: null,
+    modified_artifacts: [],
+    discard_reason: null,
+    artifact: id,
+    available_actions: ['accept_risk', 'discard'],
     ...overrides,
   }
 }
