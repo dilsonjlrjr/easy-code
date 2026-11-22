@@ -24,6 +24,7 @@ type Summary struct {
 	WaveCode  string
 	Path      string
 	UpdatedAt time.Time
+	Situation string // T only: situacao of the current header (tracking field)
 }
 
 // View is one version with header and body (Artifact).

@@ -34,8 +34,9 @@ func (a *api) getRepository(rc *fasthttp.RequestCtx, principal identity.Principa
 	if err != nil {
 		return err
 	}
-	body := map[string]any{"clone_url": view.CloneURL, "main_branch": view.MainBranch, "last_commit": nil, "marks": []any{}}
+	body := map[string]any{"status": "not_created", "clone_url": view.CloneURL, "main_branch": view.MainBranch, "last_commit": nil, "marks": []any{}}
 	if c := view.LastCommit; c != nil {
+		body["status"] = "available"
 		commit := map[string]any{"sha": c.SHA, "when": c.When.UTC().Format(time.RFC3339)}
 		if c.Wave != "" {
 			commit["wave"] = c.Wave

@@ -96,7 +96,7 @@ func (a Artifacts) List(ctx context.Context, projectID string, filter appartifac
 		afterType, afterCode = splitPair(raw)
 	}
 	rows, err := conn(ctx, a.pool).Query(WithOperation(ctx, "artifacts.list"), `
-SELECT `+summaryColumns+`, ar.updated_at
+SELECT `+summaryColumns+`, ar.updated_at, CASE WHEN ar.type = 'T' THEN coalesce(v.header->>'situacao', '') ELSE '' END
   FROM easycode.artifacts ar JOIN easycode.projects pr ON pr.id = ar.project_id
   JOIN easycode.artifact_versions v ON v.artifact_id = ar.id AND v.version = ar.current_version
  WHERE pr.public_id = $1::uuid
@@ -112,7 +112,7 @@ SELECT `+summaryColumns+`, ar.updated_at
 	}
 	items, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (appartifact.Summary, error) {
 		var s appartifact.Summary
-		err := row.Scan(&s.Code, &s.Type, &s.Title, &s.State, &s.Version, &s.Stage, &s.Author, &s.WaveCode, &s.Path, &s.UpdatedAt)
+		err := row.Scan(&s.Code, &s.Type, &s.Title, &s.State, &s.Version, &s.Stage, &s.Author, &s.WaveCode, &s.Path, &s.UpdatedAt, &s.Situation)
 		return s, err
 	})
 	if err != nil {

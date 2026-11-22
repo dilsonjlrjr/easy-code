@@ -389,6 +389,9 @@ SELECT organization_id, 'anthropic', $1, $2, '0000', id FROM easycode.users WHER
 	}
 
 	// Requisitos: the wave commits its artifacts to the project repository (D-17).
+	if empty := live.json(t, "GET", base+"/repository", "", nil, 200); empty["status"] != "not_created" || empty["last_commit"] != nil {
+		t.Fatalf("getRepository before the first commit: %v", empty)
+	}
 	req := work.runWave(t, live, base, "REQ-01", "completed")
 	if req["git_commit"] == nil {
 		t.Fatalf("REQ-01 commit: %v", req)
@@ -441,6 +444,10 @@ SELECT organization_id, 'anthropic', $1, $2, '0000', id FROM easycode.users WHER
 	live.approve(t, base, "gate.architecture", 1)
 	if _, err := work.progress.Reconcile(ctx); err != nil {
 		t.Fatal(err)
+	}
+	tasks := live.json(t, "GET", base+"/artifacts?type=T", "", nil, 200)["items"].([]any)
+	if len(tasks) != 1 || tasks[0].(map[string]any)["situation"] != "planejada" {
+		t.Fatalf("ArtifactSummary.situation of the T: %v", tasks)
 	}
 	waves := live.json(t, "GET", base+"/waves?stage=implementation", "", nil, 200)["items"].([]any)
 	if len(waves) != 1 || waves[0].(map[string]any)["task"] != "T-01" {
@@ -502,7 +509,7 @@ SELECT organization_id, 'anthropic', $1, $2, '0000', id FROM easycode.users WHER
 	// US-42: getRepository and the clone with the session credential.
 	repository := live.json(t, "GET", base+"/repository", "", nil, 200)
 	last, _ := repository["last_commit"].(map[string]any)
-	if repository["clone_url"] != "https://easycode.test/git/"+projectID+".git" || repository["main_branch"] != "main" || last["sha"] != sha || last["wave"] != "DEV-01" {
+	if repository["status"] != "available" || repository["clone_url"] != "https://easycode.test/git/"+projectID+".git" || repository["main_branch"] != "main" || last["sha"] != sha || last["wave"] != "DEV-01" {
 		t.Fatalf("getRepository: %v", repository)
 	}
 	listener, err := net.Listen("tcp", "127.0.0.1:0")

@@ -36,6 +36,7 @@ type artifactSummaryJSON struct {
 	Wave      string             `json:"wave"`
 	Path      string             `json:"path"`
 	UpdatedAt time.Time          `json:"updated_at"`
+	Situation *string            `json:"situation"`
 }
 
 type artifactJSON struct {
@@ -73,7 +74,7 @@ func authorOf(author string) artifactAuthorJSON {
 
 func artifactSummaryOf(s appartifact.Summary) artifactSummaryJSON {
 	return artifactSummaryJSON{ID: s.Code, Type: s.Type, Title: s.Title, State: s.State, Version: s.Version, Stage: optional(s.Stage),
-		Author: authorOf(s.Author), Wave: s.WaveCode, Path: s.Path, UpdatedAt: s.UpdatedAt}
+		Author: authorOf(s.Author), Wave: s.WaveCode, Path: s.Path, UpdatedAt: s.UpdatedAt, Situation: optional(s.Situation)}
 }
 
 func (a *api) listArtifacts(rc *fasthttp.RequestCtx, principal identity.Principal) error {
