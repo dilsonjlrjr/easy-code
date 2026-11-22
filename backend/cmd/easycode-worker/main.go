@@ -1,5 +1,5 @@
-// Command easycode-worker runs the background work (ADR-02). In this skeleton it only
-// keeps a heartbeat job that checks the database, so the process lifecycle can be exercised.
+// Command easycode-worker runs the background work (ADR-02): partition maintenance, the
+// outbox publisher of the live event bus (ADR-11) and a heartbeat that checks the database.
 package main
 
 import (
@@ -7,6 +7,10 @@ import (
 	"log/slog"
 	"os"
 	"time"
+
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 
 	apphealth "easycode/internal/application/health"
 	"easycode/internal/infrastructure/logging"
@@ -63,10 +67,48 @@ func work(ctx context.Context, proc process.Process) error {
 	}
 	defer pool.Close()
 
+	jobs := jobRunner{logger: proc.Logger, tracer: tracing.Provider.Tracer(serviceName)}
 	health := apphealth.NewService(version, cfg.Database.ProbeTimeout, postgres.NewDatabaseProbe(pool))
-	go runPartitionJob(ctx, postgres.NewPartitionMaintainer(pool), partitionInterval, proc.Logger)
-	runHeartbeat(ctx, health, cfg.Worker.HeartbeatInterval, proc.Logger)
+	go runPartitionJob(ctx, jobs, postgres.NewPartitionMaintainer(pool), partitionInterval)
+
+	wake := make(chan struct{}, 1)
+	signal := func() {
+		select {
+		case wake <- struct{}{}:
+		default:
+		}
+	}
+	outboxListener := postgres.NewListener(pool, proc.Logger, func(context.Context) { signal() }, postgres.ChannelOutbox)
+	go func() { _ = outboxListener.Run(ctx, func(string, string) { signal() }) }()
+	go runOutboxPublisher(ctx, jobs, postgres.NewOutboxPublisher(pool), wake, cfg.Worker.OutboxPollInterval)
+
+	runHeartbeat(ctx, jobs, health, cfg.Worker.HeartbeatInterval)
 	return nil
+}
+
+// jobRunner runs one job execution inside a span and writes one log line with its outcome (RNF-14).
+type jobRunner struct {
+	logger *slog.Logger
+	tracer trace.Tracer
+}
+
+// run executes fn. A quiet job logs successful runs at debug level (frequent jobs).
+func (j jobRunner) run(ctx context.Context, name string, quiet bool, fn func(ctx context.Context) ([]slog.Attr, error)) {
+	started := time.Now()
+	ctx, span := j.tracer.Start(ctx, "job "+name, trace.WithAttributes(attribute.String("easycode.job", name)))
+	defer span.End()
+	attrs, err := fn(ctx)
+	attrs = append(attrs, slog.String("job", name), slog.Float64("duration_ms", float64(time.Since(started).Microseconds())/1000))
+	if err != nil {
+		span.SetStatus(codes.Error, "job failed")
+		j.logger.LogAttrs(ctx, slog.LevelError, "job failed", append(attrs, logging.ErrorAttr(err))...)
+		return
+	}
+	level := slog.LevelInfo
+	if quiet {
+		level = slog.LevelDebug
+	}
+	j.logger.LogAttrs(ctx, level, "job finished", attrs...)
 }
 
 // partitionInterval is how often the partition job runs after the run at startup.
@@ -79,56 +121,68 @@ type partitionMaintainer interface {
 
 // runPartitionJob creates the monthly partitions at startup and then at every interval
 // until ctx is canceled. A failure is logged and retried at the next tick.
-func runPartitionJob(ctx context.Context, maintainer partitionMaintainer, interval time.Duration, logger *slog.Logger) {
+func runPartitionJob(ctx context.Context, jobs jobRunner, maintainer partitionMaintainer, interval time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
-		started := time.Now()
-		created, err := maintainer.EnsureMonthlyPartitions(ctx)
-		attrs := []slog.Attr{
-			slog.String("job", "create_monthly_partitions"),
-			slog.Float64("duration_ms", float64(time.Since(started).Microseconds())/1000),
+		jobs.run(ctx, "create_monthly_partitions", false, func(ctx context.Context) ([]slog.Attr, error) {
+			created, err := maintainer.EnsureMonthlyPartitions(ctx)
+			return []slog.Attr{slog.Int("created", created)}, err
+		})
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
 		}
-		if err != nil {
-			logger.LogAttrs(ctx, slog.LevelError, "job failed", append(attrs, logging.ErrorAttr(err))...)
-		} else {
-			logger.LogAttrs(ctx, slog.LevelInfo, "job finished", append(attrs, slog.Int("created", created))...)
+	}
+}
+
+// publishBatch bounds one publisher transaction.
+const publishBatch = 200
+
+// outboxPublisher publishes pending outbox events.
+type outboxPublisher interface {
+	PublishPending(ctx context.Context, limit int) (int, error)
+}
+
+// runOutboxPublisher publishes when a transaction with events commits (wake) and, as a
+// fallback for lost notifications, at every poll interval. It drains full batches at once.
+func runOutboxPublisher(ctx context.Context, jobs jobRunner, publisher outboxPublisher, wake <-chan struct{}, poll time.Duration) {
+	ticker := time.NewTicker(poll)
+	defer ticker.Stop()
+	for {
+		for full := true; full && ctx.Err() == nil; {
+			full = false
+			jobs.run(ctx, "publish_outbox", true, func(ctx context.Context) ([]slog.Attr, error) {
+				published, err := publisher.PublishPending(ctx, publishBatch)
+				full = err == nil && published == publishBatch
+				return []slog.Attr{slog.Int("published", published)}, err
+			})
 		}
 		select {
 		case <-ctx.Done():
 			return
+		case <-wake:
 		case <-ticker.C:
 		}
 	}
 }
 
 // runHeartbeat runs the heartbeat job at every interval until ctx is canceled.
-func runHeartbeat(ctx context.Context, health *apphealth.Service, interval time.Duration, logger *slog.Logger) {
+func runHeartbeat(ctx context.Context, jobs jobRunner, health *apphealth.Service, interval time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
-	logger.InfoContext(ctx, "worker loop started", slog.String("heartbeat_interval", interval.String()))
+	jobs.logger.InfoContext(ctx, "worker loop started", slog.String("heartbeat_interval", interval.String()))
 	for {
-		heartbeat(ctx, health, logger)
+		jobs.run(ctx, "heartbeat", false, func(ctx context.Context) ([]slog.Attr, error) {
+			_, err := health.Readiness(ctx)
+			return nil, err
+		})
 		select {
 		case <-ctx.Done():
-			logger.Info("worker loop stopping")
+			jobs.logger.Info("worker loop stopping")
 			return
 		case <-ticker.C:
 		}
 	}
-}
-
-func heartbeat(ctx context.Context, health *apphealth.Service, logger *slog.Logger) {
-	started := time.Now()
-	logger.DebugContext(ctx, "job started", slog.String("job", "heartbeat"))
-	_, err := health.Readiness(ctx)
-	attrs := []slog.Attr{
-		slog.String("job", "heartbeat"),
-		slog.Float64("duration_ms", float64(time.Since(started).Microseconds())/1000),
-	}
-	if err != nil {
-		logger.LogAttrs(ctx, slog.LevelError, "job failed", append(attrs, logging.ErrorAttr(err))...)
-		return
-	}
-	logger.LogAttrs(ctx, slog.LevelInfo, "job finished", attrs...)
 }
