@@ -35,6 +35,7 @@ type Dependencies struct {
 	// Configuration is required with Projects.
 	Configuration ConfigurationUseCases
 	Workflow      WorkflowUseCases
+	Artifacts     ArtifactUseCases
 }
 
 // ServerSettings configures the fasthttp server.

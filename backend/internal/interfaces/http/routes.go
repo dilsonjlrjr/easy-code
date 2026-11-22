@@ -35,4 +35,10 @@ func (a *api) register(router *Router) {
 		router.Handle(fasthttp.MethodGet, APIPrefix+"/projects/{projectId}/commands/{commandId}", auth(a.getCommand))
 		router.Handle(fasthttp.MethodGet, APIPrefix+"/projects/{projectId}/workflow", auth(a.getWorkflow))
 	}
+	if a.deps.Artifacts != nil {
+		router.Handle(fasthttp.MethodGet, APIPrefix+"/projects/{projectId}/artifacts", auth(a.listArtifacts))
+		router.Handle(fasthttp.MethodGet, APIPrefix+"/projects/{projectId}/artifacts/{artifactId}", auth(a.getArtifact))
+		router.Handle(fasthttp.MethodGet, APIPrefix+"/projects/{projectId}/artifacts/{artifactId}/versions", auth(a.listArtifactVersions))
+		router.Handle(fasthttp.MethodGet, APIPrefix+"/projects/{projectId}/artifacts/{artifactId}/versions/{version}", auth(a.getArtifactVersion))
+	}
 }

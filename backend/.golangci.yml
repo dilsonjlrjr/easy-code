@@ -19,6 +19,8 @@ linters:
   settings:
     misspell:
       locale: US
+      # Artifact header fields are pt-BR by the domain schemas (specs/dominio/artefatos).
+      ignore-rules: [autor]
     gosec:
       excludes:
         - G115 # integer conversions are bounded by config validation

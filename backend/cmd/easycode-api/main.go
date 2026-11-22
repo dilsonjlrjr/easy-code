@@ -12,6 +12,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	appartifact "easycode/internal/application/artifact"
 	apphealth "easycode/internal/application/health"
 	"easycode/internal/application/idempotency"
 	apppricing "easycode/internal/application/pricing"
@@ -165,6 +166,7 @@ func productDependencies(cfg config.Config, pool *pgxpool.Pool, logger *slog.Log
 		Projects:             appproject.NewService(tx, projects, postgres.NewOutbox(pool), trail, definition.ID, definition.Version),
 		Configuration:        appproject.NewConfigurationService(tx, projects, projects, postgres.NewCatalog(pool), trail, definition),
 		Workflow:             appworkflow.NewService(tx, projects, workflows, workflows, workflows, trail),
+		Artifacts:            appartifact.NewQueries(projects, postgres.NewArtifacts(pool)),
 	}
 	if cfg.Providers.SealingPublicKeyFile == "" {
 		logger.Warn("provider key routes disabled: no sealing public key", slog.String("variable", config.EnvSealingPublicKey))
