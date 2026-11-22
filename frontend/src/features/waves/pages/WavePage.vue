@@ -146,6 +146,12 @@ function refusalText(reason: string): string {
   return i18n.te(key) ? t(key) : reason
 }
 
+/** US-24: the provider by its catalog name; an unknown id is shown as sent. */
+function providerName(id: string): string {
+  const key = `providers.${id}`
+  return i18n.te(key) ? t(key) : id
+}
+
 function callTitle(call: CallRecord): string {
   if (call.type === 'tool') return t('waves.calls.tool', { tool: call.tool ?? '' })
   return t('waves.calls.model', {
@@ -299,12 +305,12 @@ function callTitle(call: CallRecord): string {
         <dl class="summary-list" data-testid="wave-cost">
           <dt>{{ $t('waves.cost.reasoningModel') }}</dt>
           <dd>
-            {{ wave.models.reasoning.provider }} ·
+            {{ providerName(wave.models.reasoning.provider) }} ·
             <span class="monospace">{{ wave.models.reasoning.model }}</span>
           </dd>
           <dt>{{ $t('waves.cost.executionModel') }}</dt>
           <dd>
-            {{ wave.models.execution.provider }} ·
+            {{ providerName(wave.models.execution.provider) }} ·
             <span class="monospace">{{ wave.models.execution.model }}</span>
           </dd>
           <dt>{{ $t('waves.cost.inputTokens') }}</dt>
@@ -327,7 +333,7 @@ function callTitle(call: CallRecord): string {
           <dt>{{ $t('waves.cost.total') }}</dt>
           <dd data-testid="wave-cost-total">{{ format.money(wave.cost.total) }}</dd>
           <template v-for="item in wave.cost.per_provider ?? []" :key="item.provider">
-            <dt>{{ $t('waves.cost.perProvider', { provider: item.provider }) }}</dt>
+            <dt>{{ $t('waves.cost.perProvider', { provider: providerName(item.provider) }) }}</dt>
             <dd>{{ format.money(item.total) }}</dd>
           </template>
           <dt>{{ $t('waves.cost.executionTime') }}</dt>
