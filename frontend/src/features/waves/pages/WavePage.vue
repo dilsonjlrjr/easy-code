@@ -151,6 +151,10 @@ function callTitle(call: CallRecord): string {
           · {{ $t('waves.attempt', { n: wave.attempt }) }}</template
         >
       </p>
+      <p v-if="wave.git_commit" class="text-body-2 mb-4" data-testid="wave-commit">
+        {{ $t('evidence.commit') }}:
+        <span class="monospace" :title="wave.git_commit">{{ wave.git_commit.slice(0, 12) }}</span>
+      </p>
       <!-- ESP-18 section 8: state changes announced politely, without moving the focus. -->
       <div role="status" class="sr-only">{{ live.message.value }}</div>
       <p v-if="live.status.value === 'reconnecting'" class="text-body-2 mb-2">

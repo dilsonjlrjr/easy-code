@@ -286,7 +286,7 @@ export const en: MessageSchema = {
       failed: 'Wave {wave} failed',
       restarted: 'Wave {wave} restarted',
       canceled: 'Wave {wave} canceled',
-      task_failed: 'A task of wave {wave} failed',
+      task_failed: 'Task {task} of wave {wave} failed at {cause} ({failures} in a row)',
       model_selected: 'Model {model} selected',
       tool_called: 'Tool {tool} called',
     },
@@ -685,15 +685,11 @@ export const en: MessageSchema = {
         'Tool calls refused by least privilege: {count}. Each one is in the record with its reason.',
       refusalReasons: {
         tool_not_allowed: 'tool not allowed for the agent',
-        not_in_list: 'tool not allowed for the agent',
         path_not_allowed: 'path outside what the agent may use',
         command_not_allowed: 'command outside the allowed categories',
-        command_outside_category: 'command outside the allowed categories',
         network_not_allowed: 'network access blocked in the sandbox',
         git_not_allowed: 'git operation not allowed',
         foreign_artifact_write:
-          "write to another agent's approved artifact; the agent was told to register a finding",
-        approved_artifact_of_other_agent:
           "write to another agent's approved artifact; the agent was told to register a finding",
       },
       results: {
@@ -878,6 +874,11 @@ export const en: MessageSchema = {
       'No open finding. A Critical or High finding of the stage would block the approval.',
     history: 'Rounds',
   },
+  taskFailureCauses: {
+    build: 'build',
+    tests: 'tests',
+    lint: 'lint',
+  },
   evidence: {
     title: 'Build and test evidence',
     none: 'No command run yet.',
@@ -930,6 +931,7 @@ export const en: MessageSchema = {
     downloadLabel: 'Download full output of command {n}',
     downloaded: 'Output of command {n} downloaded.',
     openOf: 'Build and test evidence of wave {wave}',
+    commit: 'Wave commit',
   },
   tasks: {
     title: 'Tasks',

@@ -28,6 +28,8 @@ export interface Wave extends WaveSummary {
   time: TimeSpent
   result?: 'success' | 'failed' | 'canceled' | null
   failure_cause?: string | null
+  /** Commit of the project repository written when the wave ended (US-19 CA-1, US-42); null before. */
+  git_commit?: string | null
   /** US-29: schema errors per artifact (JSON pointer in the header and message). */
   artifact_errors?: Array<{ artifact: string; path: string; message: string }>
   pause?: { mode?: 'cooperative' | 'immediate'; cause?: string; requested_at?: string } | null
@@ -42,6 +44,14 @@ export interface Wave extends WaveSummary {
   attempts: Array<{ number: number; final_state: string; failure_cause?: string | null }>
   available_actions: AvailableAction[]
 }
+
+export type RefusalReason =
+  | 'tool_not_allowed'
+  | 'path_not_allowed'
+  | 'command_not_allowed'
+  | 'network_not_allowed'
+  | 'git_not_allowed'
+  | 'foreign_artifact_write'
 
 export interface CallRecord {
   number: number
@@ -60,7 +70,8 @@ export interface CallRecord {
   estimated_cost?: boolean
   tool?: string
   summary?: string | null
-  refusal_reason?: string
+  /** Same enumeration as the `wave.tool_called` payload (US-30, RNF-07). */
+  refusal_reason?: RefusalReason
   error?: string
 }
 

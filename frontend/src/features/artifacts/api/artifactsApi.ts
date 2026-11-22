@@ -20,6 +20,8 @@ export interface ArtifactSummary {
   wave: string
   path?: string
   updated_at?: string
+  /** Only for T: `situacao` of the current version header (tracking field); null for other types. */
+  situation?: 'planejada' | 'em_andamento' | 'concluida' | 'justificada' | null
 }
 
 export interface Artifact extends ArtifactSummary {

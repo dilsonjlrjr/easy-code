@@ -290,7 +290,7 @@ export const ptBR = {
       failed: 'Onda {wave} falhou',
       restarted: 'Onda {wave} reiniciada',
       canceled: 'Onda {wave} cancelada',
-      task_failed: 'Tarefa da onda {wave} falhou',
+      task_failed: 'Tarefa {task} da onda {wave} falhou em {cause} ({failures} seguidas)',
       model_selected: 'Modelo {model} escolhido',
       tool_called: 'Ferramenta {tool} chamada',
     },
@@ -690,15 +690,11 @@ export const ptBR = {
         'Chamadas de ferramenta recusadas pelo privilégio mínimo: {count}. Cada uma aparece no registro com o motivo.',
       refusalReasons: {
         tool_not_allowed: 'ferramenta não autorizada para o agente',
-        not_in_list: 'ferramenta não autorizada para o agente',
         path_not_allowed: 'caminho fora do permitido para o agente',
         command_not_allowed: 'comando fora das categorias permitidas',
-        command_outside_category: 'comando fora das categorias permitidas',
         network_not_allowed: 'acesso à rede bloqueado no sandbox',
         git_not_allowed: 'operação git não permitida',
         foreign_artifact_write:
-          'escrita em artefato aprovado de outro agente; o agente foi orientado a registrar um achado',
-        approved_artifact_of_other_agent:
           'escrita em artefato aprovado de outro agente; o agente foi orientado a registrar um achado',
       },
       results: {
@@ -883,6 +879,11 @@ export const ptBR = {
     noFindings: 'Nenhum achado aberto. Achado Crítico ou Alto da etapa bloquearia a aprovação.',
     history: 'Rodadas',
   },
+  taskFailureCauses: {
+    build: 'build',
+    tests: 'testes',
+    lint: 'lint',
+  },
   evidence: {
     title: 'Evidência de build e testes',
     none: 'Nenhum comando executado ainda.',
@@ -935,6 +936,7 @@ export const ptBR = {
     downloadLabel: 'Baixar saída completa do comando {n}',
     downloaded: 'Saída do comando {n} baixada.',
     openOf: 'Evidência de build e testes da onda {wave}',
+    commit: 'Commit da onda',
   },
   tasks: {
     title: 'Tarefas',

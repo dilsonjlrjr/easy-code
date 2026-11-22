@@ -53,7 +53,7 @@ export interface ProjectState {
   executions: Record<string, Json[]>
   /** Full output of each execution by its id (`downloadExecutionOutput`). */
   outputs: Partial<Record<string, string>>
-  /** `Repository` (US-42); null answers 404 like a repository not created yet. */
+  /** `Repository` (US-42), `not_created` until a wave commits; null answers 404 (no role). */
   repository: Json | null
   history: Json[]
   /** `Member` items (US-02); the creator starts as lead and approver (RN-1). */
@@ -224,7 +224,13 @@ export class FakeApi {
       questions: {},
       executions: {},
       outputs: {},
-      repository: null,
+      repository: {
+        status: 'not_created',
+        clone_url: `https://easycode.empresa.local/git/${id}.git`,
+        main_branch: 'main',
+        last_commit: null,
+        marks: [],
+      },
       history: [],
       members: [
         {

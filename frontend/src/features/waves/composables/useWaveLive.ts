@@ -153,7 +153,11 @@ export function useWaveLive(projectId: string, waveId: string) {
     } else if (state === 'running') {
       retryInSeconds.value = undefined
     }
-    if (type === 'wave.question_opened') announce(describeEvent(t, event))
+    if (type === 'wave.question_opened' || type === 'wave.task_failed') {
+      announce(describeEvent(t, event))
+    }
+    // Every domain event re-reads the lists; `wave.tool_called` fires when each sandbox command ends,
+    // so the evidence block follows the commands as they finish (US-41, ESP-14 "em_execucao").
     scheduleRefresh()
   }
 

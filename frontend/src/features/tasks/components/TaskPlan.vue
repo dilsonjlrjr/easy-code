@@ -10,14 +10,16 @@ import type { WaveSummary } from '@/features/projects/api/projectsApi'
 import {
   defaultTask,
   hasDeviation,
-  inPlanOrder,
+  inIdOrder,
   taskFromArtifact,
+  taskListItem,
+  type TaskListItem,
   type TaskView,
 } from '../composables/taskPlan'
 
 /**
  * The task plan (T) of the project. In the Architecture stage (ESP-08 "Tarefas", US-18 CA-1) it is
- * the plan with what each T covers, follows and depends on. In the Implementation stage (ESP-14,
+ * the plan; the selected T shows what it covers, follows and depends on. In the Implementation stage (ESP-14,
  * US-19) it adds the situation, the waves of the selected T (ER-14-18, CA-14-24), its commits, tests
  * and deviations, and the link to the build and test evidence of its wave (PT-48).
  */
@@ -34,37 +36,45 @@ const props = withDefaults(
 
 const i18n = useI18n()
 const { t } = i18n
-const tasks = ref<TaskView[]>([])
+const tasks = ref<TaskListItem[]>([])
 const selectedId = ref<string>()
+const detail = ref<TaskView>()
 
+// The list comes from the summaries (situation included); only the selected T is read in full.
 const loader = useLoader(async () => {
   const summaries = await props.api.listArtifacts(props.projectId, { type: 'T' })
-  // The situation and the developer record are in the T header (no field in ArtifactSummary).
-  const artifacts = await Promise.all(
-    summaries
-      .filter((summary) => summary.type === 'T')
-      .map((summary) => props.api.getArtifact(props.projectId, summary.id)),
-  )
-  tasks.value = inPlanOrder(artifacts.map(taskFromArtifact))
+  tasks.value = inIdOrder(summaries.filter((summary) => summary.type === 'T').map(taskListItem))
   if (!tasks.value.some((task) => task.id === selectedId.value)) {
     selectedId.value = defaultTask(tasks.value)?.id
   }
 })
 
+const detailLoader = useLoader(async () => {
+  const id = selectedId.value
+  if (!id) return
+  const view = taskFromArtifact(await props.api.getArtifact(props.projectId, id))
+  if (selectedId.value === id) detail.value = view
+})
+
 watch(
   () => [props.projectId, props.revision],
-  () => void loader.run(),
+  () => void loader.run().then(() => detailLoader.run()),
   { immediate: true },
 )
+watch(selectedId, (id, previous) => {
+  if (previous !== undefined && id !== previous) void detailLoader.run()
+})
 
-const selected = computed(() => tasks.value.find((task) => task.id === selectedId.value))
+const selected = computed(() =>
+  detail.value && detail.value.id === selectedId.value ? detail.value : undefined,
+)
 const selectedWaves = computed(() =>
   selected.value ? props.waves.filter((wave) => wave.task === selected.value?.id) : [],
 )
 /** The evidence of a task is the one of its latest wave (one wave per task, retries included). */
 const evidenceWave = computed(() => selectedWaves.value[selectedWaves.value.length - 1])
 
-function situationText(task: TaskView): string {
+function situationText(task: { situation: TaskView['situation'] }): string {
   return t(`tasks.situation.${task.situation ?? 'unknown'}`)
 }
 
@@ -110,13 +120,19 @@ function artifactLink(artifactId: string) {
           >
             <span class="monospace">{{ task.id }}</span> · {{ task.title }}
             <template v-if="showExecution"> · {{ situationText(task) }}</template>
-            <template v-else-if="task.size"> · {{ sizeText(task) }}</template>
           </button>
         </li>
       </ol>
 
+      <LoadingState v-if="detailLoader.loading.value && !selected" />
+      <ProblemAlert
+        v-else-if="detailLoader.error.value && !selected"
+        :error="detailLoader.error.value"
+        retry
+        @retry="detailLoader.run"
+      />
       <article
-        v-if="selected"
+        v-else-if="selected"
         aria-labelledby="task-detail-heading"
         class="task-detail"
         data-testid="task-detail"

@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import type { Artifact } from '@/features/artifacts/api/artifactsApi'
-import { defaultTask, hasDeviation, inPlanOrder, taskFromArtifact } from '../composables/taskPlan'
+import {
+  defaultTask,
+  hasDeviation,
+  inIdOrder,
+  taskFromArtifact,
+  taskListItem,
+} from '../composables/taskPlan'
 
 function task(id: string, header: Record<string, unknown> = {}): Artifact {
   return {
@@ -61,16 +67,15 @@ describe('task plan (US-18, US-19)', () => {
     ).toBe(true)
   })
 
-  it('orders the plan by dependency, then by id, and survives a cycle', () => {
-    const order = inPlanOrder(
-      [
-        task('T-10'),
-        task('T-02', { depende_de: ['T-03'] }),
-        task('T-03'),
-        task('T-01', { depende_de: ['T-01'] }),
-      ].map(taskFromArtifact),
-    ).map((item) => item.id)
-    expect(order).toEqual(['T-01', 'T-03', 'T-02', 'T-10'])
+  it('lists the plan from the summaries in id order, with the situation and no header read', () => {
+    const summaries = ['T-10', 'T-02', 'T-01'].map((id) => ({
+      ...task(id),
+      situation: id === 'T-02' ? ('em_andamento' as const) : null,
+    }))
+    const items = inIdOrder(summaries.map(taskListItem))
+    expect(items.map((item) => item.id)).toEqual(['T-01', 'T-02', 'T-10'])
+    expect(items.map((item) => item.situation)).toEqual([undefined, 'em_andamento', undefined])
+    expect(defaultTask(items)?.id).toBe('T-02')
   })
 
   it('selects the running task first, else the first one not done', () => {
@@ -81,6 +86,6 @@ describe('task plan (US-18, US-19)', () => {
     ].map(taskFromArtifact)
     expect(defaultTask(views)?.id).toBe('T-03')
     expect(defaultTask(views.slice(0, 2))?.id).toBe('T-02')
-    expect(defaultTask([])).toBeUndefined()
+    expect(defaultTask(views.slice(0, 0))).toBeUndefined()
   })
 })

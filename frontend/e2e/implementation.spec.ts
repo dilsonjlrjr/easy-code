@@ -24,6 +24,7 @@ function artifact(id: string, type: string, title: string, header: Record<string
     author: { type: 'agent', agent: type === 'US' ? 'requirements-agent' : 'architect-agent' },
     wave: type === 'US' ? 'REQ-01' : 'ARQ-01',
     header: { id, tipo: type, ...header },
+    situation: type === 'T' ? (header.situacao ?? null) : null,
     body: '',
     commit: SHA,
   }
@@ -89,6 +90,7 @@ function seed(api: FakeApi, extra: Partial<ProjectState> = {}): ProjectState {
       }),
     },
     repository: {
+      status: 'available',
       clone_url: CLONE_URL,
       main_branch: 'main',
       last_commit: { sha: SHA, when: '2026-11-22T10:30:00-03:00', wave: 'DEV-01' },
@@ -127,6 +129,10 @@ test('US-19 CA-1, US-41, US-42 CA-1: the implementation stage shows each task, i
   await expect(page.getByTestId('task-detail')).toContainText('Em andamento')
   await expect(page.getByTestId('task-waves')).toContainText('DEV-02')
   await expect(page.getByTestId('task-waves')).not.toContainText('DEV-01')
+  // The list comes from the summaries (`situation`); only the selected T is read in full.
+  const taskReads = () =>
+    api.requests.filter((request) => /\/artifacts\/T-\d+$/.test(request.path)).length
+  expect(taskReads()).toBe(1)
 
   // CA-14-2, CA-14-24: the done task shows its commit, tests, deviations and only its waves.
   await page.getByTestId('task-T-01').click()
@@ -167,11 +173,10 @@ test('US-18 CA-1: the architecture stage shows the task plan with what each task
 
   await page.goto(`/projects/${PROJECT_ID}/stages/architecture`)
   // The plan comes after the stage, the T list and each T: three round trips on a loaded CI host.
-  await expect(page.getByTestId('task-T-01')).toContainText('tamanho pequena', {
-    timeout: LOAD_TIMEOUT,
-  })
+  await expect(page.getByTestId('task-T-01')).toBeVisible({ timeout: LOAD_TIMEOUT })
   await page.getByTestId('task-T-02').click()
   const detail = page.getByTestId('task-detail')
+  await expect(detail).toContainText('tamanho média')
   await expect(detail.getByRole('link', { name: 'US-03' })).toHaveAttribute(
     'href',
     `/projects/${PROJECT_ID}/artifacts/US-03`,
@@ -199,7 +204,7 @@ test('US-42: the project overview shows the clone address, or says the repositor
   ).toHaveValue(CLONE_URL)
   await expectNoSeriousA11yViolations(page)
 
-  state.repository = null
+  state.repository = { ...state.repository, status: 'not_created', last_commit: null }
   await page.reload()
   await expect(page.getByTestId('repository-unavailable')).toHaveText(
     'O repositório do projeto ainda não está disponível.',

@@ -63,6 +63,7 @@ function seed(api: FakeApi) {
         ...developerWave,
         result: 'failed',
         failure_cause: 'build_or_test_failed',
+        git_commit: '9c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d',
       }),
     },
     calls: {
@@ -120,6 +121,7 @@ test('US-41 CA-1/CA-2/CA-3, US-19 CA-2: the developer wave shows each command wi
   await expect(page.getByText('tarefa T-01')).toBeVisible()
   // US-19 CA-2: the failure is recorded with the command output.
   await expect(page.getByTestId('failure-cause')).toContainText('build ou testes falharam')
+  await expect(page.getByTestId('wave-commit')).toContainText('9c1d2e3f4a5b')
 
   const build = page.getByTestId('execution-1')
   await expect(build).toContainText('Comando 1 · build')

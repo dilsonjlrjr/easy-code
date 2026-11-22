@@ -2,7 +2,6 @@
 import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ROUTE_NAMES } from '@/app/router/routeNames'
-import { isApiError } from '@/shared/api/problemDetails'
 import { useAnnouncer } from '@/shared/composables/useAnnouncer'
 import { useLoader } from '@/shared/composables/useLoader'
 import { useFormat } from '@/shared/format/useFormat'
@@ -13,8 +12,8 @@ import { repositoryApi, type Repository, type RepositoryApi } from '../api/repos
 /**
  * US-42, ESP-14 "Repositório", ESP-06 (endereço de clone), PT-37: the platform's clone address
  * (copyable), how to authenticate the clone, the main branch, the last commit and the version
- * marks. The api answers 404 to anyone without a role (RNF-04); the project page itself is then
- * already "not found", so a 404 here only means the repository does not exist yet.
+ * marks. `status: not_created` (no wave concluded yet) reads "not available yet"; a 404 means no
+ * role in the project (RNF-04, US-42 CA-3) and shows as not found, like the rest of the project.
  */
 const props = withDefaults(
   defineProps<{ projectId: string; headingLevel?: 2 | 3; api?: RepositoryApi }>(),
@@ -28,9 +27,7 @@ const repository = ref<Repository>()
 const loader = useLoader(async () => {
   repository.value = await props.api.getRepository(props.projectId)
 })
-const unavailable = computed(
-  () => isApiError(loader.error.value) && loader.error.value.status === 404,
-)
+const unavailable = computed(() => repository.value?.status === 'not_created')
 const headingTag = computed(() => `h${String(props.headingLevel)}`)
 
 onMounted(() => void loader.run())
@@ -56,15 +53,15 @@ function shortSha(sha: string | undefined): string {
       {{ $t('repository.title') }}
     </component>
     <LoadingState v-if="loader.loading.value && !repository" />
-    <p v-else-if="unavailable" class="text-body-2" data-testid="repository-unavailable">
-      {{ $t('repository.unavailable') }}
-    </p>
     <ProblemAlert
       v-else-if="loader.error.value && !repository"
       :error="loader.error.value"
       retry
       @retry="loader.run"
     />
+    <p v-else-if="unavailable" class="text-body-2" data-testid="repository-unavailable">
+      {{ $t('repository.unavailable') }}
+    </p>
     <template v-else-if="repository">
       <div class="d-flex flex-wrap align-center ga-2">
         <v-text-field

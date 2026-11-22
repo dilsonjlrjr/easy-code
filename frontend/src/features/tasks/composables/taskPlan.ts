@@ -1,5 +1,5 @@
 import type { ArtifactState } from '@/shared/api/contract'
-import type { Artifact } from '@/features/artifacts/api/artifactsApi'
+import type { Artifact, ArtifactSummary } from '@/features/artifacts/api/artifactsApi'
 
 /** `situacao` of a T (specs/dominio/artefatos/t.schema.json); tracking field, changes after approval. */
 export const TASK_SITUATIONS = ['planejada', 'em_andamento', 'concluida', 'justificada'] as const
@@ -74,29 +74,30 @@ export function taskFromArtifact(artifact: Artifact): TaskView {
   }
 }
 
-/**
- * Plan order (ESP-08: topological by `depende_de`): a task comes after the tasks it depends on; ties
- * and cycles fall back to the id order, so the list is always complete and stable.
- */
-export function inPlanOrder(tasks: TaskView[]): TaskView[] {
-  const byId = new Map(tasks.map((task) => [task.id, task]))
-  const sorted = [...tasks].sort((a, b) => a.id.localeCompare(b.id, 'en', { numeric: true }))
-  const placed = new Set<string>()
-  const visiting = new Set<string>()
-  const result: TaskView[] = []
-  function visit(task: TaskView): void {
-    if (placed.has(task.id) || visiting.has(task.id)) return
-    visiting.add(task.id)
-    for (const dependency of task.dependsOn) {
-      const before = byId.get(dependency)
-      if (before) visit(before)
-    }
-    visiting.delete(task.id)
-    placed.add(task.id)
-    result.push(task)
+/** A T in the plan list: what `listArtifacts type=T` returns, with the situation (no header read). */
+export interface TaskListItem {
+  id: string
+  title: string
+  state: ArtifactState
+  version: number
+  situation: TaskSituation | undefined
+}
+
+export function taskListItem(summary: ArtifactSummary): TaskListItem {
+  return {
+    id: summary.id,
+    title: summary.title,
+    state: summary.state,
+    version: summary.version,
+    situation: (TASK_SITUATIONS as readonly unknown[]).includes(summary.situation)
+      ? (summary.situation as TaskSituation)
+      : undefined,
   }
-  for (const task of sorted) visit(task)
-  return result
+}
+
+/** Plan order by id (T-01, T-02, ..., T-10): the summary carries no dependencies. */
+export function inIdOrder<TTask extends { id: string }>(tasks: TTask[]): TTask[] {
+  return [...tasks].sort((a, b) => a.id.localeCompare(b.id, 'en', { numeric: true }))
 }
 
 /** "nenhum" (or empty) means the developer followed the task as planned (t.schema `desvios`). */
@@ -106,7 +107,9 @@ export function hasDeviation(task: TaskView): boolean {
 }
 
 /** The task selected when the screen opens: the one running, else the first not done, else the first. */
-export function defaultTask(tasks: TaskView[]): TaskView | undefined {
+export function defaultTask<TTask extends { situation: TaskSituation | undefined }>(
+  tasks: TTask[],
+): TTask | undefined {
   return (
     tasks.find((task) => task.situation === 'em_andamento') ??
     tasks.find((task) => task.situation !== 'concluida' && task.situation !== 'justificada') ??

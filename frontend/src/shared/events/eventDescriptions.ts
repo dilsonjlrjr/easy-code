@@ -67,6 +67,13 @@ export function describeEvent(t: Translate, event: CloudEvent): string {
     tool: text(data.tool),
     model: text(data.model),
     attempt: text(data.attempt),
+    task: text(data.task),
+    // `wave.task_failed`: build, tests or lint (catalog labels, never free text).
+    cause:
+      typeof data.cause === 'string' && ['build', 'tests', 'lint'].includes(data.cause)
+        ? t(`taskFailureCauses.${data.cause}`)
+        : text(data.cause),
+    failures: text(data.consecutive_failures),
     seconds: typeof data.delay_ms === 'number' ? Math.round(data.delay_ms / 1000) : '',
   }
   if (DESCRIBED_EVENTS.has(type)) return t(`events.${type}`, values)
