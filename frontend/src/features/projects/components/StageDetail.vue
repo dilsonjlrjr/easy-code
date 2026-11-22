@@ -12,6 +12,7 @@ import StateLabel from '@/shared/ui/StateLabel.vue'
 import RepositoryPanel from '@/features/repository/components/RepositoryPanel.vue'
 import TaskPlan from '@/features/tasks/components/TaskPlan.vue'
 import type { Stage } from '../api/projectsApi'
+import { parallelStages } from '../composables/parallelStages'
 import { currentProjectApi, useCurrentProjectStore } from '../stores/currentProjectStore'
 
 /**
@@ -42,6 +43,13 @@ const stageName = computed(() => {
 /** US-18: the architect plans the tasks; US-19, US-42: the developer runs them into the repository. */
 const showsTasks = computed(() => ['architecture', 'implementation'].includes(stageId.value))
 const isImplementation = computed(() => stageId.value === 'implementation')
+/** US-20 CA-3: Data Modeling and Design run in parallel after Architecture (ESP-09, ESP-10). */
+const parallel = computed(() => parallelStages(store.workflow?.stages ?? [], stageId.value))
+
+function siblingName(id: string): string {
+  const key = `stages.${id}`
+  return i18n.te(key) ? t(key) : id
+}
 
 watch([stageId, () => store.revision], () => void loader.run(), { immediate: true })
 </script>
@@ -88,6 +96,17 @@ watch([stageId, () => store.revision], () => void loader.run(), { immediate: tru
           {{ $t('projects.stage.openGate', { round: stage.current_round }) }}
         </router-link>
       </div>
+
+      <p v-if="parallel.length > 0" class="text-body-2 mb-4" data-testid="stage-parallel">
+        {{ $t('projects.stage.parallelWith') }}
+        <template v-for="(sibling, index) in parallel" :key="sibling.id">
+          <router-link
+            :to="{ name: ROUTE_NAMES.stage, params: { projectId, stageId: sibling.id } }"
+            >{{ siblingName(sibling.id) }}</router-link><span v-if="index < parallel.length - 1"
+            >,
+          </span>
+        </template>
+      </p>
 
       <dl class="summary-list mb-6" data-testid="stage-summary">
         <dt>{{ $t('projects.stage.approval') }}</dt>

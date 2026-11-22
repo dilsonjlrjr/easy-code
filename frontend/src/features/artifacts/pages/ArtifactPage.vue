@@ -18,6 +18,8 @@ import {
   type ArtifactAuthor,
   type ArtifactVersionSummary,
 } from '../api/artifactsApi'
+import ArtifactStructuredView from '../components/ArtifactStructuredView.vue'
+import { STRUCTURED_FIELDS, structuredArtifact } from '../composables/structuredArtifact'
 
 const { t } = useI18n()
 const route = useRoute()
@@ -74,7 +76,14 @@ const shownVersionInfo = computed(() =>
   versions.value.find((item) => item.version === shown.value?.version),
 )
 const notFound = computed(() => isApiError(loader.error.value) && loader.error.value.status === 404)
-const headerEntries = computed(() => Object.entries(shown.value?.header ?? {}))
+/** US-20, US-21: DIC, PERSIST, TELAS and VALIDACAO show their structured content (ESP-09, ESP-10, ESP-13). */
+const structured = computed(() =>
+  shown.value ? structuredArtifact(shown.value.type, shown.value.header) : undefined,
+)
+const headerEntries = computed(() => {
+  const skip = new Set(structured.value ? STRUCTURED_FIELDS[structured.value.type] : [])
+  return Object.entries(shown.value?.header ?? {}).filter(([field]) => !skip.has(field))
+})
 
 const breadcrumbs = computed(() => [
   { title: t('pages.projects.title'), to: { name: ROUTE_NAMES.projects } },
@@ -233,6 +242,12 @@ async function downloadVersion(): Promise<void> {
               </template>
             </dl>
           </section>
+
+          <ArtifactStructuredView
+            v-if="structured"
+            :project-id="projectId"
+            :artifact="structured"
+          />
 
           <section aria-labelledby="artifact-body-heading" class="mb-6">
             <h2 id="artifact-body-heading" class="text-h6 mb-1">{{ $t('artifacts.body') }}</h2>

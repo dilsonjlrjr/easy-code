@@ -6,6 +6,7 @@ import { useFormat } from '@/shared/format/useFormat'
 import StateLabel from '@/shared/ui/StateLabel.vue'
 import RepositoryPanel from '@/features/repository/components/RepositoryPanel.vue'
 import type { StageSummary } from '../api/projectsApi'
+import { parallelStages } from '../composables/parallelStages'
 import { useCurrentProjectStore } from '../stores/currentProjectStore'
 
 const i18n = useI18n()
@@ -32,6 +33,11 @@ function wavesOf(stage: StageSummary) {
 /** ESP-06 3.3: with the project `created`, stages have no domain state and read "Not started". */
 function stageState(stage: StageSummary): string {
   return stage.state ?? 'not_started'
+}
+
+/** US-20 CA-3: stages that wait on the same stages run side by side (Data Modeling and Design). */
+function parallelText(stage: StageSummary): string {
+  return parallelStages(stages.value, stage.id).map(stageName).join(', ')
 }
 
 function waitingDependencies(stage: StageSummary): string {
@@ -70,6 +76,9 @@ function waitingDependencies(stage: StageSummary): string {
           </h3>
           <p class="text-body-2 mb-2">{{ $t(`agents.${stage.agent}`) }}</p>
           <StateLabel machine="stage" :state="stageState(stage)" />
+          <p v-if="parallelText(stage)" class="text-body-2 mt-2">
+            {{ $t('projects.workflow.parallelWith', { stages: parallelText(stage) }) }}
+          </p>
           <p
             v-if="stage.state === 'blocked' && stage.depends_on.length > 0"
             class="text-body-2 mt-2"
