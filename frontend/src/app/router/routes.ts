@@ -92,6 +92,12 @@ export const routes: RouteRecordRaw[] = [
         meta: { titleKey: 'pages.project.findings', layout: 'shell' },
       },
       {
+        path: 'traceability/:view(links|coverage)?',
+        name: ROUTE_NAMES.traceability,
+        component: () => import('@/features/traceability/components/ProjectTraceabilityTab.vue'),
+        meta: { titleKey: 'pages.project.traceability', layout: 'shell' },
+      },
+      {
         path: 'stages/:stageId',
         name: ROUTE_NAMES.stage,
         component: () => import('@/features/projects/components/StageDetail.vue'),

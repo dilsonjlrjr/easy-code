@@ -73,6 +73,7 @@ const tabs = computed(() => [
   { name: ROUTE_NAMES.projectWaves, label: t('pages.project.waves') },
   { name: ROUTE_NAMES.projectArtifacts, label: t('pages.project.artifacts') },
   { name: ROUTE_NAMES.projectFindings, label: findingsTabLabel.value },
+  { name: ROUTE_NAMES.traceability, label: t('pages.project.traceability') },
   { name: ROUTE_NAMES.projectConfiguration, label: t('pages.project.configuration') },
   { name: ROUTE_NAMES.projectMembers, label: t('pages.project.members') },
 ])

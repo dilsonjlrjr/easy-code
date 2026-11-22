@@ -19,7 +19,12 @@ import {
   type ArtifactVersionSummary,
 } from '../api/artifactsApi'
 import ArtifactStructuredView from '../components/ArtifactStructuredView.vue'
-import { STRUCTURED_FIELDS, structuredArtifact } from '../composables/structuredArtifact'
+import QualityArtifactView from '../components/QualityArtifactView.vue'
+import {
+  QUALITY_TYPES,
+  STRUCTURED_FIELDS,
+  structuredArtifact,
+} from '../composables/structuredArtifact'
 
 const { t } = useI18n()
 const route = useRoute()
@@ -243,11 +248,29 @@ async function downloadVersion(): Promise<void> {
             </dl>
           </section>
 
-          <ArtifactStructuredView
-            v-if="structured"
+          <!-- US-22, US-23: CT, REL-QA, AMEACAS and REL-SEG (ESP-15, ESP-16). -->
+          <QualityArtifactView
+            v-if="structured && QUALITY_TYPES.includes(structured.type)"
             :project-id="projectId"
             :artifact="structured"
           />
+          <ArtifactStructuredView
+            v-else-if="structured"
+            :project-id="projectId"
+            :artifact="structured"
+          />
+          <!-- ESP-24 2: the full traceability with this artifact as root (US-28). -->
+          <router-link
+            :to="{
+              name: ROUTE_NAMES.traceability,
+              params: { projectId, view: 'links' },
+              query: { root: artifactId },
+            }"
+            class="d-inline-block text-body-2 mb-6"
+            data-testid="artifact-traceability"
+          >
+            {{ $t('artifacts.traceabilityLink') }}
+          </router-link>
 
           <section aria-labelledby="artifact-body-heading" class="mb-6">
             <h2 id="artifact-body-heading" class="text-h6 mb-1">{{ $t('artifacts.body') }}</h2>
