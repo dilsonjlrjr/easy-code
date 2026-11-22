@@ -18,10 +18,13 @@ type PendingUseCases interface {
 }
 
 type pendingSummaryJSON struct {
-	FailedChecks *int  `json:"failed_checks,omitempty"`
-	Blocks       *bool `json:"blocks,omitempty"`
-	Questions    *int  `json:"questions,omitempty"`
-	YouDecide    bool  `json:"you_decide"`
+	FailedChecks  *int    `json:"failed_checks,omitempty"`
+	Blocks        *bool   `json:"blocks,omitempty"`
+	Questions     *int    `json:"questions,omitempty"`
+	Severity      *string `json:"severity,omitempty"`
+	Cycles        *int    `json:"cycles,omitempty"`
+	BlocksRelease *bool   `json:"blocks_release,omitempty"`
+	YouDecide     bool    `json:"you_decide"`
 }
 
 type pendingItemJSON struct {
@@ -74,6 +77,9 @@ func (a *api) listPendingItems(rc *fasthttp.RequestCtx, principal identity.Princ
 		case pending.TypeQuestion:
 			view.Title = a.responder.Message(rc, "pending.question.title", map[string]string{"wave": item.Wave, "agent": item.Agent})
 			view.Summary.Questions = &item.Questions
+		case pending.TypeFinding:
+			view.Title = a.responder.Message(rc, "pending.finding_escalated.title", map[string]string{"finding": item.Finding, "cycles": strconv.Itoa(item.Cycles)})
+			view.Summary.Severity, view.Summary.Cycles, view.Summary.BlocksRelease = &item.Severity, &item.Cycles, &item.Blocks
 		}
 		out.Items = append(out.Items, view)
 	}

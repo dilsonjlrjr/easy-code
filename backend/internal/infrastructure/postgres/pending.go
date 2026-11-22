@@ -28,6 +28,9 @@ func NewPending(pool *pgxpool.Pool, definition domainworkflow.Definition) Pendin
 	for _, stage := range definition.Stages {
 		agents[stage.ID] = stage.Agent
 	}
+	for _, activity := range definition.Activities {
+		agents[activity.ID] = activity.Agent
+	}
 	return Pending{pool: pool, agents: agents}
 }
 
@@ -46,17 +49,25 @@ items AS (
            WHERE c.round_id = r.id AND c.evaluation = r.current_evaluation AND c.result IN ('failed','error'))::int AS failed_checks,
          EXISTS (SELECT 1 FROM easycode.check_executions c WHERE c.round_id = r.id AND c.evaluation = r.current_evaluation
                     AND c.result IN ('failed','error') AND c.severity = 'blocks') AS blocks,
-         '' AS wave, 0 AS questions, p.approver AS you_decide
+         '' AS wave, 0 AS questions, '' AS finding, '' AS severity, 0 AS cycles, p.approver AS you_decide
     FROM easycode.gate_rounds r JOIN mine p ON p.id = r.project_id
    WHERE r.state = 'awaiting_human' AND p.decides AND 'gate' = ANY ($3::text[])
   UNION ALL
   SELECT 'question', p.public_id::text, p.name, w.stage, 'question', w.code || '/' || q.code, q.opened_at, '', 0, 0, false,
-         w.code, (SELECT count(*) FROM easycode.question_items i WHERE i.question_id = q.id)::int, true
+         w.code, (SELECT count(*) FROM easycode.question_items i WHERE i.question_id = q.id)::int, '', '', 0, true
     FROM easycode.wave_questions q JOIN mine p ON p.id = q.project_id JOIN easycode.waves w ON w.id = q.wave_id
    WHERE q.answered_at IS NULL AND w.state = 'awaiting_user' AND 'question' = ANY ($3::text[])
+  UNION ALL
+  -- escalated finding waiting for the approver decision (US-32 CA-4, ESP-19), for whoever decides
+  SELECT 'finding_escalated', p.public_id::text, p.name, f.origin_stage, 'finding', a.code,
+         coalesce((SELECT max(e.escalated_at) FROM easycode.finding_escalations e WHERE e.finding_id = f.artifact_id), f.updated_at),
+         '', 0, 0, f.severity IN ('critical','high'), '', 0, a.code, f.severity,
+         (SELECT count(*) FROM easycode.finding_cycles c WHERE c.finding_id = f.artifact_id)::int, p.approver
+    FROM easycode.findings f JOIN mine p ON p.id = f.project_id JOIN easycode.artifacts a ON a.id = f.artifact_id
+   WHERE f.status = 'escalated' AND p.decides AND 'finding_escalated' = ANY ($3::text[])
 )
 SELECT type, project_id, project_name, stage, target_type, target_id, opened_at, gate, number, failed_checks, blocks,
-       wave, questions, you_decide, count(*) OVER ()
+       wave, questions, finding, severity, cycles, you_decide, count(*) OVER ()
   FROM items
  ORDER BY opened_at, target_id
  LIMIT $4 OFFSET $5`
@@ -72,7 +83,8 @@ func (p Pending) Items(ctx context.Context, principal identity.Principal, types 
 	items, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (pending.Item, error) {
 		var item pending.Item
 		err := row.Scan(&item.Type, &item.ProjectID, &item.ProjectName, &item.Stage, &item.TargetType, &item.TargetID, &item.OpenedAt,
-			&item.Gate, &item.Round, &item.FailedChecks, &item.Blocks, &item.Wave, &item.Questions, &item.YouDecide, &total)
+			&item.Gate, &item.Round, &item.FailedChecks, &item.Blocks, &item.Wave, &item.Questions, &item.Finding, &item.Severity, &item.Cycles,
+			&item.YouDecide, &total)
 		item.Agent = p.agents[item.Stage]
 		return item, err
 	})

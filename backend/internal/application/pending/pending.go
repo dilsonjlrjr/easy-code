@@ -1,7 +1,8 @@
 // Package pending is the single inbox of a person (listPendingItems, US-48, US-10 CA-2): what waits
 // for a human in the projects where the person has a role. Phase 1 has gates (for whoever decides:
-// approver or lead, never a member only, US-48 CA-3) and agent questions (every role, US-48 RN-2).
-// Escalated findings (US-32) and budget alerts (US-39) join in Phase 2.
+// approver or lead, never a member only, US-48 CA-3) and agent questions (every role, US-48 RN-2);
+// Phase 2 adds the escalated findings waiting for the approver decision (US-32, ESP-19). Budget alerts
+// (US-39) join in MARCO-6.
 package pending
 
 import (
@@ -17,10 +18,11 @@ import (
 const (
 	TypeGate     = "gate"
 	TypeQuestion = "question"
+	TypeFinding  = "finding_escalated"
 )
 
 // Phase 1 types; the other ones of the contract are accepted and give nothing yet.
-var knownTypes = []string{TypeGate, TypeQuestion, "finding_escalated", "budget"}
+var knownTypes = []string{TypeGate, TypeQuestion, TypeFinding, "budget"}
 
 // Item is one waiting item.
 type Item struct {
@@ -38,6 +40,9 @@ type Item struct {
 	Blocks       bool
 	Wave         string // question items
 	Questions    int
+	Finding      string // finding items: the ACH, its severity, cycles and whether it blocks the Release
+	Severity     string
+	Cycles       int
 	YouDecide    bool
 }
 
@@ -71,7 +76,7 @@ func (s *Service) List(ctx context.Context, principal identity.Principal, filter
 	}
 	types := filter.Types
 	if len(types) == 0 {
-		types = []string{TypeGate, TypeQuestion}
+		types = []string{TypeGate, TypeQuestion, TypeFinding}
 	}
 	return s.store.Items(ctx, principal, types, filter.Limit, filter.Offset)
 }

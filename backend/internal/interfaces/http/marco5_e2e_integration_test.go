@@ -675,8 +675,23 @@ func TestMarco5QualityAndFindings(t *testing.T) {
 		count(t, db, "SELECT count(*) FROM easycode.waves WHERE stage = 'implementation' AND purpose = 'rework'") != 3 {
 		t.Fatalf("US-32 CA-5: %v", stages["implementation"])
 	}
-	if pending := live.json(t, "GET", "/api/v1/pending-items", "", nil, 200); !strings.Contains(fmt.Sprint(pending), "ACH-02") {
-		t.Logf("pending items do not list the escalated finding yet: %v", pending)
+	// US-32 CA-4, ESP-19: the escalated finding waits in the inbox of who decides, with severity and cycles.
+	inbox := live.json(t, "GET", "/api/v1/pending-items?type=finding_escalated", "", nil, 200)
+	items := inbox["items"].([]any)
+	if len(items) != 1 || inbox["total"] != float64(1) {
+		t.Fatalf("US-32 CA-4: escalated finding in the pending items: %v", inbox)
+	}
+	item := items[0].(map[string]any)
+	summary := item["summary"].(map[string]any)
+	if item["type"] != "finding_escalated" || item["target"].(map[string]any)["type"] != "finding" || item["target"].(map[string]any)["id"] != "ACH-02" ||
+		item["stage"] != "qa" || item["agent"] != "qa-agent" || summary["severity"] != "high" || summary["cycles"] != float64(3) ||
+		summary["blocks_release"] != true || summary["you_decide"] != true || !strings.Contains(item["title"].(string), "ACH-02") {
+		t.Fatalf("ESP-19: pending finding item: %v", item)
+	}
+	reader := live.as(t, oidctest.User{Subject: "rita", Name: "Rita Melo"})
+	live.json(t, "PUT", base+"/members/rita", `{"roles":["member"]}`, nil, 200)
+	if n := reader.json(t, "GET", "/api/v1/pending-items", "", nil, 200)["total"]; n != float64(0) {
+		t.Fatalf("US-48 CA-3: a member does not decide the escalated finding: %v", n)
 	}
 	// US-32 CA-6: the extra round needs a recent SSO authentication.
 	stale := live

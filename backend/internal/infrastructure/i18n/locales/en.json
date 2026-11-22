@@ -74,6 +74,7 @@
   "problem.separation-of-duties.detail": "Whoever assigned the approver role to themselves waits 24 hours before approving a gate of the project; the administrator does not assign roles to themselves.",
   "pending.gate.title": "Gate {gate} (round {round}) awaiting decision",
   "pending.question.title": "Questions of the {agent} agent in wave {wave}",
+  "pending.finding_escalated.title": "Finding {finding} escalated after {cycles} cycles: approver decision",
   "problem.tool-not-allowed.title": "Tool outside the agent role",
   "problem.tool-not-allowed.detail": "The tool {tool} is not allowed for the role of the agent (permissoes.yaml).",
   "problem.blocked-skill.title": "Skill version not available",
