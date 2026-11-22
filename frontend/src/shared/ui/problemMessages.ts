@@ -24,6 +24,13 @@ const KNOWN_SLUGS = new Set([
   'rate-limit',
   'internal',
   'service-unavailable',
+  'last-approver',
+  'lead-required',
+  'separation-of-duties',
+  'reauthentication-required',
+  'requires-web-session',
+  'pending-human-check',
+  'blocking-check-failed',
 ])
 
 const STATUS_FALLBACK: Record<number, string> = {

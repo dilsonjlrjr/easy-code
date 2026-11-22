@@ -11,12 +11,4 @@ describe('resolveRuntimeConfig', () => {
     expect(resolveRuntimeConfig({ apiBaseUrl: '  ' }, '/build-time').apiBaseUrl).toBe('/build-time')
     expect(resolveRuntimeConfig(undefined, undefined).apiBaseUrl).toBe('/api/v1')
   })
-
-  it('offers the development sign-in only when the configuration says so (ESP-02 ER-02-9)', () => {
-    expect(resolveRuntimeConfig(undefined, undefined).devSignIn).toBe(false)
-    expect(resolveRuntimeConfig({ devSignIn: 'false' }, undefined).devSignIn).toBe(false)
-    expect(resolveRuntimeConfig({ devSignIn: true }, undefined).devSignIn).toBe(true)
-    expect(resolveRuntimeConfig({ devSignIn: 'true' }, undefined).devSignIn).toBe(true)
-    expect(resolveRuntimeConfig(undefined, undefined, 'true').devSignIn).toBe(true)
-  })
 })

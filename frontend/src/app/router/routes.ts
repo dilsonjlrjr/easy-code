@@ -87,5 +87,13 @@ export const routes: RouteRecordRaw[] = [
     component: () => import('@/features/auth/pages/LoginPage.vue'),
     meta: { titleKey: 'pages.login.title', layout: 'blank', public: true },
   },
+  {
+    // completeWebLogin sends a disabled account or one without access here (US-01 CA-2).
+    path: '/access-denied',
+    name: ROUTE_NAMES.accessDenied,
+    component: () => import('@/features/auth/pages/LoginPage.vue'),
+    props: { denied: true },
+    meta: { titleKey: 'pages.login.deniedTitle', layout: 'blank', public: true },
+  },
   { path: '/:unknownPath(.*)*', redirect: { name: ROUTE_NAMES.home } },
 ]

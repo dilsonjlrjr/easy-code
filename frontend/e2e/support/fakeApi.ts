@@ -107,7 +107,12 @@ export const DEV_USER: FakeUser = {
 export class FakeApi {
   signedIn = false
   user: FakeUser = DEV_USER
-  devSignIn = true
+  /** The SSO refuses the account (US-01 CA-2): completeWebLogin sends the browser to /access-denied. */
+  accountWithoutAccess = false
+  /** Unauthenticated answers say `session-expired` instead of `not-authenticated` (ER-02-5). */
+  sessionExpired = false
+  /** `authenticated_at` within 10 min; otherwise approving a gate asks for the step-up (ADR-19). */
+  recentlyAuthenticated = true
   attachmentLimit = 1024 * 1024
   providers: ProviderState[] = [
     { id: 'anthropic', name: 'Anthropic', key: { status: 'missing', last_test: null } },
@@ -131,7 +136,7 @@ export class FakeApi {
     await page.route('**/config.js', (route) =>
       route.fulfill({
         contentType: 'application/javascript',
-        body: `window.__EASY_CODE_CONFIG__ = { apiBaseUrl: "${API}", devSignIn: ${String(this.devSignIn)} }`,
+        body: `window.__EASY_CODE_CONFIG__ = { apiBaseUrl: "${API}" }`,
       }),
     )
     await page.route(`**${API}/**`, async (route, request) => {
@@ -205,6 +210,19 @@ export class FakeApi {
     return full
   }
 
+  /** Requests of the SSO sign-in (`startWebLogin`), with their query. */
+  ssoRequests(): string[] {
+    return this.requests
+      .filter((request) => request.method === 'GET' && request.path.startsWith('/session/login'))
+      .map((request) => request.path)
+  }
+
+  /** The session ends by inactivity: the next call answers 401 `session-expired`. */
+  expireSession(): void {
+    this.signedIn = false
+    this.sessionExpired = true
+  }
+
   streamRequests(projectId: string): Array<{ url: string; lastEventId: string | undefined }> {
     return this.requests
       .filter(
@@ -230,11 +248,22 @@ export class FakeApi {
     }
     this.requests.push({ method, path: `${path}${url.search}`, headers: request.headers(), body })
 
-    if (method === 'POST' && path === '/dev/session') {
+    // Stand-in for startWebLogin + Keycloak + completeWebLogin: the SSO accepts the account at once
+    // and the api redirects back to `callback` with the session (or to /access-denied).
+    if (method === 'GET' && path === '/session/login') {
+      if (this.accountWithoutAccess) {
+        return route.fulfill({ status: 302, headers: { Location: '/access-denied' } })
+      }
       this.signedIn = true
-      return route.fulfill({ status: 204 })
+      this.sessionExpired = false
+      if (url.searchParams.get('reauthenticate') === 'true') this.recentlyAuthenticated = true
+      const callback = url.searchParams.get('callback') ?? '/'
+      return route.fulfill({ status: 302, headers: { Location: callback } })
     }
-    if (!this.signedIn) return this.json(route, 401, problem('not-authenticated', 401))
+    if (!this.signedIn) {
+      const slug = this.sessionExpired ? 'session-expired' : 'not-authenticated'
+      return this.json(route, 401, problem(slug, 401))
+    }
 
     const segments = path.split('/').filter(Boolean)
     const response = this.dispatch(method, segments, body, url)
@@ -288,6 +317,9 @@ export class FakeApi {
           organization: { id: 'org-1', name: 'Organização de desenvolvimento' },
           attachment_limit_bytes: this.attachmentLimit,
           csrf_token: 'csrf-dev',
+          authenticated_at: this.recentlyAuthenticated
+            ? '2026-11-22T10:00:00-03:00'
+            : '2026-11-22T08:00:00-03:00',
         },
       }
     }

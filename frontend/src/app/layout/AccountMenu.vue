@@ -2,7 +2,7 @@
 import { mdiAccountCircleOutline } from '@mdi/js'
 import { computed } from 'vue'
 import { useRouter } from 'vue-router'
-import { ROUTE_NAMES } from '@/app/router/routeNames'
+import { LOGIN_REASONS, ROUTE_NAMES } from '@/app/router/routeNames'
 import { useSessionStore } from '@/shared/session/sessionStore'
 
 const session = useSessionStore()
@@ -15,7 +15,7 @@ async function signOut(): Promise<void> {
   try {
     await session.signOut()
   } finally {
-    await router.push({ name: ROUTE_NAMES.login })
+    await router.push({ name: ROUTE_NAMES.login, query: { reason: LOGIN_REASONS.signedOut } })
   }
 }
 </script>

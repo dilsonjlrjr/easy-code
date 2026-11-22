@@ -1,6 +1,6 @@
 import { onBeforeUnmount, ref, type Ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { ROUTE_NAMES } from '@/app/router/routeNames'
+import { LOGIN_REASONS, ROUTE_NAMES } from '@/app/router/routeNames'
 import { apiClient } from '@/shared/api/apiClient'
 import { joinUrl } from '@/shared/api/httpClient'
 import { useSessionStore } from '@/shared/session/sessionStore'
@@ -53,9 +53,14 @@ export function useProjectEventStream(): {
   function handleEnded(reason: EndReason): void {
     if (reason === 'session_expired' || reason === 'session_revoked') {
       session.markSignedOut()
+      // ER-02-5 says why on expiry; a revoked session (signed out elsewhere) is just no session (ER-02-7).
       void router.push({
         name: ROUTE_NAMES.login,
-        query: { return: router.currentRoute.value.fullPath },
+        query: {
+          reason:
+            reason === 'session_expired' ? LOGIN_REASONS.sessionExpired : LOGIN_REASONS.signedOut,
+          return: router.currentRoute.value.fullPath,
+        },
       })
       return
     }

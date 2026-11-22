@@ -17,20 +17,23 @@ export function setSessionApi(api: SessionApi): void {
 export const useSessionStore = defineStore('session', () => {
   const user = ref<CurrentUser | null>(null)
   const status = ref<SessionStatus>('unknown')
+  /** Problem slug of the 401 that left the session anonymous (`session-expired`, ER-02-5). */
+  const anonymousReason = ref<string>()
   let loading: Promise<void> | undefined
 
   const isAdministrator = computed(
     () => user.value?.organization_roles.includes('administrator') ?? false,
   )
+  const csrfToken = computed(() => user.value?.csrf_token)
 
   async function load(): Promise<void> {
     try {
       user.value = await sessionApi.getCurrentUser()
       status.value = 'authenticated'
+      anonymousReason.value = undefined
     } catch (error) {
       if (isApiError(error) && error.status === UNAUTHORIZED) {
-        user.value = null
-        status.value = 'anonymous'
+        markSignedOut(error.slug)
         return
       }
       throw error
@@ -46,8 +49,8 @@ export const useSessionStore = defineStore('session', () => {
     await loading
   }
 
-  async function signInWithDevIdentity(): Promise<void> {
-    await sessionApi.startDevSession()
+  /** Reads the user again (fresh `authenticated_at` and `csrf_token` after a step-up). */
+  async function refresh(): Promise<void> {
     await load()
   }
 
@@ -60,17 +63,20 @@ export const useSessionStore = defineStore('session', () => {
   }
 
   /** The API said the session is gone (401, `easycode.ended`). */
-  function markSignedOut(): void {
+  function markSignedOut(reason?: string): void {
     user.value = null
     status.value = 'anonymous'
+    anonymousReason.value = reason
   }
 
   return {
     user,
     status,
+    anonymousReason,
     isAdministrator,
+    csrfToken,
     ensureLoaded,
-    signInWithDevIdentity,
+    refresh,
     signOut,
     markSignedOut,
   }

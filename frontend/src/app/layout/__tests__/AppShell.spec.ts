@@ -14,7 +14,6 @@ setSessionApi({
       organization_roles: ['administrator'],
       access_medium: 'web',
     }),
-  startDevSession: vi.fn(),
   endSession: vi.fn(),
 })
 
