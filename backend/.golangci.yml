@@ -1,0 +1,64 @@
+version: "2"
+
+run:
+  timeout: 20m
+
+linters:
+  default: standard
+  enable:
+    - bodyclose
+    - errorlint
+    - gocritic
+    - gosec
+    - misspell
+    - nolintlint
+    - revive
+    - unconvert
+    - unparam
+    - depguard
+  settings:
+    misspell:
+      locale: US
+    gosec:
+      excludes:
+        - G115 # integer conversions are bounded by config validation
+    depguard:
+      rules:
+        domain:
+          files: ["**/internal/domain/**"]
+          deny:
+            - pkg: "easycode/internal/application"
+              desc: "domain depends on nothing"
+            - pkg: "easycode/internal/infrastructure"
+              desc: "domain depends on nothing"
+            - pkg: "easycode/internal/interfaces"
+              desc: "domain depends on nothing"
+            - pkg: "github.com/"
+              desc: "domain has no third-party dependencies"
+        application:
+          files: ["**/internal/application/**", "!**/*_test.go"]
+          deny:
+            - pkg: "easycode/internal/infrastructure"
+              desc: "use cases talk to adapters through ports"
+            - pkg: "easycode/internal/interfaces"
+              desc: "use cases do not know the transport"
+        interfaces:
+          files: ["**/internal/interfaces/**", "!**/*_test.go"]
+          deny:
+            - pkg: "easycode/internal/infrastructure/postgres"
+              desc: "handlers reach the database only through use cases"
+  exclusions:
+    presets:
+      - std-error-handling
+    rules:
+      - path: _test\.go
+        linters: [gosec]
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - easycode

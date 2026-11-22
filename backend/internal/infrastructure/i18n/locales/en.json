@@ -1,0 +1,12 @@
+{
+  "health.alive": "Service is up.",
+  "health.ready": "Ready to serve requests.",
+  "problem.internal.title": "Internal error",
+  "problem.internal.detail": "An unexpected error occurred. Give the request id to support.",
+  "problem.not-found.title": "Resource not found",
+  "problem.not-found.detail": "The requested resource does not exist or you have no access to it.",
+  "problem.method-not-allowed.title": "Method not allowed",
+  "problem.method-not-allowed.detail": "The {method} method is not accepted on this resource.",
+  "problem.service-unavailable.title": "Service unavailable",
+  "problem.service-unavailable.detail": "A required dependency did not answer. Try again in a moment."
+}

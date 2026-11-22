@@ -1,0 +1,12 @@
+{
+  "health.alive": "Serviço no ar.",
+  "health.ready": "Pronto para atender.",
+  "problem.internal.title": "Erro interno",
+  "problem.internal.detail": "Ocorreu um erro inesperado. Informe o identificador da requisição ao suporte.",
+  "problem.not-found.title": "Recurso não encontrado",
+  "problem.not-found.detail": "O recurso pedido não existe ou você não tem acesso a ele.",
+  "problem.method-not-allowed.title": "Método não permitido",
+  "problem.method-not-allowed.detail": "O método {method} não é aceito neste recurso.",
+  "problem.service-unavailable.title": "Serviço indisponível",
+  "problem.service-unavailable.detail": "Uma dependência necessária não respondeu. Tente novamente em instantes."
+}

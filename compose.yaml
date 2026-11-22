@@ -1,0 +1,82 @@
+# Local development stack for Easy Code (ADR-16 describes production).
+# Usage: docker compose up --build   (web on http://localhost:8080, api on http://localhost:8081)
+#
+# Development shortcuts, not for production:
+# - every service connects as the database superuser; production uses the per-process roles
+#   that the first migration creates (ADR-18);
+# - no reverse proxy, TLS or Keycloak yet.
+
+name: easycode
+
+x-backend: &backend
+  build:
+    context: ./backend
+  environment: &backend-env
+    EASYCODE_DATABASE_URL: postgres://easycode:easycode@postgres:5432/easycode?sslmode=disable
+    EASYCODE_LOG_LEVEL: ${EASYCODE_LOG_LEVEL:-debug}
+  depends_on:
+    migrate:
+      condition: service_completed_successfully
+
+services:
+  postgres:
+    image: postgres:17.6-bookworm
+    environment:
+      POSTGRES_USER: easycode
+      POSTGRES_PASSWORD: easycode
+      POSTGRES_DB: easycode
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      # TCP check: during first-boot init the image runs a socket-only server, which would pass a socket check.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U easycode -d easycode"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  migrate:
+    build:
+      context: ./backend
+      args:
+        BINARY: easycode-api
+    command: ["migrate"]
+    environment:
+      EASYCODE_MIGRATION_DATABASE_URL: postgres://easycode:easycode@postgres:5432/easycode?sslmode=disable
+      EASYCODE_DATABASE_URL: postgres://easycode:easycode@postgres:5432/easycode?sslmode=disable
+      EASYCODE_LOG_LEVEL: info
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    <<: *backend
+    build:
+      context: ./backend
+      args:
+        BINARY: easycode-api
+    environment:
+      <<: *backend-env
+      EASYCODE_HTTP_ADDR: ":8080"
+    ports:
+      - "127.0.0.1:8081:8080"
+
+  worker:
+    <<: *backend
+    build:
+      context: ./backend
+      args:
+        BINARY: easycode-worker
+
+  frontend:
+    build:
+      context: ./frontend
+    environment:
+      API_BASE_URL: http://localhost:8081/api/v1
+    ports:
+      - "127.0.0.1:8080:8080"
+
+volumes:
+  postgres-data:
