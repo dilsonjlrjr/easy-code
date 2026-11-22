@@ -2,6 +2,7 @@
 import { mdiMenu } from '@mdi/js'
 import LanguageSwitcher from '@/shared/ui/LanguageSwitcher.vue'
 import ThemeSwitcher from '@/shared/ui/ThemeSwitcher.vue'
+import AccountMenu from './AccountMenu.vue'
 
 defineProps<{ showMenuToggle: boolean; menuExpanded: boolean }>()
 defineEmits<{ toggleMenu: [] }>()
@@ -21,6 +22,7 @@ defineEmits<{ toggleMenu: [] }>()
     <template #append>
       <LanguageSwitcher />
       <ThemeSwitcher />
+      <AccountMenu />
     </template>
   </v-app-bar>
 </template>

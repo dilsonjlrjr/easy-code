@@ -1,7 +1,8 @@
 import { computed, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { useDisplay } from 'vuetify'
-import type { RouteName } from '@/app/router/routeNames'
+import { NAVIGATION_SECTIONS, type RouteName } from '@/app/router/routeNames'
+import { useSessionStore } from '@/shared/session/sessionStore'
 import { visibleNavigationItems } from './navigationItems'
 
 export type NavigationMode = 'drawer' | 'rail' | 'bottom-bar'
@@ -22,11 +23,14 @@ export function useNavigationLayout() {
     return 'rail'
   })
 
-  // Until authentication exists every destination is shown; the role filter is already in place.
-  const items = computed(() => visibleNavigationItems(true))
+  const session = useSessionStore()
+  const items = computed(() => visibleNavigationItems(session.isAdministrator))
 
+  /** Nested pages (a project, a wave) keep their section marked as current. */
   function isCurrent(routeName: RouteName): boolean {
-    return route.name === routeName
+    const current = route.name as RouteName | undefined
+    if (current === undefined) return false
+    return current === routeName || NAVIGATION_SECTIONS[current] === routeName
   }
 
   function toggleRail(): void {

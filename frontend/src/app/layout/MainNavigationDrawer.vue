@@ -11,7 +11,8 @@ defineProps<{
 
 <template>
   <v-navigation-drawer permanent :rail="rail" :aria-label="$t('navigation.mainLabel')">
-    <v-list nav density="comfortable">
+    <!-- The links are plain navigation links; no list widget role (axe aria-required-children). -->
+    <v-list nav density="comfortable" role="none">
       <v-list-item
         v-for="item in items"
         :key="item.routeName"

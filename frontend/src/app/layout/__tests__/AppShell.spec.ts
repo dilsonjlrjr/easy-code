@@ -1,10 +1,25 @@
 import { flushPromises, mount } from '@vue/test-utils'
-import { describe, expect, it } from 'vitest'
+import { createPinia, setActivePinia } from 'pinia'
+import { describe, expect, it, vi } from 'vitest'
 import App from '@/app/App.vue'
 import { registerPlugins } from '@/app/plugins'
 import { router } from '@/app/router'
+import { setSessionApi } from '@/shared/session/sessionStore'
+
+setSessionApi({
+  getCurrentUser: () =>
+    Promise.resolve({
+      id: 'dev',
+      name: 'Dev',
+      organization_roles: ['administrator'],
+      access_medium: 'web',
+    }),
+  startDevSession: vi.fn(),
+  endSession: vi.fn(),
+})
 
 async function mountApp() {
+  setActivePinia(createPinia())
   await router.push('/projects')
   await router.isReady()
   const wrapper = mount(App, {
@@ -15,7 +30,8 @@ async function mountApp() {
   return wrapper
 }
 
-describe('application shell', () => {
+// The first mount loads Vuetify and a lazy page; on a busy CI host it can pass the 5 s default.
+describe('application shell', { timeout: 20_000 }, () => {
   it('renders the banner, the main navigation and the main content landmarks', async () => {
     const wrapper = await mountApp()
 

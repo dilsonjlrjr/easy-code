@@ -85,3 +85,66 @@ describe('joinUrl', () => {
     expect(joinUrl('/api', 'projects')).toBe('/api/projects')
   })
 })
+
+describe('createHttpClient additions for the MARCO-1 screens', () => {
+  it('sends query parameters, repeating array values and skipping undefined ones', async () => {
+    const fetchImplementation = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse({ items: [] }))
+    const client = createHttpClient({
+      baseUrl: '/api/v1',
+      currentLanguage: () => 'pt-BR',
+      fetchImplementation,
+    })
+
+    await client.get('/projects', {
+      query: { state: ['created', 'paused'], cursor: undefined, limit: 20 },
+    })
+
+    expect(fetchImplementation.mock.calls[0]?.[0]).toBe(
+      '/api/v1/projects?state=created&state=paused&limit=20',
+    )
+  })
+
+  it('sends multipart bodies as they are and exposes response headers such as ETag', async () => {
+    const fetchImplementation = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response('{}', {
+        status: 200,
+        headers: { 'Content-Type': 'application/json', ETag: '"v2"' },
+      }),
+    )
+    const client = createHttpClient({
+      baseUrl: '/api/v1',
+      currentLanguage: () => 'pt-BR',
+      fetchImplementation,
+    })
+    const form = new FormData()
+    form.append('file', new Blob(['ata']), 'ata.txt')
+
+    const response = await client.send('POST', '/projects/p1/attachments', { body: form })
+
+    const [, init] = fetchImplementation.mock.calls[0] ?? []
+    expect(init?.body).toBe(form)
+    expect(new Headers(init?.headers).has('Content-Type')).toBe(false)
+    expect(response.headers.get('ETag')).toBe('"v2"')
+  })
+
+  it('tells the application about a 401 so it can go to the login page', async () => {
+    const onUnauthorized = vi.fn()
+    const problem = {
+      type: 'urn:easycode:problem:session-expired',
+      title: 'Sessão expirada',
+      status: 401,
+    }
+    const fetchImplementation = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(jsonResponse(problem, 401, 'application/problem+json'))
+    const client = createHttpClient({
+      baseUrl: '/api/v1',
+      currentLanguage: () => 'pt-BR',
+      fetchImplementation,
+      onUnauthorized,
+    })
+
+    await expect(client.get('/me')).rejects.toMatchObject({ status: 401 })
+    expect(onUnauthorized).toHaveBeenCalledWith(problem)
+  })
+})

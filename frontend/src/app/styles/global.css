@@ -17,3 +17,56 @@
     transition-duration: 0.01ms !important;
   }
 }
+
+/* Text only for screen readers (live regions, table captions). */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Ids of artifacts, waves and findings (ESP-00 3.3): monospace, selectable. */
+.monospace {
+  font-family: 'Roboto Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  user-select: text;
+}
+
+/* Tables scroll on their own on narrow screens; the page never scrolls sideways (CA-00-19). */
+.table-scroll {
+  overflow-x: auto;
+  max-width: 100%;
+}
+
+.plain-list {
+  list-style: none;
+  padding: 0;
+}
+
+/* Label / value pairs (summaries, cost and time). */
+.summary-list {
+  display: grid;
+  grid-template-columns: minmax(140px, max-content) 1fr;
+  gap: 0.25rem 1rem;
+  margin: 0;
+}
+
+.summary-list dt {
+  font-weight: 500;
+}
+
+.summary-list dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+/* Field labels and hints at full opacity: with Vuetify's medium emphasis they fail 4.5:1 (RNF-18, axe). */
+.v-field-label,
+.v-messages {
+  opacity: 1 !important;
+}

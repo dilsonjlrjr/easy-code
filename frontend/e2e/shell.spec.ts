@@ -1,4 +1,11 @@
 import { expect, test } from '@playwright/test'
+import { FakeApi } from './support/fakeApi'
+
+test.beforeEach(async ({ page }) => {
+  const api = new FakeApi()
+  api.signedIn = true
+  await api.install(page)
+})
 
 test('the shell opens in pt-BR and switches to English, keeping the choice', async ({ page }) => {
   await page.goto('/projects')

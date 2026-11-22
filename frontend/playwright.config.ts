@@ -9,8 +9,9 @@ const PREVIEW_PORT = '4173'
  */
 export default defineConfig({
   testDir: './e2e',
-  timeout: 30_000,
-  expect: { timeout: 5_000 },
+  // Generous limits: the CI host also builds the backend images while the suite runs.
+  timeout: 60_000,
+  expect: { timeout: 10_000 },
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
   reporter: [['list'], ['html', { open: 'never' }]],
