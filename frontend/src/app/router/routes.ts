@@ -98,10 +98,26 @@ export const routes: RouteRecordRaw[] = [
         meta: { titleKey: 'pages.project.traceability', layout: 'shell' },
       },
       {
+        // ESP-17: the release stage has its own page (consolidation, decision, delivery).
+        path: 'stages/release',
+        name: ROUTE_NAMES.release,
+        component: () => import('@/features/release/pages/ReleasePage.vue'),
+        meta: { titleKey: 'pages.release.title', layout: 'shell' },
+      },
+      {
         path: 'stages/:stageId',
         name: ROUTE_NAMES.stage,
         component: () => import('@/features/projects/components/StageDetail.vue'),
         meta: { titleKey: 'pages.stage.title', layout: 'shell' },
+        // Links to the release stage by name open the Release page (same address).
+        beforeEnter: (to) =>
+          to.params.stageId === 'release'
+            ? {
+                name: ROUTE_NAMES.release,
+                params: { projectId: to.params.projectId },
+                query: to.query,
+              }
+            : true,
       },
     ],
   },
