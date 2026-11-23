@@ -51,6 +51,12 @@ async function signOut(): Promise<void> {
           :to="{ name: ROUTE_NAMES.projects }"
           :title="$t('account.myProjects')"
         />
+        <v-list-item
+          role="menuitem"
+          :to="{ name: ROUTE_NAMES.localClientSessions }"
+          :title="$t('account.localClient')"
+          data-testid="account-local-client"
+        />
         <v-list-item role="menuitem" :title="$t('account.signOut')" @click="signOut" />
       </v-list>
     </v-card>

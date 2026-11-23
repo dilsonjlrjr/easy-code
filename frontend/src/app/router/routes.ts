@@ -146,10 +146,25 @@ export const routes: RouteRecordRaw[] = [
     meta: { titleKey: 'pages.agents.title', layout: 'shell' },
   },
   {
-    path: '/settings/:tab(providers|prices|audit)?',
+    path: '/settings/:tab(providers|prices|skills|audit)?',
     name: ROUTE_NAMES.settings,
     component: () => import('@/features/settings/pages/SettingsPage.vue'),
     meta: { titleKey: 'pages.settings.title', layout: 'shell', administratorOnly: true },
+  },
+  {
+    // ESP-23 3.4 "Minha conta › Cliente local" (US-45 CA-5, PD-08): open to every signed-in person.
+    path: '/account/local-client',
+    alias: '/minha-conta/cliente-local',
+    name: ROUTE_NAMES.localClientSessions,
+    component: () => import('@/features/account/pages/LocalClientSessionsPage.vue'),
+    meta: { titleKey: 'pages.localClient.title', layout: 'shell' },
+  },
+  {
+    // US-45 CA-1: the desktop app's code is confirmed here before the SSO (S-19).
+    path: '/device',
+    name: ROUTE_NAMES.deviceConfirmation,
+    component: () => import('@/features/account/pages/DeviceConfirmationPage.vue'),
+    meta: { titleKey: 'pages.device.title', layout: 'shell' },
   },
   {
     path: '/login',

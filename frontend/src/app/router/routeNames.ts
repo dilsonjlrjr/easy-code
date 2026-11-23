@@ -21,6 +21,8 @@ export const ROUTE_NAMES = {
   agents: 'agents',
   projectAgents: 'project-agents',
   settings: 'settings',
+  localClientSessions: 'local-client-sessions',
+  deviceConfirmation: 'device-confirmation',
   login: 'login',
   accessDenied: 'access-denied',
 } as const
@@ -48,8 +50,11 @@ export const NAVIGATION_SECTIONS: Partial<Record<RouteName, RouteName>> = {
   [ROUTE_NAMES.projectAgents]: ROUTE_NAMES.agents,
 }
 
-/** Tabs of Settings (ESP-23): providers and models, price table; the organization trail (ESP-27). */
-export const SETTINGS_TABS = ['providers', 'prices', 'audit'] as const
+/**
+ * Tabs of Settings (ESP-23): providers and models, price table, skill library (US-44); the
+ * organization trail (ESP-27).
+ */
+export const SETTINGS_TABS = ['providers', 'prices', 'skills', 'audit'] as const
 
 /** Why the login page is shown (ER-02-10): it never shows just because there is no session. */
 export const LOGIN_REASONS = {

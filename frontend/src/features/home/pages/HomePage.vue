@@ -18,6 +18,7 @@ import {
 } from '@/features/pending-items/api/pendingItemsApi'
 import { projectsApi, type Project } from '@/features/projects/api/projectsApi'
 import ProjectSituation from '@/features/projects/components/ProjectSituation.vue'
+import RecentActivity from '../components/RecentActivity.vue'
 import { criticalOrHigh, runningAgents } from '@/features/projects/composables/projectSituation'
 
 /**
@@ -289,6 +290,9 @@ void costsLoader.run()
         </section>
       </aside>
     </div>
+
+    <!-- ESP-03 3 / ER-03-11: the last 24 h by replay, then live. -->
+    <RecentActivity :projects="projects" />
   </v-container>
 </template>
 

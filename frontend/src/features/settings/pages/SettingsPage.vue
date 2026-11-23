@@ -8,6 +8,7 @@ import AppBreadcrumbs from '@/shared/ui/AppBreadcrumbs.vue'
 import AuditTrail from '@/features/audit/components/AuditTrail.vue'
 import PricesPanel from '../components/PricesPanel.vue'
 import ProvidersPanel from '../components/ProvidersPanel.vue'
+import SkillLibraryPanel from '../components/SkillLibraryPanel.vue'
 
 type SettingsTab = (typeof SETTINGS_TABS)[number]
 
@@ -50,6 +51,9 @@ const breadcrumbs = computed(() => [
         </v-tabs-window-item>
         <v-tabs-window-item value="prices">
           <PricesPanel v-if="tab === 'prices'" />
+        </v-tabs-window-item>
+        <v-tabs-window-item value="skills">
+          <SkillLibraryPanel v-if="tab === 'skills'" />
         </v-tabs-window-item>
         <!-- ESP-27: the organization trail (keys, prices, models, skills, sessions). -->
         <v-tabs-window-item value="audit">
