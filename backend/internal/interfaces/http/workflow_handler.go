@@ -16,6 +16,10 @@ import (
 // WorkflowUseCases are the workflow use cases (US-05, US-49 basics).
 type WorkflowUseCases interface {
 	Start(ctx context.Context, principal identity.Principal, projectID, key, bodyHash string) (appworkflow.CommandView, error)
+	Pause(ctx context.Context, principal identity.Principal, projectID, key, bodyHash string) (appworkflow.CommandView, error)
+	Resume(ctx context.Context, principal identity.Principal, projectID, key, bodyHash string) (appworkflow.CommandView, error)
+	Cancel(ctx context.Context, principal identity.Principal, projectID, nameConfirmation, key, bodyHash string) (appworkflow.CommandView, error)
+	Complete(ctx context.Context, principal identity.Principal, projectID, key, bodyHash string) (appworkflow.CommandView, error)
 	Command(ctx context.Context, principal identity.Principal, projectID, commandID string) (appworkflow.CommandView, error)
 	Workflow(ctx context.Context, principal identity.Principal, projectID string) (appworkflow.View, error)
 	WorkflowAsAdministrator(ctx context.Context, projectID string) (appworkflow.View, error)
@@ -98,6 +102,60 @@ func (a *api) startWorkflow(rc *fasthttp.RequestCtx, principal identity.Principa
 			return created{}, err
 		}
 		return created{status: fasthttp.StatusAccepted, body: a.commandOf(rc, queued), location: commandLocation(projectID, queued.ID)}, nil
+	})
+}
+
+// projectCommand answers a project lifecycle command with 202 and the Command (US-51, US-52).
+func (a *api) projectCommand(rc *fasthttp.RequestCtx, principal identity.Principal, operation string,
+	apply func(ctx context.Context, projectID, key, bodyHash string) (appworkflow.CommandView, error)) error {
+	projectID, err := pathUUID(rc, "projectId")
+	if err != nil {
+		return err
+	}
+	req, err := idempotencyRequest(rc, principal, operation)
+	if err != nil {
+		return err
+	}
+	return a.idempotent(rc, principal, operation, func(ctx context.Context) (created, error) {
+		queued, err := apply(ctx, projectID, req.Key, req.BodyHash)
+		if err != nil {
+			return created{}, err
+		}
+		return created{status: fasthttp.StatusAccepted, body: a.commandOf(rc, queued), location: commandLocation(projectID, queued.ID)}, nil
+	})
+}
+
+func (a *api) pauseProject(rc *fasthttp.RequestCtx, principal identity.Principal) error {
+	return a.projectCommand(rc, principal, "pauseProject", func(ctx context.Context, projectID, key, hash string) (appworkflow.CommandView, error) {
+		return a.deps.Workflow.Pause(ctx, principal, projectID, key, hash)
+	})
+}
+
+func (a *api) resumeProject(rc *fasthttp.RequestCtx, principal identity.Principal) error {
+	return a.projectCommand(rc, principal, "resumeProject", func(ctx context.Context, projectID, key, hash string) (appworkflow.CommandView, error) {
+		return a.deps.Workflow.Resume(ctx, principal, projectID, key, hash)
+	})
+}
+
+func (a *api) completeProject(rc *fasthttp.RequestCtx, principal identity.Principal) error {
+	return a.projectCommand(rc, principal, "completeProject", func(ctx context.Context, projectID, key, hash string) (appworkflow.CommandView, error) {
+		return a.deps.Workflow.Complete(ctx, principal, projectID, key, hash)
+	})
+}
+
+// cancelProject needs the project name typed again (US-51 RN-1).
+func (a *api) cancelProject(rc *fasthttp.RequestCtx, principal identity.Principal) error {
+	var body struct {
+		NameConfirmation string `json:"name_confirmation"`
+	}
+	if err := decodeJSON(rc, &body); err != nil {
+		return err
+	}
+	if n := len([]rune(body.NameConfirmation)); n < 1 || n > 120 {
+		return failure.New(failure.KindInvalidInput, appworkflow.CodeConfirmationRequired, nil).WithField("name_confirmation", "required")
+	}
+	return a.projectCommand(rc, principal, "cancelProject", func(ctx context.Context, projectID, key, hash string) (appworkflow.CommandView, error) {
+		return a.deps.Workflow.Cancel(ctx, principal, projectID, body.NameConfirmation, key, hash)
 	})
 }
 

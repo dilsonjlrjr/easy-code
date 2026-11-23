@@ -54,7 +54,9 @@ func (l *cancelLedger) LastCheckpoint(context.Context, runtime.Lease, int) (*run
 
 func (l *cancelLedger) SetInputsDigest(context.Context, runtime.Lease, string) error { return nil }
 
-func (l *cancelLedger) Pause(context.Context, runtime.Lease) (bool, error) { return false, nil }
+func (l *cancelLedger) Pause(context.Context, runtime.Lease) (string, bool, error) {
+	return "", false, nil
+}
 
 func (l *cancelLedger) Renew(context.Context, runtime.Lease, time.Duration) error {
 	if l.canceled.Load() {

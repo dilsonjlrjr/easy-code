@@ -2,6 +2,7 @@ package postgres_test
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -56,7 +57,7 @@ func TestCreateProjectInCreatedWithCreatorRoles(t *testing.T) {
 	if view.AcknowledgedBy.Subject != "dev" || view.AcknowledgedAt.IsZero() {
 		t.Fatal("RN-2: acknowledgment recorded with user and date")
 	}
-	if len(view.AvailableActions) != 1 || view.AvailableActions[0] != "start" || view.Summary.StopLimit == nil || view.Summary.StopLimit.Value != "200" {
+	if fmt.Sprint(view.AvailableActions) != "[start cancel]" || view.Summary.StopLimit == nil || view.Summary.StopLimit.Value != "200" {
 		t.Fatalf("actions and budget: %+v", view)
 	}
 	if n := count(t, f.db, "SELECT count(*) FROM easycode.stages"); n != 0 {

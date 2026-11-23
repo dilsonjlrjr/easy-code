@@ -171,7 +171,7 @@ func productDependencies(cfg config.Config, pool *pgxpool.Pool, logger *slog.Log
 	sessions := appsession.NewService(postgres.NewUsers(pool), postgres.NewWebSessions(pool), oidc.NewProvider(realm),
 		websession.NewTokenSealer(id.SessionSecret), websession.NewFlowCodec(id.SessionSecret))
 	trail := postgres.NewAuditTrail(pool)
-	wf, err := specs.StandardWorkflow(specs.StandardAgents)
+	wf, err := specs.StandardWorkflow(specs.ReleaseAgents)
 	if err != nil {
 		return httpapi.Dependencies{}, err
 	}
@@ -179,7 +179,11 @@ func productDependencies(cfg config.Config, pool *pgxpool.Pool, logger *slog.Log
 	projects := postgres.NewProjects(pool, definition.ID, len(definition.Stages))
 	workflows := postgres.NewWorkflow(pool, definition)
 	waveStore := postgres.NewWaves(pool, definition)
-	waves := appwave.NewService(tx, projects, waveStore, waveStore, trail)
+	waves := appwave.NewService(tx, projects, waveStore, waveStore, trail).WithControls(waveStore)
+	// US-08: the Release summary and its blocks read the gate engine ports and the repository (read only).
+	release := appgate.NewReleaseQueries(projects, postgres.NewGates(pool), postgres.NewGates(pool), postgres.NewGates(pool), git.New(cfg.ReposDir), definition)
+	members := appproject.NewMemberService(tx, projects, postgres.NewMembers(pool), oidc.NewPeopleDirectory(oidc.NewAdmin(realm)),
+		postgres.NewOutbox(pool), trail)
 	deps := httpapi.Dependencies{
 		Sessions:             sessions,
 		Idempotency:          idempotency.NewGuard(tx, postgres.NewIdempotencyKeys(pool)),
@@ -187,21 +191,21 @@ func productDependencies(cfg config.Config, pool *pgxpool.Pool, logger *slog.Log
 		AttachmentLimitBytes: cfg.Providers.AttachmentLimitBytes,
 		Pricing:              apppricing.NewService(tx, postgres.NewCatalog(pool), trail),
 		Projects:             appproject.NewService(tx, projects, postgres.NewOutbox(pool), trail, definition.ID, definition.Version),
-		Members: appproject.NewMemberService(tx, projects, postgres.NewMembers(pool), oidc.NewPeopleDirectory(oidc.NewAdmin(realm)),
-			postgres.NewOutbox(pool), trail),
-		Configuration: appproject.NewConfigurationService(tx, projects, projects, postgres.NewCatalog(pool), trail, definition),
-		Workflow:      appworkflow.NewService(tx, projects, workflows, workflows, workflows, trail),
-		Artifacts:     appartifact.NewQueries(projects, postgres.NewArtifacts(pool)),
-		Gates:         appgate.NewDecisions(tx, projects, postgres.NewGates(pool), postgres.NewOutbox(pool), trail),
-		Findings:      appfinding.NewDecisions(tx, projects, postgres.NewFindings(pool), postgres.NewOutbox(pool), trail),
-		Traceability:  apptraceability.NewService(projects, postgres.NewTraceability(pool)),
-		History:       postgres.NewOutbox(pool),
-		Pending:       apppending.NewService(postgres.NewPending(pool, definition)),
-		Waves:         waves,
-		Access:        waves,
-		Skills:        appskill.NewService(postgres.NewSkills(pool)),
-		Agents:        appskill.NewAgents(tx, projects, specs.AgentProfiles{}, postgres.NewSkills(pool), postgres.NewSkills(pool), trail),
-		Repository:    apprepository.NewService(projects, git.New(cfg.ReposDir), cfg.GitBaseURL, git.MainBranch),
+		Members:              members,
+		Configuration:        appproject.NewConfigurationService(tx, projects, projects, postgres.NewCatalog(pool), trail, definition),
+		Workflow:             appworkflow.NewService(tx, projects, workflows, workflows, workflows, trail).WithLifecycle(workflows, members),
+		Artifacts:            appartifact.NewQueries(projects, postgres.NewArtifacts(pool)),
+		Gates:                appgate.NewDecisions(tx, projects, postgres.NewGates(pool), postgres.NewOutbox(pool), trail).WithRelease(release),
+		Release:              release,
+		Findings:             appfinding.NewDecisions(tx, projects, postgres.NewFindings(pool), postgres.NewOutbox(pool), trail),
+		Traceability:         apptraceability.NewService(projects, postgres.NewTraceability(pool)),
+		History:              postgres.NewOutbox(pool),
+		Pending:              apppending.NewService(postgres.NewPending(pool, definition)),
+		Waves:                waves,
+		Access:               waves,
+		Skills:               appskill.NewService(postgres.NewSkills(pool)),
+		Agents:               appskill.NewAgents(tx, projects, specs.AgentProfiles{}, postgres.NewSkills(pool), postgres.NewSkills(pool), trail),
+		Repository:           apprepository.NewService(projects, git.New(cfg.ReposDir), cfg.GitBaseURL, git.MainBranch),
 	}
 	if cfg.Providers.SealingPublicKeyFile == "" {
 		logger.Warn("provider key routes disabled: no sealing public key", slog.String("variable", config.EnvSealingPublicKey))

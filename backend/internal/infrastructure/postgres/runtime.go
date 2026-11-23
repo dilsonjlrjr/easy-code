@@ -44,6 +44,8 @@ SELECT w.id, w.public_id::text, w.code, pr.public_id::text, w.stage, w.agent, w.
        w.lease_owner, w.lease_until, w.lease_epoch, w.current_step, s.state
   FROM easycode.waves w JOIN easycode.projects pr ON pr.id = w.project_id JOIN easycode.stages s ON s.id = w.stage_id
  WHERE w.agent = ANY($1::text[]) AND pr.state = 'in_progress'
+   -- dispatch guard of policy.project_budget: nothing runs with the stop limit reached (US-39 CA-2, RNF-16)
+   AND (pr.budget_stop_limit IS NULL OR `+spentSQL+` < pr.budget_stop_limit)
    AND (w.state = 'queued' OR (w.state = 'running' AND (w.lease_owner IS NULL OR w.lease_until < now())))
    -- a stage blocked by a reopened dependency runs nothing until it is unblocked (US-34 CA-1)
    AND s.state <> 'blocked'
@@ -66,7 +68,7 @@ SELECT w.id, w.public_id::text, w.code, pr.public_id::text, w.stage, w.agent, w.
 	seconds := lease.Seconds()
 	if c.WasQueued {
 		_, err = q.Exec(WithOperation(ctx, "waves.dispatch"), `
-UPDATE easycode.waves SET state = 'running', started_at = now(), cost_estimate = 0, estimate_basis = '{"method":"none"}',
+UPDATE easycode.waves SET state = 'running', started_at = coalesce(started_at, now()), cost_estimate = coalesce(cost_estimate, 0), estimate_basis = coalesce(estimate_basis, '{"method":"none"}'),
        lease_owner = $2, lease_epoch = $3, lease_until = now() + make_interval(secs => $4), heartbeat_at = now()
  WHERE id = $1`, c.WaveID, worker, c.Epoch, seconds)
 	} else {
@@ -142,13 +144,13 @@ func (l Ledger) Inputs(ctx context.Context, c runtime.Claimed) (runtime.Inputs, 
 	var in runtime.Inputs
 	var constraints []byte
 	err := q.QueryRow(WithOperation(ctx, "waves.inputs"), `
-SELECT pr.business_need, pr.artifact_language, ac.instruction_version, ac.instruction_hash, coalesce(w.task, ''),
+SELECT pr.business_need, pr.artifact_language, coalesce(ac.instruction_version, ''), coalesce(ac.instruction_hash, ''), coalesce(w.task, ''),
        (SELECT c.items FROM easycode.project_constraints c WHERE c.project_id = pr.id AND c.defined_at <= w.created_at
          ORDER BY c.version DESC LIMIT 1),
        CASE WHEN w.purpose = 'execution' THEN coalesce((SELECT g.reason FROM easycode.gate_rounds g WHERE g.project_id = pr.id AND g.stage = w.stage
                   AND g.state = 'rejected' ORDER BY g.number DESC LIMIT 1), '') ELSE '' END
   FROM easycode.waves w JOIN easycode.projects pr ON pr.id = w.project_id
-  JOIN easycode.agent_configurations ac ON ac.id = w.agent_configuration_id
+  LEFT JOIN easycode.agent_configurations ac ON ac.id = w.agent_configuration_id -- none for the orchestrator (Release)
  WHERE w.id = $1`, c.WaveID).Scan(&in.BusinessNeed, &in.Language, &in.InstructionVersion, &in.InstructionHash, &in.Task, &constraints, &in.Feedback)
 	if err != nil {
 		return in, fmt.Errorf("wave inputs: %w", classify(err))
@@ -243,15 +245,19 @@ SELECT a.code, a.title, f.severity, v.header, coalesce((SELECT max(c.number) FRO
 	return &brief, nil
 }
 
-// Pause implements runtime.Ledger: checkpoint_reached of a wave asked to pause by policy.
-func (l Ledger) Pause(ctx context.Context, lease runtime.Lease) (bool, error) {
-	tag, err := conn(ctx, l.pool).Exec(WithOperation(ctx, "waves.pause_at_checkpoint"), `
+// Pause implements runtime.Ledger: checkpoint_reached of a wave asked to pause (by the user or by policy).
+func (l Ledger) Pause(ctx context.Context, lease runtime.Lease) (string, bool, error) {
+	var cause string
+	err := conn(ctx, l.pool).QueryRow(WithOperation(ctx, "waves.pause_at_checkpoint"), `
 UPDATE easycode.waves SET state = 'paused', pause_mode = 'cooperative', lease_owner = NULL, lease_until = NULL
- WHERE id = $1 AND lease_owner = $2 AND lease_epoch = $3 AND state = 'pausing'`, lease.WaveID, lease.Owner, lease.Epoch)
-	if err != nil {
-		return false, fmt.Errorf("pause wave: %w", classify(err))
+ WHERE id = $1 AND lease_owner = $2 AND lease_epoch = $3 AND state = 'pausing' RETURNING pause_cause`, lease.WaveID, lease.Owner, lease.Epoch).Scan(&cause)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", false, nil
 	}
-	return tag.RowsAffected() == 1, nil
+	if err != nil {
+		return "", false, fmt.Errorf("pause wave: %w", classify(err))
+	}
+	return cause, true, nil
 }
 
 // opinions are the review opinions recorded by the earlier completed waves of other agents in the
@@ -524,13 +530,20 @@ func (l Ledger) SetStageState(ctx context.Context, projectID, stage, state strin
 	return Workflow{pool: l.pool}.SetStageState(ctx, projectID, stage, state)
 }
 
-// OpenCall implements runtime.CallLog in its own transaction (outside the step).
+// OpenCall implements runtime.CallLog in its own transaction (outside the step). No call starts when the
+// project is not in progress or its spend reached the stop limit (RNF-16: 0 calls after the budget is
+// reached): it returns runtime.ErrDispatchHeld.
 func (l Ledger) OpenCall(ctx context.Context, waveID string, attempt, step int, modelID, priceID int64, role, inputHash string, estimatedInput int) (int64, error) {
 	var id int64
 	err := l.pool.QueryRow(WithOperation(ctx, "model_calls.open"), `
 INSERT INTO easycode.model_calls (wave_id, attempt, step, model_id, role, price_id, input_tokens, currency, input_hash)
-SELECT w.id, $2, $3, $4, $5, $6, $7, w.currency, $8 FROM easycode.waves w WHERE w.public_id = $1::uuid RETURNING id`,
+SELECT w.id, $2, $3, $4, $5, $6, $7, w.currency, $8 FROM easycode.waves w JOIN easycode.projects pr ON pr.id = w.project_id
+ WHERE w.public_id = $1::uuid AND pr.state = 'in_progress' AND (pr.budget_stop_limit IS NULL OR `+spentSQL+` < pr.budget_stop_limit)
+RETURNING id`,
 		waveID, attempt, step, modelID, role, priceID, estimatedInput, inputHash).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, runtime.ErrDispatchHeld
+	}
 	if err != nil {
 		return 0, fmt.Errorf("open model call: %w", classify(err))
 	}

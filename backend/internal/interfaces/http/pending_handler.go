@@ -24,6 +24,7 @@ type pendingSummaryJSON struct {
 	Severity      *string `json:"severity,omitempty"`
 	Cycles        *int    `json:"cycles,omitempty"`
 	BlocksRelease *bool   `json:"blocks_release,omitempty"`
+	Budget        *int    `json:"budget_percentage,omitempty"`
 	YouDecide     bool    `json:"you_decide"`
 }
 
@@ -80,6 +81,9 @@ func (a *api) listPendingItems(rc *fasthttp.RequestCtx, principal identity.Princ
 		case pending.TypeFinding:
 			view.Title = a.responder.Message(rc, "pending.finding_escalated.title", map[string]string{"finding": item.Finding, "cycles": strconv.Itoa(item.Cycles)})
 			view.Summary.Severity, view.Summary.Cycles, view.Summary.BlocksRelease = &item.Severity, &item.Cycles, &item.Blocks
+		case pending.TypeBudget:
+			view.Title = a.responder.Message(rc, "pending.budget.title", map[string]string{"percentage": strconv.Itoa(item.BudgetPercentage)})
+			view.Summary.Budget, view.Summary.Blocks = &item.BudgetPercentage, &item.Blocks
 		}
 		out.Items = append(out.Items, view)
 	}

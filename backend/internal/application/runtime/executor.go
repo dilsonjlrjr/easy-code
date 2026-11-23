@@ -122,6 +122,38 @@ type Executor struct {
 	repository   Repository
 	attachments  func(stage string) []string
 	findings     FindingProgress
+	budget       Budget
+}
+
+// WithBudget makes the executor apply the project budget after every recorded cost (US-39, RNF-16).
+func (e *Executor) WithBudget(budget Budget) *Executor {
+	e.budget = budget
+	return e
+}
+
+// checkBudget runs the budget policy in its own transaction (it locks the project row, so it never runs
+// inside the step transaction that holds the wave row). A failure is only logged: the reconcile of the
+// worker checks the budgets again.
+func (e *Executor) checkBudget(ctx context.Context, c Claimed) {
+	if e.budget == nil {
+		return
+	}
+	err := e.tx.InTx(ctx, func(ctx context.Context) error { return e.budget.CheckBudget(ctx, c.ProjectID, correlation(c)) })
+	if err != nil && ctx.Err() == nil {
+		e.logger.WarnContext(ctx, "budget check failed", slog.String("wave", c.Code), slog.String("error", failure.From(err).Code))
+	}
+}
+
+// hold stops a wave whose next model call was refused (project paused or budget exhausted, RNF-16): the
+// budget policy runs, the wave pauses at its last checkpoint when it was asked to, else the lease is freed
+// and the dispatch guard keeps it until the project runs again.
+func (e *Executor) hold(ctx context.Context, c Claimed) error {
+	e.checkBudget(ctx, c)
+	paused, err := e.pauseIfAsked(ctx, c)
+	if err != nil || paused {
+		return err
+	}
+	return e.ledger.Release(context.WithoutCancel(ctx), c.Lease)
 }
 
 // WithFindings makes the executor apply the finding effects of every completed wave.
@@ -356,6 +388,9 @@ func (e *Executor) loop(ctx context.Context, c Claimed, agent Agent, wave WaveCo
 				_ = e.ledger.Release(context.WithoutCancel(ctx), c.Lease)
 				return ctx.Err()
 			}
+			if errors.Is(stepErr, ErrDispatchHeld) {
+				return e.hold(ctx, c)
+			}
 			retry, err := e.stepFailed(ctx, c, result.Call, stepErr, duration)
 			if err != nil || !retry {
 				return err
@@ -491,6 +526,9 @@ func (e *Executor) saveStep(ctx context.Context, c Claimed, write StepWrite, ext
 	})
 	if err == nil && write.Call != nil {
 		e.callTelemetry(ctx, c, *write.Call, totals.Currency)
+		if write.Call.ID != 0 {
+			e.checkBudget(ctx, c)
+		}
 	}
 	return err
 }
@@ -590,19 +628,19 @@ type schemaProblem struct {
 	Message  string `json:"message"`
 }
 
-// deliver validates the outputs (artifact.schema_valid, guard of wave: complete) and either
-// completes the wave or returns the errors to the agent, failing after the correction limit.
-// pauseIfAsked stops the wave at the checkpoint when it was asked to pause by policy (the stage was
-// blocked by a reopened dependency, US-34 CA-1): pausing → paused (checkpoint_reached).
+// pauseIfAsked stops the wave at the checkpoint when it was asked to pause, by the user (US-12 CA-1) or by
+// policy (project paused, budget exhausted, a reopened dependency of the stage, US-34 CA-1): pausing →
+// paused (checkpoint_reached), nothing lost.
 func (e *Executor) pauseIfAsked(ctx context.Context, c Claimed) (bool, error) {
 	var paused bool
 	err := e.tx.InTx(ctx, func(ctx context.Context) error {
 		var err error
-		if paused, err = e.ledger.Pause(ctx, c.Lease); err != nil || !paused {
+		var cause string
+		if cause, paused, err = e.ledger.Pause(ctx, c.Lease); err != nil || !paused {
 			return err
 		}
 		return e.emit(ctx, c, "br.easycode.wave.paused.v1", "waves/"+c.Code, with(e.base(c), map[string]any{
-			"actor": orchestratorActor, "cause": "dependency_reopened", "mode": "cooperative",
+			"actor": orchestratorActor, "cause": cause, "mode": "cooperative",
 			"transition": map[string]any{"machine": "wave", "from_state": "pausing", "to_state": "paused"},
 		}))
 	})
@@ -668,6 +706,8 @@ func (e *Executor) splitTracking(ctx context.Context, c Claimed, wave WaveContex
 	return versions, updates, problems, nil
 }
 
+// deliver validates the outputs (artifact.schema_valid, guard of wave: complete) and either
+// completes the wave or returns the errors to the agent, failing after the correction limit.
 func (e *Executor) deliver(ctx context.Context, c Claimed, agent Agent, wave WaveContext, write StepWrite, result StepResult) (Checkpoint, bool, error) {
 	artifacts, updates, problems, err := e.splitTracking(ctx, c, wave, e.artifactOutputs(c.Stage, result.Outputs))
 	if err != nil {

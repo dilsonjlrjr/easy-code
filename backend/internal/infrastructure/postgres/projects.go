@@ -172,11 +172,7 @@ SELECT pr.id, pr.name, pr.pause_reason, pr.business_need, pr.provider_acknowledg
 	if workflowID != nil {
 		view.Workflow = *workflowID
 	}
-	if view.State == project.StateCreated {
-		view.AvailableActions = []string{"start"}
-	} else {
-		view.AvailableActions = []string{}
-	}
+	view.AvailableActions = project.Actions(view.State, view.MyRoles, p.Administrator)
 	view.Summary, err = r.summary(ctx, internalID, currency, stopLimit)
 	return view, err
 }
@@ -370,5 +366,6 @@ SELECT pr.name, pr.state, pr.created_at, cr.sub, cr.display_name, `+updatedAtSQL
 	if err != nil {
 		return view, fmt.Errorf("project overview: %w", classify(err))
 	}
+	view.AvailableActions = project.Actions(view.State, nil, true)
 	return view, nil
 }

@@ -37,6 +37,10 @@ func (a *api) register(router *Router) {
 	}
 	if a.deps.Workflow != nil {
 		router.Handle(fasthttp.MethodPost, APIPrefix+"/projects/{projectId}/start", auth(a.startWorkflow))
+		router.Handle(fasthttp.MethodPost, APIPrefix+"/projects/{projectId}/pause", auth(a.pauseProject))
+		router.Handle(fasthttp.MethodPost, APIPrefix+"/projects/{projectId}/resume", auth(a.resumeProject))
+		router.Handle(fasthttp.MethodPost, APIPrefix+"/projects/{projectId}/cancellation", auth(a.cancelProject))
+		router.Handle(fasthttp.MethodPost, APIPrefix+"/projects/{projectId}/completion", auth(a.completeProject))
 		router.Handle(fasthttp.MethodGet, APIPrefix+"/projects/{projectId}/commands/{commandId}", auth(a.getCommand))
 		router.Handle(fasthttp.MethodGet, APIPrefix+"/projects/{projectId}/workflow", auth(a.getWorkflow))
 		if a.deps.Waves != nil {
@@ -56,6 +60,9 @@ func (a *api) register(router *Router) {
 		router.Handle(fasthttp.MethodGet, p+"/{waveId}/questions", auth(a.listWaveQuestions))
 		router.Handle(fasthttp.MethodPost, p+"/{waveId}/questions/{questionId}/answer", auth(a.answerQuestion))
 		router.Handle(fasthttp.MethodPost, p+"/{waveId}/cancellation", auth(a.cancelWave))
+		router.Handle(fasthttp.MethodPost, p+"/{waveId}/pause", auth(a.pauseWave))
+		router.Handle(fasthttp.MethodPost, p+"/{waveId}/resume", auth(a.resumeWave))
+		router.Handle(fasthttp.MethodPost, p+"/{waveId}/restart", auth(a.restartWave))
 		router.Handle(fasthttp.MethodGet, p+"/{waveId}/checkpoints", auth(a.listCheckpoints))
 		router.Handle(fasthttp.MethodGet, p+"/{waveId}/calls", auth(a.listWaveCalls))
 		router.Handle(fasthttp.MethodGet, p+"/{waveId}/sandbox-executions", auth(a.listSandboxExecutions))
@@ -67,6 +74,9 @@ func (a *api) register(router *Router) {
 		router.Handle(fasthttp.MethodGet, p+"/{round}", auth(a.getGateRound))
 		router.Handle(fasthttp.MethodPost, p+"/{round}/approval", auth(a.approveGate))
 		router.Handle(fasthttp.MethodPost, p+"/{round}/rejection", auth(a.rejectGate))
+	}
+	if a.deps.Release != nil {
+		router.Handle(fasthttp.MethodGet, APIPrefix+"/projects/{projectId}/release", auth(a.getReleaseSummary))
 	}
 	if a.deps.Findings != nil {
 		p := APIPrefix + "/projects/{projectId}/findings"

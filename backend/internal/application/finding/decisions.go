@@ -18,6 +18,7 @@ import (
 	"easycode/internal/domain/failure"
 	domainfinding "easycode/internal/domain/finding"
 	"easycode/internal/domain/identity"
+	"easycode/internal/domain/project"
 )
 
 // Failure codes of the decisions (openapi Problem).
@@ -160,8 +161,13 @@ func contains(list []string, value string) bool {
 // critical applies the rules of a critical decision (ADR-19): approver role, anti-CSRF token and an SSO
 // authentication of at most 10 minutes; only by the web session.
 func (d *Decisions) critical(ctx context.Context, principal identity.Principal, session identity.Session, projectID, token string) error {
-	if _, err := appproject.Authorize(ctx, d.projects, principal, projectID, identity.RoleApprover); err != nil {
+	access, err := appproject.Authorize(ctx, d.projects, principal, projectID, identity.RoleApprover)
+	if err != nil {
 		return err
+	}
+	// US-52 CA-4, US-51 CA-5: an ended project is read-only.
+	if access.State == project.StateCompleted || access.State == project.StateCanceled {
+		return failure.New(failure.KindConflict, failure.CodeStateConflict, nil).With("current_state", access.State).With("available_actions", []string{})
 	}
 	if session.CSRFToken == "" || subtle.ConstantTimeCompare([]byte(session.CSRFToken), []byte(token)) != 1 {
 		return failure.New(failure.KindForbidden, CodeInvalidCSRF, nil)

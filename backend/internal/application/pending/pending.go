@@ -19,10 +19,11 @@ const (
 	TypeGate     = "gate"
 	TypeQuestion = "question"
 	TypeFinding  = "finding_escalated"
+	TypeBudget   = "budget"
 )
 
 // Phase 1 types; the other ones of the contract are accepted and give nothing yet.
-var knownTypes = []string{TypeGate, TypeQuestion, TypeFinding, "budget"}
+var knownTypes = []string{TypeGate, TypeQuestion, TypeFinding, TypeBudget}
 
 // Item is one waiting item.
 type Item struct {
@@ -44,6 +45,8 @@ type Item struct {
 	Severity     string
 	Cycles       int
 	YouDecide    bool
+	// BudgetPercentage is the spend over the stop limit of a budget item (US-39 CA-1).
+	BudgetPercentage int
 }
 
 // Filter narrows the inbox.
@@ -76,7 +79,7 @@ func (s *Service) List(ctx context.Context, principal identity.Principal, filter
 	}
 	types := filter.Types
 	if len(types) == 0 {
-		types = []string{TypeGate, TypeQuestion, TypeFinding}
+		types = []string{TypeGate, TypeQuestion, TypeFinding, TypeBudget}
 	}
 	return s.store.Items(ctx, principal, types, filter.Limit, filter.Offset)
 }

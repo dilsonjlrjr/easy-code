@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"strings"
 	"time"
 
 	"easycode/internal/application/audit"
@@ -151,6 +152,20 @@ func (s *ConfigurationService) Modify(ctx context.Context, principal identity.Pr
 		}
 		if err := s.record(ctx, principal, projectID, "configuration.modify", "configuration"); err != nil {
 			return err
+		}
+		if change.Budget != nil {
+			// US-39 CA-3: raising (or lowering) the stop limit records who, when and the new value.
+			alerts := make([]string, 0, len(change.Budget.AlertPercentages))
+			for _, p := range change.Budget.AlertPercentages {
+				alerts = append(alerts, fmt.Sprint(p))
+			}
+			if _, err := s.trail.Append(ctx, domainaudit.Record{
+				ProjectID: projectID, Actor: domainaudit.Actor{Type: domainaudit.ActorHuman, ID: principal.Subject}, Origin: domainaudit.OriginWeb,
+				Action: "configuration.modify", Target: "budget",
+				Decision: fmt.Sprintf("stop_limit %s %s; alerts %s%%", change.Budget.StopLimit.Value, change.Budget.StopLimit.Currency, strings.Join(alerts, ",")),
+			}); err != nil {
+				return err
+			}
 		}
 		if change.Constraints != nil {
 			// US-54 CA-3: who, when and the difference (ids added, changed or removed) of the new version.

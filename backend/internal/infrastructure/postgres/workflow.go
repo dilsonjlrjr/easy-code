@@ -95,9 +95,10 @@ func (w Workflow) Enqueue(ctx context.Context, p identity.Principal, projectID, 
 	}
 	q := conn(ctx, w.pool)
 	_, err = q.Exec(WithOperation(ctx, "commands.insert_project"), `
-INSERT INTO easycode.commands (public_id, organization_id, project_id, target_type, type, requested_by, origin, idempotency_key, body_hash)
-SELECT $4::uuid, pr.organization_id, pr.id, 'project', $5, `+principalUserIDSQL+`, 'web', $6::uuid, $7
-  FROM easycode.projects pr WHERE pr.public_id = $3::uuid`, p.OrganizationID, p.Subject, projectID, id.String(), commandType, key, bodyHash)
+INSERT INTO easycode.commands (public_id, organization_id, project_id, target_type, type, requested_by, origin, idempotency_key, body_hash, confirmed)
+SELECT $4::uuid, pr.organization_id, pr.id, 'project', $5, `+principalUserIDSQL+`, 'web', $6::uuid, $7, $8
+  FROM easycode.projects pr WHERE pr.public_id = $3::uuid`, p.OrganizationID, p.Subject, projectID, id.String(), commandType, key, bodyHash,
+		commandType == "cancel") // cancel carries the typed name confirmation (US-51 RN-1)
 	if err != nil {
 		return appworkflow.CommandView{}, fmt.Errorf("queue command: %w", classify(err))
 	}
@@ -267,9 +268,13 @@ SELECT pr.id, s.id, o.currency FROM easycode.projects pr JOIN easycode.stages s 
 	if err != nil {
 		return appworkflow.QueuedWave{}, fmt.Errorf("resolve stage: %w", classify(err))
 	}
-	configurationID, err := w.agentConfiguration(ctx, q, projectID, wave.Configuration)
-	if err != nil {
-		return appworkflow.QueuedWave{}, err
+	var configurationID *int64
+	if wave.Agent != appworkflow.OrchestratorAgent {
+		id, err := w.agentConfiguration(ctx, q, projectID, wave.Configuration)
+		if err != nil {
+			return appworkflow.QueuedWave{}, err
+		}
+		configurationID = &id
 	}
 	var number int64
 	err = q.QueryRow(WithOperation(ctx, "waves.next_number"), `
@@ -292,15 +297,17 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8::interval, $9::interval, $10, nullif($11,
 	if err != nil {
 		return appworkflow.QueuedWave{}, fmt.Errorf("insert wave: %w", classify(err))
 	}
-	if err := waveSkills(ctx, q, projectID, waveID, wave.Agent); err != nil {
-		return appworkflow.QueuedWave{}, err
-	}
-	_, err = q.Exec(WithOperation(ctx, "wave_models.insert"), `
+	if wave.Agent != appworkflow.OrchestratorAgent {
+		if err := waveSkills(ctx, q, projectID, waveID, wave.Agent); err != nil {
+			return appworkflow.QueuedWave{}, err
+		}
+		_, err = q.Exec(WithOperation(ctx, "wave_models.insert"), `
 INSERT INTO easycode.wave_models (wave_id, role, model_id, mode, reason)
 VALUES ($1, 'reasoning', $2, 'manual', 'project_configuration'), ($1, 'execution', $3, 'manual', 'project_configuration')`,
-		waveID, wave.Pair.Reasoning.ID, wave.Pair.Execution.ID)
-	if err != nil {
-		return appworkflow.QueuedWave{}, fmt.Errorf("insert wave models: %w", classify(err))
+			waveID, wave.Pair.Reasoning.ID, wave.Pair.Execution.ID)
+		if err != nil {
+			return appworkflow.QueuedWave{}, fmt.Errorf("insert wave models: %w", classify(err))
+		}
 	}
 	if _, err := q.Exec(WithOperation(ctx, "waves.notify"), "SELECT pg_notify($1, $2)", ChannelWaves, wave.ProjectID); err != nil {
 		return appworkflow.QueuedWave{}, fmt.Errorf("notify waves: %w", err)

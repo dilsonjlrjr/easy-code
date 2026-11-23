@@ -27,8 +27,8 @@ import (
 	sandboxapi "easycode/internal/interfaces/sandbox"
 )
 
-// harnessAgents are the agents with a harness (MARCO-5: the seven agents); the workflow in force has only
-// their stages and parallel activities (specs.StandardWorkflow).
+// harnessAgents are the AI agents with a harness (the seven agents); with the orchestrator, which writes the
+// RELEASE (MARCO-6), they run every stage of the workflow in force (specs.StandardWorkflow(specs.ReleaseAgents)).
 var harnessAgents = specs.StandardAgents
 
 // runtimeParts is the agent runtime of the worker: executor, gate progress, finding machine and the
@@ -38,6 +38,8 @@ type runtimeParts struct {
 	progress *appgate.Progress
 	findings *appfinding.Service
 	answers  *appwave.AnswerHandler
+	// orchestrator applies the project budget and resumes the waves held by a resumed project (reconcile).
+	orchestrator *appworkflow.Orchestrator
 }
 
 func newRuntime(cfg config.Config, pool *pgxpool.Pool, propagator propagation.TextMapPropagator, orchestrator *appworkflow.Orchestrator,
@@ -73,7 +75,9 @@ func newRuntime(cfg config.Config, pool *pgxpool.Pool, propagator propagation.Te
 		return runtimeParts{}, err
 	}
 	repository := git.New(cfg.ReposDir)
-	progress.WithRepository(repository, specs.HeaderParser{})
+	progress.WithRepository(repository, specs.HeaderParser{}).WithRelease(postgres.NewGates(pool), repository, specs.ArtifactRenderer{}, store)
+	// US-08: the orchestrator consolidates the RELEASE in the release wave, with no model call.
+	agents[runtime.OrchestratorAgent] = runtime.Agent{Steps: runtime.NewReleaseSteps(progress.ReleaseFile), WritablePaths: []string{"docs/release/"}}
 	findings := appfinding.NewService(tx, postgres.NewFindings(pool), store, orchestrator, progress, postgres.NewWaves(pool, wf.Definition), outbox, wf.Definition)
 	progress.WithHook(findings)
 	worker := cfg.Worker.ID
@@ -84,8 +88,8 @@ func newRuntime(cfg config.Config, pool *pgxpool.Pool, propagator propagation.Te
 		stageOutputs(wf), runtime.Settings{Worker: worker, Lease: cfg.Worker.WaveLease, MaxCorrections: cfg.Worker.MaxArtifactCorrections,
 			RetryBackoff: 2 * time.Second, Poll: cfg.Worker.CommandPollInterval, Image: cfg.Sandbox.Image,
 			ProjectLimits: sandbox.Limits{CPU: cfg.Sandbox.CPU, MemoryMiB: cfg.Sandbox.MemoryMiB, DiskMiB: cfg.Sandbox.DiskMiB, Time: cfg.Sandbox.CommandTime}}, logger).
-		WithRepository(repository, stageAttachments(wf)).WithFindings(findings)
-	return runtimeParts{executor: executor, progress: progress, findings: findings,
+		WithRepository(repository, stageAttachments(wf)).WithFindings(findings).WithBudget(orchestrator)
+	return runtimeParts{executor: executor, progress: progress, findings: findings, orchestrator: orchestrator,
 		answers: appwave.NewAnswerHandler(postgres.NewWaves(pool, wf.Definition), outbox)}, nil
 }
 
@@ -100,6 +104,9 @@ func (f stageFlow) SetStageState(ctx context.Context, projectID, stage, state st
 }
 
 func instruction(agent string) (string, string, error) {
+	if agent == runtime.OrchestratorAgent {
+		return "", "", nil // the orchestrator has no instruction (permissoes.yaml)
+	}
 	defaults, err := specs.DefaultAgent(agent)
 	return string(defaults.Instruction), defaults.InstructionHash, err
 }
@@ -175,8 +182,10 @@ func stageOutputs(wf specs.Workflow) func(string) []string {
 	}
 }
 
-// runReconcile applies the effect of gate and finding decisions when events commit and at every poll.
-func runReconcile(ctx context.Context, jobs jobRunner, progress *appgate.Progress, findings *appfinding.Service, wake <-chan struct{}, poll time.Duration) {
+// runReconcile applies the effect of gate and finding decisions when events commit and at every poll, the
+// project budget (a lowered limit, PL-67) and the resume of the waves held by a resumed project.
+func runReconcile(ctx context.Context, jobs jobRunner, progress *appgate.Progress, findings *appfinding.Service, orchestrator *appworkflow.Orchestrator,
+	tx postgres.TxRunner, wake <-chan struct{}, poll time.Duration) {
 	ticker := time.NewTicker(poll)
 	defer ticker.Stop()
 	for {
@@ -187,6 +196,19 @@ func runReconcile(ctx context.Context, jobs jobRunner, progress *appgate.Progres
 		jobs.run(ctx, "apply_finding_decisions", true, func(ctx context.Context) ([]slog.Attr, error) {
 			applied, err := findings.Reconcile(ctx)
 			return []slog.Attr{slog.Int("applied", applied)}, err
+		})
+		jobs.run(ctx, "apply_project_budget", true, func(ctx context.Context) ([]slog.Attr, error) {
+			checked, err := orchestrator.CheckBudgets(ctx, tx.InTx)
+			return []slog.Attr{slog.Int("checked", checked)}, err
+		})
+		jobs.run(ctx, "resume_held_waves", true, func(ctx context.Context) ([]slog.Attr, error) {
+			var resumed int
+			err := tx.InTx(ctx, func(ctx context.Context) error {
+				var err error
+				resumed, err = orchestrator.ResumeHeld(ctx)
+				return err
+			})
+			return []slog.Attr{slog.Int("resumed", resumed)}, err
 		})
 		select {
 		case <-ctx.Done():

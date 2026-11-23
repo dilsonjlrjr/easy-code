@@ -115,6 +115,8 @@ func (r Projects) Save(ctx context.Context, p identity.Principal, projectID stri
 UPDATE easycode.projects SET row_version = row_version + 1,
        budget_stop_limit = coalesce($5::numeric, budget_stop_limit),
        budget_alert_limits = coalesce($6::smallint[], budget_alert_limits),
+       -- US-39 RN-4: a new limit takes the budget alert out of the inbox; the next check emits again what applies.
+       last_alert_percentage = CASE WHEN $5::numeric IS NULL THEN last_alert_percentage END,
        artifact_language = coalesce($7, artifact_language)
  WHERE public_id = $3::uuid AND row_version = $4
 RETURNING id, `+principalUserIDSQL, p.OrganizationID, p.Subject, projectID, version, stopLimit, alerts, change.ArtifactLanguage).Scan(&internalID, &userID)

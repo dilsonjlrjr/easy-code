@@ -60,6 +60,8 @@ type Service struct {
 	trail     audit.Trail
 	views     Views
 	now       func() time.Time
+	lifecycle LifecycleReader
+	opener    ProjectOpener
 }
 
 // NewService builds the service.

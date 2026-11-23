@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"easycode/internal/domain/failure"
+	"easycode/internal/domain/identity"
 )
 
 // Project states (machine "project" of estados.yaml).
@@ -32,6 +33,37 @@ const (
 	CodeIncompleteConfig   = "incomplete-configuration"
 	CodeApprovalNotAllowed = "approval-mode-not-allowed"
 )
+
+// Actions are the project triggers of estados.yaml a person may use in a state (Project.available_actions):
+// start for any role in created; pause, resume and cancel for the lead or the organization administrator
+// (US-51 RN-1); record_publication (completeProject) for the lead or an approver (US-52 RN-2). An ended
+// project offers nothing (US-51 CA-5, US-52 CA-4).
+func Actions(state string, roles []identity.Role, administrator bool) []string {
+	lead := identity.Has(roles, identity.RoleLead) || administrator
+	decides := identity.Has(roles, identity.RoleLead, identity.RoleApprover)
+	actions := []string{}
+	switch state {
+	case StateCreated:
+		if len(roles) > 0 {
+			actions = append(actions, "start")
+		}
+		if lead {
+			actions = append(actions, "cancel")
+		}
+	case StateInProgress:
+		if lead {
+			actions = append(actions, "pause", "cancel")
+		}
+		if decides {
+			actions = append(actions, "record_publication")
+		}
+	case StatePaused:
+		if lead {
+			actions = append(actions, "resume", "cancel")
+		}
+	}
+	return actions
+}
 
 // DefaultAlertPercentages are the budget alert limits when none is given (US-39 RN-2).
 var DefaultAlertPercentages = []int{50, 80}

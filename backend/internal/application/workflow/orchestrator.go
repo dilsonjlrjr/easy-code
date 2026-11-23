@@ -27,6 +27,7 @@ type Orchestrator struct {
 	json      []byte
 	hash      string
 	now       func() time.Time
+	lifecycle Lifecycle
 }
 
 // NewOrchestrator builds the orchestrator for the workflow in force.
@@ -219,6 +220,9 @@ func (o *Orchestrator) QueueWave(ctx context.Context, projectID, stageID, agent,
 		map[string]any{"type": "orchestrator", "id": "orchestrator"})
 }
 
+// OrchestratorAgent runs the Release stage (workflow-padrao).
+const OrchestratorAgent = "orchestrator"
+
 // TaskStage is the stage whose waves run one approved T each (PL-20).
 const TaskStage = "implementation"
 
@@ -284,13 +288,18 @@ func (o *Orchestrator) queueFirstWave(ctx context.Context, cmd command.Command, 
 
 func (o *Orchestrator) queueWave(ctx context.Context, projectID string, stageID string, agent, task, purpose, finding string,
 	emit func(string, string, string, map[string]any) error, orchestrator map[string]any) (string, error) {
-	pair, err := o.store.ResolvePair(ctx, projectID, stageID)
-	if err != nil {
-		return "", err
-	}
-	configuration, err := o.agents(agent)
-	if err != nil {
-		return "", err
+	var pair ResolvedPair
+	configuration := AgentConfiguration{Agent: agent}
+	// The Release is consolidated by the orchestrator itself: no AI agent, no model pair, no configuration
+	// (waves_configuration_ck; permissoes.yaml, orchestrator).
+	if agent != OrchestratorAgent {
+		var err error
+		if pair, err = o.store.ResolvePair(ctx, projectID, stageID); err != nil {
+			return "", err
+		}
+		if configuration, err = o.agents(agent); err != nil {
+			return "", err
+		}
 	}
 	if purpose == "" {
 		purpose = "execution"
@@ -313,6 +322,9 @@ func (o *Orchestrator) queueWave(ctx context.Context, projectID string, stageID 
 	err = emit("br.easycode.wave.created.v1", "waves/"+wave.Code, wave.Code, created)
 	if err != nil {
 		return "", err
+	}
+	if agent == OrchestratorAgent {
+		return wave.Code, nil
 	}
 	// US-16 CA-1: each wave records the models it uses.
 	for role, model := range map[string]ModelID{"reasoning": pair.Reasoning, "execution": pair.Execution} {

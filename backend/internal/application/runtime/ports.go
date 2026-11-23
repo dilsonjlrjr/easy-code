@@ -13,6 +13,16 @@ import (
 // ErrLeaseLost means another worker owns the wave now (fencing): stop without writing.
 var ErrLeaseLost = errors.New("wave lease lost")
 
+// ErrDispatchHeld means no model call may start: the project is not in progress or its spend reached the
+// stop limit (policy.project_budget, RNF-16). The wave stops at its last checkpoint.
+var ErrDispatchHeld = errors.New("project paused or budget exhausted: no new model call")
+
+// Budget applies policy.project_budget after each recorded cost (US-39 CA-1, CA-2): alerts, and the
+// project paused by the budget with its running waves asked to pause at their next checkpoint.
+type Budget interface {
+	CheckBudget(ctx context.Context, projectID, correlation string) error
+}
+
 // Lease identifies the execution right of one worker over a wave.
 type Lease struct {
 	WaveID int64 // internal id, only between the executor and its store
@@ -111,9 +121,10 @@ type Ledger interface {
 	RecordCommit(ctx context.Context, lease Lease, sha string, versions []CommittedVersion) error
 	// Release frees the lease without changing the state (worker shutting down).
 	Release(ctx context.Context, lease Lease) error
-	// Pause applies checkpoint_reached to a wave in pausing (pause by policy, a dependency of its stage
-	// was reopened, US-34 CA-1): the wave goes to paused and the lease is freed; false when not pausing.
-	Pause(ctx context.Context, lease Lease) (bool, error)
+	// Pause applies checkpoint_reached to a wave in pausing (asked by the user, US-12 CA-1, or by policy:
+	// project paused, budget exhausted, a dependency of its stage reopened, US-34 CA-1): the wave goes to
+	// paused and the lease is freed; it returns the pause cause, false when the wave is not pausing.
+	Pause(ctx context.Context, lease Lease) (string, bool, error)
 	SetStageState(ctx context.Context, projectID, stage, state string) error
 }
 

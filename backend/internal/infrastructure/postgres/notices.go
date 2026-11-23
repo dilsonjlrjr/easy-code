@@ -18,6 +18,7 @@ var (
 		"br.easycode.wave.question_opened.v1", "br.easycode.wave.question_answered.v1",
 		"br.easycode.wave.created.v1", "br.easycode.wave.started.v1", "br.easycode.wave.paused.v1", "br.easycode.wave.resumed.v1",
 		"br.easycode.wave.completed.v1", "br.easycode.wave.failed.v1", "br.easycode.wave.canceled.v1",
+		"br.easycode.wave.pause_requested.v1", "br.easycode.wave.restarted.v1", "br.easycode.release.published.v1",
 		"br.easycode.stage.unblocked.v1", "br.easycode.stage.approved.v1", "br.easycode.stage.returned.v1",
 		"br.easycode.stage.reopened.v1", "br.easycode.stage.blocked.v1",
 	}

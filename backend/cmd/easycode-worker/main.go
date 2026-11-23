@@ -127,7 +127,7 @@ func work(ctx context.Context, proc process.Process) error {
 		})
 	}()
 	go parts.executor.Run(ctx, waveWake)
-	go runReconcile(ctx, jobs, parts.progress, parts.findings, reconcileWake, cfg.Worker.CommandPollInterval)
+	go runReconcile(ctx, jobs, parts.progress, parts.findings, parts.orchestrator, postgres.NewTxRunner(pool), reconcileWake, cfg.Worker.CommandPollInterval)
 	commandWake := make(chan struct{}, 1)
 	commandSignal := func() {
 		select {
@@ -234,19 +234,31 @@ func newDispatcher(cfg config.Config, pool *pgxpool.Pool, propagator propagation
 	dispatcher.Register("test_provider_key", func(ctx context.Context, cmd command.Command) error {
 		return tester.Test(ctx, cmd.ProviderKeyID)
 	})
-	wf, err := specs.StandardWorkflow(harnessAgents)
+	wf, err := specs.StandardWorkflow(specs.ReleaseAgents)
 	if err != nil {
 		return nil, runtimeParts{}, err
 	}
 	workflows := postgres.NewWorkflow(pool, wf.Definition)
-	orchestrator := appworkflow.NewOrchestrator(workflows, workflows, postgres.NewOutbox(pool), defaultAgent, wf.Definition, wf.JSON, wf.Hash)
+	orchestrator := appworkflow.NewOrchestrator(workflows, workflows, postgres.NewOutbox(pool), defaultAgent, wf.Definition, wf.JSON, wf.Hash).
+		WithLifecycle(workflows)
 	dispatcher.Register("start", orchestrator.Start)
+	// US-51, US-52: project lifecycle (qualified: "cancel" alone is the cancel of a wave).
+	dispatcher.Register("project.pause", orchestrator.PauseProject)
+	dispatcher.Register("project.resume", orchestrator.ResumeProject)
+	dispatcher.Register("project.cancel", orchestrator.CancelProject)
+	dispatcher.Register("project.record_publication", orchestrator.CompleteProject)
 	parts, err := newRuntime(cfg, pool, propagator, orchestrator, workflows, wf, logger)
 	if err != nil {
 		return nil, runtimeParts{}, err
 	}
 	dispatcher.Register("answer", parts.answers.Handle)
-	dispatcher.Register("cancel", appwave.NewCancelHandler(postgres.NewWaves(pool, wf.Definition), postgres.NewOutbox(pool)).Handle)
+	waves := postgres.NewWaves(pool, wf.Definition)
+	dispatcher.Register("cancel", appwave.NewCancelHandler(waves, postgres.NewOutbox(pool)).Handle)
+	controls := appwave.NewControlHandler(waves, postgres.NewOutbox(pool))
+	dispatcher.Register("wave.pause", controls.Pause)
+	dispatcher.Register("wave.pause_now", controls.PauseNow)
+	dispatcher.Register("wave.resume", controls.Resume)
+	dispatcher.Register("wave.restart", controls.Restart)
 	return dispatcher, parts, nil
 }
 

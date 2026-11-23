@@ -22,6 +22,7 @@ import (
 	appgateway "easycode/internal/application/gateway"
 	apppending "easycode/internal/application/pending"
 	appproject "easycode/internal/application/project"
+	apprepository "easycode/internal/application/repository"
 	"easycode/internal/application/runtime"
 	apptraceability "easycode/internal/application/traceability"
 	appwave "easycode/internal/application/wave"
@@ -37,17 +38,27 @@ import (
 	httpapi "easycode/internal/interfaces/http"
 )
 
-// qualityDeps wires the api over the workflow in force of MARCO-5 (the seven agents, the parallel
-// activities), with the findings and the traceability.
-func qualityDeps(t *testing.T) func(*httpapi.Dependencies, *postgrestest.Database) {
+// qualityDeps wires the api over the workflow in force since MARCO-6 (the seven agents, the parallel
+// activities and the Release of the orchestrator), with the findings, the traceability, the Release over
+// the repositories of repos and the project lifecycle.
+func qualityDeps(t *testing.T, repos git.Repositories) func(*httpapi.Dependencies, *postgrestest.Database) {
 	return func(d *httpapi.Dependencies, db *postgrestest.Database) {
-		teamDepsOf(t, specs.StandardAgents)(d, db)
+		teamDepsOf(t, specs.ReleaseAgents)(d, db)
 		pool := db.PoolAs("easycode_api")
-		wf, _ := specs.StandardWorkflow(specs.StandardAgents)
+		wf, _ := specs.StandardWorkflow(specs.ReleaseAgents)
 		tx := postgres.NewTxRunner(pool)
+		trail := postgres.NewAuditTrail(pool)
 		projects := postgres.NewProjects(pool, wf.Definition.ID, len(wf.Definition.Stages))
-		d.Findings = appfinding.NewDecisions(tx, projects, postgres.NewFindings(pool), postgres.NewOutbox(pool), postgres.NewAuditTrail(pool))
+		gates := postgres.NewGates(pool)
+		release := appgate.NewReleaseQueries(projects, gates, gates, gates, repos, wf.Definition)
+		workflows := postgres.NewWorkflow(pool, wf.Definition)
+		d.Findings = appfinding.NewDecisions(tx, projects, postgres.NewFindings(pool), postgres.NewOutbox(pool), trail)
 		d.Traceability = apptraceability.NewService(projects, postgres.NewTraceability(pool))
+		d.Gates = appgate.NewDecisions(tx, projects, gates, postgres.NewOutbox(pool), trail).WithRelease(release)
+		d.Release = release
+		d.Repository = apprepository.NewService(projects, repos, "https://easycode.test", git.MainBranch)
+		d.Workflow = appworkflow.NewService(tx, projects, workflows, workflows, workflows, trail).
+			WithLifecycle(workflows, appproject.NewMemberService(tx, projects, postgres.NewMembers(pool), nil, postgres.NewOutbox(pool), trail))
 	}
 }
 
@@ -90,7 +101,7 @@ func newQualityWorker(t *testing.T, db *postgrestest.Database, gateway runtime.G
 	pool := db.PoolAs("easycode_worker")
 	tx := postgres.NewTxRunner(pool)
 	outbox := postgres.NewOutbox(pool)
-	wf, err := specs.StandardWorkflow(specs.StandardAgents)
+	wf, err := specs.StandardWorkflow(specs.ReleaseAgents)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,9 +110,10 @@ func newQualityWorker(t *testing.T, db *postgrestest.Database, gateway runtime.G
 		d, err := specs.DefaultAgent(agent)
 		return appworkflow.AgentConfiguration{Agent: agent, InstructionVersion: d.InstructionVersion, InstructionHash: d.InstructionHash, Tools: d.Tools, Limits: d.Limits}, err
 	}
-	orchestrator := appworkflow.NewOrchestrator(workflows, workflows, outbox, defaults, wf.Definition, wf.JSON, wf.Hash)
+	orchestrator := appworkflow.NewOrchestrator(workflows, workflows, outbox, defaults, wf.Definition, wf.JSON, wf.Hash).WithLifecycle(workflows)
 	dispatcher := command.NewDispatcher(tx, postgres.NewCommands(pool))
 	dispatcher.Register("start", orchestrator.Start)
+	dispatcher.Register("project.record_publication", orchestrator.CompleteProject)
 	waves := postgres.NewWaves(pool, wf.Definition)
 	dispatcher.Register("cancel", appwave.NewCancelHandler(waves, outbox).Handle)
 	validator, err := specs.NewArtifactValidator()
@@ -110,7 +122,7 @@ func newQualityWorker(t *testing.T, db *postgrestest.Database, gateway runtime.G
 	}
 	store := appartifact.NewStore(tx, specs.HeaderParser{}, validator, postgres.NewArtifacts(pool), outbox)
 	progress := newProgress(t, tx, pool, store, validator, flow{workflows, orchestrator}, outbox, wf.Definition)
-	progress.WithRepository(repos, specs.HeaderParser{})
+	progress.WithRepository(repos, specs.HeaderParser{}).WithRelease(postgres.NewGates(pool), repos, specs.ArtifactRenderer{}, store)
 	findings := appfinding.NewService(tx, postgres.NewFindings(pool), store, orchestrator, progress, waves, outbox, wf.Definition)
 	progress.WithHook(findings)
 	ledger := postgres.NewLedger(pool)
@@ -136,6 +148,7 @@ func newQualityWorker(t *testing.T, db *postgrestest.Database, gateway runtime.G
 		}
 		agents[name] = runtime.Agent{Steps: runtime.NewToolAgent(models, 4000, runner), Policy: &policy, Modes: modes}
 	}
+	agents[runtime.OrchestratorAgent] = runtime.Agent{Steps: runtime.NewReleaseSteps(progress.ReleaseFile), WritablePaths: []string{"docs/release/"}}
 	outputsOf := func(stage string) []domainworkflow.Output {
 		if s, ok := wf.Definition.Stage(stage); ok {
 			return s.Outputs
@@ -167,12 +180,15 @@ func newQualityWorker(t *testing.T, db *postgrestest.Database, gateway runtime.G
 		return paths
 	}
 	executor := runtime.NewExecutor(tx, ledger, agents, func(agent string) (string, string, error) {
+		if agent == runtime.OrchestratorAgent {
+			return "", "", nil
+		}
 		d, err := specs.DefaultAgent(agent)
 		return string(d.Instruction), d.InstructionHash, err
 	}, outbox, postgres.NewTelemetryNotifier(pool), store, progress, outputs,
 		runtime.Settings{Worker: "worker-1", Lease: 30 * time.Second, MaxCorrections: 3, RetryBackoff: 10 * time.Millisecond, Poll: 50 * time.Millisecond,
 			Image: "go", ProjectLimits: sandbox.Limits{CPU: 1, MemoryMiB: 2048, DiskMiB: 512, Time: 3 * time.Minute}},
-		slog.New(slog.NewJSONHandler(io.Discard, nil))).WithRepository(repos, attachments).WithFindings(findings)
+		slog.New(slog.NewJSONHandler(io.Discard, nil))).WithRepository(repos, attachments).WithFindings(findings).WithBudget(orchestrator)
 	return qualityWorker{teamWorker: teamWorker{dispatcher: dispatcher, progress: progress, executor: executor}, findings: findings, store: store}
 }
 
@@ -382,7 +398,7 @@ func TestMarco5QualityAndFindings(t *testing.T) {
 		t.Skip("git not installed")
 	}
 	repos := git.New(t.TempDir())
-	live := newLiveAPI(t, qualityDeps(t))
+	live := newLiveAPI(t, qualityDeps(t, repos))
 	db := live.db
 	opener := sealKeys(t, db, map[string]string{"anthropic": anthropicKey})
 
@@ -770,20 +786,10 @@ func TestMarco5QualityAndFindings(t *testing.T) {
 	}
 	live.approve(t, base, "gate.security", 2)
 	work.settle(t)
-	// US-33 RN-2 (risk_acceptance_same_cycle): who accepted a risk does not approve the Release of the cycle.
-	// The Release stage is MARCO-6: its row and round are set up directly to reach the database rule.
-	for _, sql := range []string{
-		"INSERT INTO easycode.stages (project_id, stage, type, state) SELECT id, 'release', 'stage', 'blocked' FROM easycode.projects LIMIT 1",
-		"UPDATE easycode.stages SET state = 'ready' WHERE stage = 'release'", "UPDATE easycode.stages SET state = 'running' WHERE stage = 'release'",
-		"UPDATE easycode.stages SET state = 'awaiting_gate' WHERE stage = 'release'",
-		"INSERT INTO easycode.gate_rounds (project_id, stage, stage_id, number, approval_mode) SELECT project_id, 'release', id, 1, 'human' FROM easycode.stages WHERE stage = 'release'",
-		"UPDATE easycode.gate_rounds SET state = 'awaiting_human' WHERE stage = 'release'",
-	} {
-		if _, err := db.Admin.Exec(ctx, sql); err != nil {
-			t.Fatal(err)
-		}
-	}
-	release := live.send("POST", base+"/gates/gate.release/rounds/1/approval", `{"confirmed_human_checks":[]}`, mergeHeaders(key(), map[string]string{"X-CSRF-Token": csrf}))
+	// US-33 RN-2 (risk_acceptance_same_cycle): who accepted a risk does not approve the Release of the cycle
+	// (MARCO-6: the orchestrator consolidated the RELEASE and gate.release waits for the human).
+	release := live.send("POST", base+"/gates/gate.release/rounds/1/approval", confirmedChecks(t, roundOf(t, live, base, "gate.release", 1)),
+		mergeHeaders(key(), map[string]string{"X-CSRF-Token": csrf}))
 	if release.Response.StatusCode() != 409 || decode(t, release)["reason"] != "risk_acceptance_same_cycle" {
 		t.Fatalf("US-33 RN-2: %d %s", release.Response.StatusCode(), release.Response.Body())
 	}
@@ -814,6 +820,8 @@ func TestMarco5QualityAndFindings(t *testing.T) {
 	if list := live.json(t, "GET", base+"/findings?status=closed", "", nil, 200)["items"].([]any); len(list) != 2 {
 		t.Fatalf("listFindings by status: %v", list)
 	}
+	// MARCO-6: the Release is approved by another approver, marks the repository and the project concludes.
+	marco6Release(t, live, work, repos, base)
 }
 
 func roundChecks(round map[string]any) map[string]string {
@@ -829,13 +837,14 @@ func roundChecks(round map[string]any) map[string]string {
 // human decision, a critical or high finding opened in the stage makes the round evaluate again; the
 // approval is no longer available and the round shows the finding as the cause (gate.reevaluation_started).
 func TestMarco5BlockingFindingReevaluatesTheRound(t *testing.T) {
-	live := newLiveAPI(t, qualityDeps(t))
+	repos := git.New(t.TempDir())
+	live := newLiveAPI(t, qualityDeps(t, repos))
 	db := live.db
 	opener := sealKeys(t, db, map[string]string{"anthropic": anthropicKey})
 	script := &qualityScript{requests: map[string]int{}, answers: map[string][]func() provider.Message{
 		"requirements-agent": {fixed(provider.Message{Calls: append(writeAll(referenceFiles(t), "r"), call("rf", runtime.ToolFinish, map[string]any{}))})},
 	}}
-	work := newQualityWorker(t, db, localGateway{service: appgateway.NewService(opener, time.Minute, script)}, nil, git.New(t.TempDir()))
+	work := newQualityWorker(t, db, localGateway{service: appgateway.NewService(opener, time.Minute, script)}, nil, repos)
 	registerModels(t, live, "anthropic")
 	base := newProject(t, live, work.teamWorker, "Reserva", "anthropic", "anthropic")
 	work.settle(t)
