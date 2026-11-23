@@ -60,7 +60,9 @@ func NewDispatcher(tx transaction.Runner, queue Queue) *Dispatcher {
 	return &Dispatcher{tx: tx, queue: queue, handlers: map[string]Handler{}}
 }
 
-// Register sets the handler of a command type.
+// Register sets the handler of a command type. A type may be qualified by its target
+// ("project.cancel", "wave.pause"): the qualified handler wins over the plain one, so the same trigger
+// of two machines (cancel of a wave and of a project) reaches its own handler.
 func (d *Dispatcher) Register(commandType string, handler Handler) {
 	d.handlers[commandType] = handler
 }
@@ -91,7 +93,10 @@ func (d *Dispatcher) Drain(ctx context.Context) (int, error) {
 }
 
 func (d *Dispatcher) process(ctx context.Context, cmd Command) error {
-	handler, ok := d.handlers[cmd.Type]
+	handler, ok := d.handlers[cmd.TargetType+"."+cmd.Type]
+	if !ok {
+		handler, ok = d.handlers[cmd.Type]
+	}
 	if !ok {
 		return d.queue.Refused(ctx, cmd.ID, "unsupported-command")
 	}

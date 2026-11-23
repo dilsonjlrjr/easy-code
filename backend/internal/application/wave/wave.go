@@ -62,6 +62,29 @@ type View struct {
 	GitCommit            string               // commit of the project repository written when the wave completed (D-17)
 	Skills               []domainskill.Pinned // skill versions the wave loaded (US-43 CA-2)
 	PerProvider          []ProviderCost       // cost of the calls by provider (US-24 CA-3)
+	Pause                *PauseView           // pausing or paused: mode, cause and since when (US-12 CA-4)
+	Attempts             []AttemptView        // previous attempts of a restarted wave (US-13 CA-1)
+	ProjectState         string               // state of the project, for the available actions (read-only when ended)
+}
+
+// PauseView is the pause of a wave in pausing or paused.
+type PauseView struct {
+	Mode        string // cooperative | immediate; "" while pausing
+	Cause       string
+	RequestedAt time.Time
+	// LimitExceeded is true when the wave stays in pausing beyond PausingLimit (US-12 CA-4).
+	LimitExceeded bool
+}
+
+// AttemptView is a finished attempt of the wave (Wave.attempts).
+type AttemptView struct {
+	Number        int
+	FinalState    string
+	FailureCause  string
+	Start, End    *time.Time
+	Cost          Cost
+	FirstSequence int64
+	LastSequence  int64
 }
 
 // ProviderCost is the total cost of the calls of a wave to one provider.
@@ -195,6 +218,7 @@ type Service struct {
 	reader   Reader
 	answers  Answers
 	trail    audit.Trail
+	controls Controls
 }
 
 // NewService builds the service.
@@ -215,12 +239,18 @@ func (s *Service) List(ctx context.Context, principal identity.Principal, projec
 	return s.reader.List(ctx, projectID, stage, agent, states, limit)
 }
 
-// Get is getWave (US-09 CA-1, US-36 CA-1).
+// Get is getWave (US-09 CA-1, US-36 CA-1, US-13 CA-1).
 func (s *Service) Get(ctx context.Context, principal identity.Principal, projectID, code string) (View, error) {
-	if err := s.access(ctx, principal, projectID); err != nil {
+	access, err := appproject.Authorize(ctx, s.projects, principal, projectID)
+	if err != nil {
 		return View{}, err
 	}
-	return s.reader.Get(ctx, projectID, code)
+	view, err := s.reader.Get(ctx, projectID, code)
+	view.ProjectState = access.State
+	if view.Pause != nil && view.State == "pausing" && time.Since(view.Pause.RequestedAt) > PausingLimit {
+		view.Pause.LimitExceeded = true
+	}
+	return view, err
 }
 
 // Questions is listWaveQuestions.

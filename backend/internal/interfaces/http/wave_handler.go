@@ -25,6 +25,9 @@ type WaveUseCases interface {
 	Calls(ctx context.Context, principal identity.Principal, projectID, code, kind string) ([]appwave.CallView, error)
 	Answer(ctx context.Context, principal identity.Principal, projectID, waveCode, questionCode string, answers map[int]string, key, bodyHash string) (appworkflow.CommandView, error)
 	Cancel(ctx context.Context, principal identity.Principal, projectID, waveCode string, confirm bool, key, bodyHash string) (appworkflow.CommandView, error)
+	Pause(ctx context.Context, principal identity.Principal, projectID, waveCode, mode string, confirmLost bool, key, bodyHash string) (appworkflow.CommandView, error)
+	Resume(ctx context.Context, principal identity.Principal, projectID, waveCode, key, bodyHash string) (appworkflow.CommandView, error)
+	Restart(ctx context.Context, principal identity.Principal, projectID, waveCode string, confirm bool, key, bodyHash string) (appworkflow.CommandView, error)
 	SandboxExecutions(ctx context.Context, principal identity.Principal, projectID, code string, limit int, after string) ([]appwave.SandboxExecution, error)
 	ExecutionOutput(ctx context.Context, principal identity.Principal, projectID, code, executionID string) (appwave.ExecutionOutput, error)
 }
@@ -96,13 +99,31 @@ type waveJSON struct {
 	Result           *string              `json:"result"`
 	FailureCause     *string              `json:"failure_cause"`
 	ArtifactErrors   json.RawMessage      `json:"artifact_errors"`
-	Pause            *struct{}            `json:"pause"`
+	Pause            *pauseJSON           `json:"pause"`
 	LastCheckpoint   *int                 `json:"last_checkpoint"`
 	QuestionOpen     *string              `json:"question_open"`
 	ExpectedOutputs  []expectedOutputJSON `json:"expected_outputs"`
 	GitCommit        *string              `json:"git_commit"`
-	Attempts         []any                `json:"attempts"`
+	Attempts         []attemptJSON        `json:"attempts"`
 	AvailableActions []string             `json:"available_actions"`
+}
+
+type pauseJSON struct {
+	Mode          *string    `json:"mode,omitempty"`
+	Cause         string     `json:"cause"`
+	RequestedAt   *time.Time `json:"requested_at,omitempty"`
+	LimitExceeded bool       `json:"pausing_limit_exceeded"`
+}
+
+type attemptJSON struct {
+	Number        int              `json:"number"`
+	FinalState    string           `json:"final_state"`
+	FailureCause  *string          `json:"failure_cause"`
+	Start         *time.Time       `json:"start,omitempty"`
+	End           *time.Time       `json:"end,omitempty"`
+	Cost          detailedCostJSON `json:"cost"`
+	FirstSequence int64            `json:"initial_sequence,omitempty"`
+	LastSequence  int64            `json:"final_sequence,omitempty"`
 }
 
 type providerCostJSON struct {
@@ -127,8 +148,9 @@ func waveOf(v appwave.View) waveJSON {
 		Tokens:   tokensOf(v.Tokens), Cost: costOf(v.Cost),
 		Time:         map[string]int64{"execution_ms": v.ExecutionMs, "cycle_ms": v.CycleMs},
 		FailureCause: optional(v.FailureCause), ArtifactErrors: v.ArtifactErrors, LastCheckpoint: v.LastCheckpoint,
-		QuestionOpen: optional(v.QuestionOpen), ExpectedOutputs: []expectedOutputJSON{}, Attempts: []any{}, AvailableActions: []string{},
-		GitCommit: optional(v.GitCommit),
+		QuestionOpen: optional(v.QuestionOpen), ExpectedOutputs: []expectedOutputJSON{}, Attempts: []attemptJSON{},
+		AvailableActions: appwave.Actions(v.State, v.ProjectState),
+		GitCommit:        optional(v.GitCommit),
 	}
 	if v.PriceTable != "" {
 		out.Versions["price_table"] = v.PriceTable
@@ -147,11 +169,16 @@ func waveOf(v appwave.View) waveJSON {
 		out.Result = optional("success")
 	case "failed", "canceled":
 		out.Result = optional(v.State)
-	case "awaiting_user":
-		out.AvailableActions = []string{"answer"}
 	}
-	if appwave.CanCancel(v.State) {
-		out.AvailableActions = append(out.AvailableActions, "cancel") // US-14 CA-3: not when completed or canceled
+	if p := v.Pause; p != nil {
+		out.Pause = &pauseJSON{Mode: optional(p.Mode), Cause: p.Cause, LimitExceeded: p.LimitExceeded}
+		if !p.RequestedAt.IsZero() {
+			out.Pause.RequestedAt = &p.RequestedAt
+		}
+	}
+	for _, a := range v.Attempts {
+		out.Attempts = append(out.Attempts, attemptJSON{Number: a.Number, FinalState: a.FinalState, FailureCause: optional(a.FailureCause),
+			Start: a.Start, End: a.End, Cost: costOf(a.Cost), FirstSequence: a.FirstSequence, LastSequence: a.LastSequence})
 	}
 	for _, o := range v.Outputs {
 		item := expectedOutputJSON{Type: o.Type, Artifact: optional(o.Artifact), Version: optional(o.Version), Status: o.Status}
@@ -298,6 +325,85 @@ func (a *api) cancelWave(rc *fasthttp.RequestCtx, principal identity.Principal) 
 	}
 	return a.idempotent(rc, principal, "cancelWave", func(ctx context.Context) (created, error) {
 		queued, err := a.deps.Waves.Cancel(ctx, principal, projectID, code, true, req.Key, req.BodyHash)
+		if err != nil {
+			return created{}, err
+		}
+		return created{status: fasthttp.StatusAccepted, body: a.commandOf(rc, queued), location: commandLocation(projectID, queued.ID)}, nil
+	})
+}
+
+// pauseWave is US-12 CA-1, CA-2 (cooperative or immediate with the lost cost confirmed).
+func (a *api) pauseWave(rc *fasthttp.RequestCtx, principal identity.Principal) error {
+	projectID, code, err := wavePath(rc)
+	if err != nil {
+		return err
+	}
+	var body struct {
+		Mode        string `json:"mode"`
+		ConfirmLost bool   `json:"confirm_lost_cost"`
+	}
+	if err := decodeJSON(rc, &body); err != nil {
+		return err
+	}
+	if body.Mode != appwave.ModeCooperative && body.Mode != appwave.ModeImmediate {
+		return failure.Invalid(failure.FieldError{Field: "mode", Message: "enum"})
+	}
+	if body.Mode == appwave.ModeImmediate && !body.ConfirmLost {
+		return failure.New(failure.KindInvalidInput, appwave.CodeConfirmationRequired, nil).WithField("confirm_lost_cost", "must_be_true")
+	}
+	req, err := idempotencyRequest(rc, principal, "pauseWave")
+	if err != nil {
+		return err
+	}
+	return a.idempotent(rc, principal, "pauseWave", func(ctx context.Context) (created, error) {
+		queued, err := a.deps.Waves.Pause(ctx, principal, projectID, code, body.Mode, body.ConfirmLost, req.Key, req.BodyHash)
+		if err != nil {
+			return created{}, err
+		}
+		return created{status: fasthttp.StatusAccepted, body: a.commandOf(rc, queued), location: commandLocation(projectID, queued.ID)}, nil
+	})
+}
+
+// resumeWave is US-12 CA-3.
+func (a *api) resumeWave(rc *fasthttp.RequestCtx, principal identity.Principal) error {
+	projectID, code, err := wavePath(rc)
+	if err != nil {
+		return err
+	}
+	req, err := idempotencyRequest(rc, principal, "resumeWave")
+	if err != nil {
+		return err
+	}
+	return a.idempotent(rc, principal, "resumeWave", func(ctx context.Context) (created, error) {
+		queued, err := a.deps.Waves.Resume(ctx, principal, projectID, code, req.Key, req.BodyHash)
+		if err != nil {
+			return created{}, err
+		}
+		return created{status: fasthttp.StatusAccepted, body: a.commandOf(rc, queued), location: commandLocation(projectID, queued.ID)}, nil
+	})
+}
+
+// restartWave is US-13 CA-1, CA-2.
+func (a *api) restartWave(rc *fasthttp.RequestCtx, principal identity.Principal) error {
+	projectID, code, err := wavePath(rc)
+	if err != nil {
+		return err
+	}
+	var body struct {
+		Confirm *bool `json:"confirm"`
+	}
+	if err := decodeJSON(rc, &body); err != nil {
+		return err
+	}
+	if body.Confirm == nil || !*body.Confirm {
+		return failure.New(failure.KindInvalidInput, appwave.CodeConfirmationRequired, nil).WithField("confirm", "must_be_true")
+	}
+	req, err := idempotencyRequest(rc, principal, "restartWave")
+	if err != nil {
+		return err
+	}
+	return a.idempotent(rc, principal, "restartWave", func(ctx context.Context) (created, error) {
+		queued, err := a.deps.Waves.Restart(ctx, principal, projectID, code, true, req.Key, req.BodyHash)
 		if err != nil {
 			return created{}, err
 		}

@@ -63,3 +63,19 @@ func TestDrainAppliesRefusesAndStopsOnInternalErrors(t *testing.T) {
 		t.Error("an internal failure leaves the command pending")
 	}
 }
+
+func TestQualifiedHandlerWinsForItsTarget(t *testing.T) {
+	queue := &memoryQueue{status: map[string]string{}, pending: []command.Command{
+		{ID: "w", Type: "cancel", TargetType: "wave"}, {ID: "p", Type: "cancel", TargetType: "project"},
+	}}
+	dispatcher := command.NewDispatcher(directTx{}, queue)
+	got := map[string]string{}
+	dispatcher.Register("cancel", func(_ context.Context, cmd command.Command) error { got[cmd.ID] = "plain"; return nil })
+	dispatcher.Register("project.cancel", func(_ context.Context, cmd command.Command) error { got[cmd.ID] = "project"; return nil })
+	if _, err := dispatcher.Drain(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got["w"] != "plain" || got["p"] != "project" {
+		t.Fatalf("routing: %v", got)
+	}
+}

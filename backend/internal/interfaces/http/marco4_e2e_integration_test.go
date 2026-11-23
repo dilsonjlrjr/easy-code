@@ -675,7 +675,7 @@ func TestMarco4CancelWave(t *testing.T) {
 	blocking.mu.Unlock()
 	failed := newProject(t, live, work, "Reserva com falha", "anthropic", "anthropic")
 	work.runAll(t)
-	if w := live.json(t, "GET", failed+"/waves/REQ-01", "", nil, 200); w["state"] != "failed" || fmt.Sprint(w["available_actions"]) != "[cancel]" {
+	if w := live.json(t, "GET", failed+"/waves/REQ-01", "", nil, 200); w["state"] != "failed" || fmt.Sprint(w["available_actions"]) != "[restart cancel]" {
 		t.Fatalf("failed wave: %v", w)
 	}
 	live.json(t, "POST", failed+"/waves/REQ-01/cancellation", confirm, key(), 202)

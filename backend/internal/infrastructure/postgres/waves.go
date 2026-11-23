@@ -169,8 +169,10 @@ SELECT m.provider, sum(c.cost)::text FROM easycode.model_calls c JOIN easycode.m
 	if err != nil {
 		return v, err
 	}
-	v.Outputs, err = w.outputs(ctx, waveID, v)
-	return v, err
+	if v.Outputs, err = w.outputs(ctx, waveID, v); err != nil {
+		return v, err
+	}
+	return v, w.control(ctx, waveID, &v)
 }
 
 func (w Waves) outputs(ctx context.Context, waveID int64, v appwave.View) ([]appwave.ExpectedOutput, error) {
@@ -363,7 +365,8 @@ func (w Waves) enqueueWaveCommand(ctx context.Context, p identity.Principal, pro
 INSERT INTO easycode.commands (public_id, organization_id, project_id, target_type, wave_id, type, payload, requested_by, origin, idempotency_key, body_hash, confirmed)
 SELECT $4::uuid, pr.organization_id, pr.id, 'wave', wv.id, $9, $6::jsonb, `+principalUserIDSQL+`, 'web', $7::uuid, $8, $10
   FROM easycode.projects pr JOIN easycode.waves wv ON wv.project_id = pr.id AND wv.code = $5 WHERE pr.public_id = $3::uuid`,
-		p.OrganizationID, p.Subject, projectID, id.String(), waveCode, string(payload), key, bodyHash, commandType, commandType == "cancel")
+		p.OrganizationID, p.Subject, projectID, id.String(), waveCode, string(payload), key, bodyHash, commandType,
+		commandType == "cancel" || commandType == "pause_now" || commandType == "restart")
 	if err != nil {
 		return appworkflow.CommandView{}, fmt.Errorf("queue %s: %w", commandType, classify(err))
 	}
