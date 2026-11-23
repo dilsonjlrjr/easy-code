@@ -1,14 +1,18 @@
 <script setup lang="ts">
 import { computed, ref, useId, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import type { Command } from '@/shared/api/contract'
 import { newIdempotencyKey } from '@/shared/api/idempotencyKey'
 import { ApiError } from '@/shared/api/problemDetails'
-import { waitForCommand } from '@/shared/commands/waitForCommand'
 import ProblemAlert from '@/shared/ui/ProblemAlert.vue'
 import { projectsApi } from '@/features/projects/api/projectsApi'
-import { ARTIFACT_EDIT_LIMIT, artifactsApi, type ArtifactEdit } from '../api/artifactsApi'
 import {
+  ARTIFACT_EDIT_LIMIT,
+  artifactsApi,
+  type ArtifactEdit,
+  type ArtifactEditStatus,
+} from '../api/artifactsApi'
+import {
+  followArtifactEdit,
   HUMAN_EDIT_TYPES,
   newArtifactTemplate,
   type HumanEditType,
@@ -32,7 +36,7 @@ const props = defineProps<{
   /** create: the type offered first. */
   initialType?: HumanEditType
 }>()
-const emit = defineEmits<{ submitted: [command: Command] }>()
+const emit = defineEmits<{ submitted: [edit: ArtifactEditStatus] }>()
 const open = defineModel<boolean>({ required: true })
 
 const { t } = useI18n()
@@ -110,14 +114,15 @@ async function submit(): Promise<void> {
   failure.value = undefined
   try {
     const accepted = await artifactsApi.editArtifact(props.projectId, edit(), key)
-    const finished = await waitForCommand(accepted, (commandId) =>
-      projectsApi.getCommand(props.projectId, commandId),
-    )
-    if (finished.state === 'refused') {
-      throw new ApiError(finished.refusal?.status ?? 409, finished.refusal)
+    const read = () => artifactsApi.getArtifactEdit(props.projectId, accepted.edit)
+    // The dialog waits only for the guard of the command; the agent's review follows on the page.
+    const guarded = await followArtifactEdit(await read(), read, (state) => state === 'pending')
+    if (guarded.state === 'refused') {
+      const command = await projectsApi.getCommand(props.projectId, guarded.command)
+      throw new ApiError(command.refusal?.status ?? 409, command.refusal)
     }
     open.value = false
-    emit('submitted', finished)
+    emit('submitted', guarded)
   } catch (error) {
     failure.value = error
   } finally {

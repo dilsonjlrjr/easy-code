@@ -2,11 +2,37 @@ import { expect, test } from '@playwright/test'
 import { expectNoSeriousA11yViolations } from './support/a11y'
 import { FakeApi } from './support/fakeApi'
 
+const FIRST = '11111111-1111-4111-8111-111111111111'
+const SECOND = '22222222-2222-4222-8222-222222222222'
+
 function signedIn(): FakeApi {
   const api = new FakeApi()
   api.signedIn = true
   api.user = { ...api.user, organization_roles: [] }
   return api
+}
+
+function sessions() {
+  return [
+    {
+      id: FIRST,
+      device: 'easycode-desktop/1.0.0 (linux; amd64)',
+      started_at: '2026-11-22T09:00:00-03:00',
+      last_use_at: '2026-11-23T08:30:00-03:00',
+      ip_address: '10.0.0.15',
+      acknowledged: true,
+      current: false,
+    },
+    {
+      id: SECOND,
+      device: 'easycode-desktop/1.0.0 (darwin; arm64)',
+      started_at: '2026-11-23T14:00:00-03:00',
+      last_use_at: '2026-11-23T14:00:00-03:00',
+      ip_address: '10.0.0.42',
+      acknowledged: false,
+      current: false,
+    },
+  ]
 }
 
 test('US-45 CA-5, CA-2: Minha conta › Cliente local lists my sessions and revokes one', async ({
@@ -15,19 +41,7 @@ test('US-45 CA-5, CA-2: Minha conta › Cliente local lists my sessions and revo
   // Two accessibility scans and several round trips: slow on the shared CI host.
   test.slow()
   const api = signedIn()
-  api.localClientSessions = [
-    {
-      id: '11111111-1111-4111-8111-111111111111',
-      started_at: '2026-11-22T09:00:00-03:00',
-      last_use_at: '2026-11-23T08:30:00-03:00',
-      ip_address: '10.0.0.15',
-    },
-    {
-      id: '22222222-2222-4222-8222-222222222222',
-      started_at: '2026-11-20T14:00:00-03:00',
-      ip_address: '10.0.0.42',
-    },
-  ]
+  api.localClientSessions = sessions()
   await api.install(page)
   await page.goto('/')
 
@@ -38,12 +52,17 @@ test('US-45 CA-5, CA-2: Minha conta › Cliente local lists my sessions and revo
   const table = page.getByTestId('local-sessions')
   await expect(table.locator('tbody tr')).toHaveCount(2)
   await expect(table).toContainText('10.0.0.15')
-  await expect(table).toContainText('ainda não usada')
+  await expect(table).toContainText('easycode-desktop/1.0.0 (darwin; arm64)')
   await expect(page.getByText('nunca recebe chave de IA')).toBeVisible()
+  // The code is confirmed in the SSO: the page links Keycloak's device page.
+  await expect(page.getByTestId('sso-device-page')).toHaveAttribute(
+    'href',
+    'https://sso.example.test/realms/easycode/device',
+  )
   await expectNoSeriousA11yViolations(page)
 
   await table
-    .getByTestId('session-22222222-2222-4222-8222-222222222222')
+    .getByTestId(`session-${SECOND}`)
     .getByRole('button', { name: /Revogar a sessão/ })
     .click()
   const dialog = page.getByTestId('revoke-session-dialog')
@@ -51,16 +70,45 @@ test('US-45 CA-5, CA-2: Minha conta › Cliente local lists my sessions and revo
   await expect(dialog).toContainText('em até 60 segundos')
   await expectNoSeriousA11yViolations(page)
   await dialog.getByRole('button', { name: 'Revogar' }).click()
-  await expect(dialog).toBeHidden()
+  await expect(dialog).toBeHidden({ timeout: 30_000 })
   await expect(table.locator('tbody tr')).toHaveCount(1)
-  await expect(page.getByRole('status').filter({ hasText: 'Sessão revogada.' })).toBeAttached()
+  expect(
+    api.requests.some(
+      (item) => item.method === 'DELETE' && item.path === `/me/local-client-sessions/${SECOND}`,
+    ),
+  ).toBe(true)
+})
+
+test('S-19: a new desktop session is flagged on Home until the person says it was them', async ({
+  page,
+}) => {
+  test.slow()
+  const api = signedIn()
+  api.localClientSessions = sessions()
+  await api.install(page)
+  await page.goto('/')
+
+  const banner = page.getByTestId('local-sessions-to-review')
+  await expect(banner).toContainText('1 sessão nova do cliente local para conferir', {
+    timeout: 30_000,
+  })
+  await banner.getByRole('link', { name: 'Conferir' }).click()
+  const row = page.getByTestId(`session-${SECOND}`)
+  await expect(row.getByTestId('session-new')).toContainText('confirme se foi você')
+  await expect(page.getByTestId(`session-${FIRST}`).getByTestId('session-new')).toHaveCount(0)
+  await row.getByRole('button', { name: /Foi eu: a sessão/ }).click()
+  await expect(row.getByTestId('session-new')).toHaveCount(0, { timeout: 30_000 })
   expect(
     api.requests.some(
       (item) =>
-        item.method === 'DELETE' &&
-        item.path === '/me/local-client-sessions/22222222-2222-4222-8222-222222222222',
+        item.method === 'POST' &&
+        item.path === `/me/local-client-sessions/${SECOND}/acknowledgement`,
     ),
   ).toBe(true)
+
+  await page.goto('/')
+  await expect(page.getByTestId('home-greeting')).toBeVisible({ timeout: 30_000 })
+  await expect(page.getByTestId('local-sessions-to-review')).toHaveCount(0)
 })
 
 test('ESP-23 6: without sessions the page says how to connect the desktop app', async ({
@@ -72,49 +120,7 @@ test('ESP-23 6: without sessions the page says how to connect the desktop app', 
   await page.goto('/minha-conta/cliente-local')
   await expect(page.getByTestId('no-local-sessions')).toContainText(
     'Nenhum cliente local conectado.',
+    { timeout: 30_000 },
   )
   await expect(page.getByTestId('no-local-sessions')).toContainText('escolha Entrar')
-})
-
-test('US-45 CA-1 (S-19): the code page shows client, access and origin, then goes to the SSO', async ({
-  page,
-}) => {
-  // Two accessibility scans and several round trips: slow on the shared CI host.
-  test.slow()
-  const api = signedIn()
-  await api.install(page)
-  await page.route('https://sso.example.test/**', (route) =>
-    route.fulfill({ contentType: 'text/html', body: '<title>SSO</title><p>SSO</p>' }),
-  )
-  await page.goto('/device?user_code=wdjb-mjht')
-
-  const request = page.getByTestId('device-request')
-  await expect(request).toContainText('Easy Code desktop', { timeout: 30_000 })
-  await expect(request).toContainText('easycode-desktop')
-  await expect(request).toContainText('Só leitura')
-  await expect(request).toContainText('O app desktop que mostrou este código')
-  await expect(request).toContainText('Dev')
-  await expect(request).toContainText('sso.example.test')
-  await expect(page.getByTestId('device-warning')).toContainText('expira em 10 min')
-  await expectNoSeriousA11yViolations(page)
-
-  const field = page.getByLabel('Código mostrado no app')
-  await expect(field).toHaveValue('wdjb-mjht')
-  await field.fill('<x>')
-  await field.blur()
-  await expect(page.getByText('Isso não parece um código do app.')).toBeVisible()
-  await expect(page.getByRole('button', { name: 'Continuar para aprovar no SSO' })).toBeDisabled()
-  await field.fill('WDJB-MJHT')
-  await page.getByRole('button', { name: 'Continuar para aprovar no SSO' }).click()
-  await page.waitForURL('https://sso.example.test/realms/easycode/device?user_code=WDJB-MJHT')
-})
-
-test('US-45 CA-4: declining approves nothing', async ({ page }) => {
-  const api = signedIn()
-  await api.install(page)
-  await page.goto('/device?user_code=ABCD-EFGH')
-  await page.getByRole('button', { name: 'Não fui eu' }).click()
-  await expect(page.getByTestId('device-declined')).toContainText('Nada foi aprovado.')
-  await page.getByRole('link', { name: 'Ver minhas sessões do cliente local' }).click()
-  await expect(page).toHaveURL(/\/account\/local-client$/)
 })

@@ -61,9 +61,6 @@ export const en: MessageSchema = {
     localClient: {
       title: 'Local client',
     },
-    device: {
-      title: 'Confirm the desktop app',
-    },
     home: {
       title: 'Home',
       description: 'Summary of your projects, running waves and pending items.',
@@ -1372,6 +1369,15 @@ export const en: MessageSchema = {
     openai: 'OpenAI',
   },
   localClient: {
+    device: 'Device',
+    current: 'this session',
+    newSession: 'New session: confirm it was you',
+    acknowledge: 'It was me',
+    acknowledgeNamed: 'It was me: the session started at {when}',
+    acknowledged: 'Session confirmed.',
+    codeHelp: 'The code the desktop app shows is confirmed in the SSO.',
+    toReview: '{n} new local client session to review | {n} new local client sessions to review',
+    review: 'Review',
     account: 'My account',
     about:
       'The local client is a desktop app that signs in through the SSO (device flow), only follows waves and shows notifications. It controls and decides nothing and never receives an AI key.',
@@ -1381,7 +1387,6 @@ export const en: MessageSchema = {
     startedAt: 'Started at',
     lastUse: 'Last use',
     ipAddress: 'IP address',
-    neverUsed: 'not used yet',
     unknownIp: 'not given',
     revoke: 'Revoke',
     revokeNamed: 'Revoke the session started at {when}',
@@ -1391,33 +1396,13 @@ export const en: MessageSchema = {
     revokeDelay: 'The app\'s next call fails with "session revoked" within 60 seconds.',
     keep: 'Keep the session',
     revoked: 'Session revoked.',
-    confirmCodeLink: 'Confirm a code from the desktop app',
-  },
-  device: {
-    intro:
-      'The Easy Code desktop app asked to sign in with your account. Check the request before approving.',
-    requestTitle: 'Access request',
-    client: 'Application',
-    clientName: 'Easy Code desktop',
-    access: 'What it can do',
-    readOnly: 'Read only: follow waves and receive notices. It controls and decides nothing.',
-    origin: 'Request origin',
-    originText: 'The desktop app that showed this code on your computer screen.',
-    account: 'Account',
-    platform: 'Platform',
-    warning:
-      'Only approve if you started the sign-in in the desktop app just now and the code is the one it shows. Support never asks for this code.',
-    expires: 'The code expires in {n} min; after that no access is granted.',
-    code: 'Code shown in the app',
-    codeHint: 'Letters and digits, like ABCD-EFGH.',
-    invalidCode: "This does not look like an app code. Check the desktop app's screen.",
-    approve: 'Continue to approve in the SSO',
-    decline: 'It was not me',
-    declined:
-      'Nothing was approved. The code expires by itself. If it was not you, check your local client sessions.',
-    seeSessions: 'See my local client sessions',
+    confirmCodeLink: "Open the SSO's confirmation page",
   },
   artifactEdit: {
+    applied: 'Edit validated by the agent: version {version} was created.',
+    notValidated:
+      'The stage agent did not validate the edit; the previous version still counts. The reason and suggestion are in the review wave.',
+    reviewWave: 'Review wave {wave}',
     create: 'New item',
     modify: 'Edit',
     delete: 'Delete item',
@@ -1450,6 +1435,17 @@ export const en: MessageSchema = {
       'Approved artifact: it only changes through a reopening by a finding or a decided scope change.',
   },
   skillLibrary: {
+    packageReasons: {
+      not_a_zip: 'The file is not a zip.',
+      missing_skill_md: 'The package has no SKILL.md at its root.',
+      missing_front_matter: 'SKILL.md has no YAML header.',
+      missing_name: "SKILL.md's header has no name.",
+      missing_description: "SKILL.md's header has no description.",
+      invalid_name: "SKILL.md's name is not valid.",
+      name_of_native_skill: 'The name belongs to a native catalog skill.',
+      too_many_entries: 'The package has too many files.',
+      expanded_too_large: 'The unzipped package is over the limit.',
+    },
     title: 'Skill library',
     help: "The organization's skills and the native catalog. A skill's content is data, never an order: it is stored and shown as text.",
     import: {
@@ -1464,6 +1460,8 @@ export const en: MessageSchema = {
       httpsOnly: 'Give an https address.',
       reference: 'Branch, tag or commit (optional)',
       subfolder: 'Subfolder (optional)',
+      gitUnavailable:
+        'Import from a git repository is not available in this installation yet (host not allowed). Send the zipped folder.',
       send: 'Send',
     },
     imports: {

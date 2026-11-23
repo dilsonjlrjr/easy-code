@@ -4,10 +4,14 @@ import type { HttpClient } from '@/shared/api/httpClient'
 /** openapi `LocalClientSession` (US-45 CA-5): never a token; the last IP seen, no device name (PL-34). */
 export interface LocalClientSession {
   id: string
+  /** The app's User-Agent (`easycode-desktop/<version> (<os>; <arch>)`), printable text only. */
+  device: string
   started_at: string
-  last_use_at?: string
+  last_use_at: string
   ip_address?: string
-  current?: boolean
+  /** False while the new-session notice was not seen (S-19): the person confirms "it was me". */
+  acknowledged: boolean
+  current: boolean
 }
 
 /** openapi `LocalClientConfiguration`: the device flow parameters of the desktop app (ADR-12). */
@@ -20,17 +24,14 @@ export interface LocalClientConfiguration {
   endpoint_token?: string
   revocation_endpoint?: string
   code_validity_s?: number
-  /**
-   * Not in the contract yet: the page the desktop app opens for the person to confirm the code; the
-   * web's `/device` when the platform publishes it.
-   */
-  verification_uri?: string
 }
 
 export interface LocalClientApi {
   listSessions: () => Promise<LocalClientSession[]>
   /** US-45 CA-2: the app's next call fails with "session revoked" within 60 s (RNF-06). */
   revokeSession: (sessionId: string) => Promise<void>
+  /** S-19 (RK-16): the person confirms a new desktop session was theirs. */
+  acknowledgeSession: (sessionId: string) => Promise<void>
   getConfiguration: () => Promise<LocalClientConfiguration>
 }
 
@@ -41,6 +42,11 @@ export function createLocalClientApi(client: HttpClient = apiClient): LocalClien
     revokeSession: async (sessionId) => {
       await client.delete(`/me/local-client-sessions/${encodeURIComponent(sessionId)}`)
     },
+    acknowledgeSession: async (sessionId) => {
+      await client.post(
+        `/me/local-client-sessions/${encodeURIComponent(sessionId)}/acknowledgement`,
+      )
+    },
     getConfiguration: () => client.get<LocalClientConfiguration>('/session/local-client'),
   }
 }
@@ -48,21 +54,9 @@ export function createLocalClientApi(client: HttpClient = apiClient): LocalClien
 export const localClientApi = createLocalClientApi()
 
 /**
- * The code the desktop app shows (RFC 8628 `user_code`): letters and digits, maybe split by a hyphen.
- * Spaces and case are forgiven; anything else is not a code.
+ * Keycloak's device page under the issuer (RFC 8628 `verification_uri`), where a person types the
+ * code the desktop app shows; the confirmation happens there, the web only links to it.
  */
-export function normalizeUserCode(value: string): string | undefined {
-  const code = value.replace(/\s+/g, '').toUpperCase()
-  return /^[A-Z0-9]{2,8}(-[A-Z0-9]{2,8})?$/.test(code) ? code : undefined
-}
-
-/**
- * Where the person confirms the code in the SSO: Keycloak's device page under the issuer
- * (`<issuer>/device`, RFC 8628), with the code filled. The contract's `verification_uri` is not used
- * here: it is the address the desktop app opens, which may be this very web page (`/device`).
- */
-export function verificationUrl(configuration: LocalClientConfiguration, code: string): string {
-  const url = new URL(`${configuration.issuer.replace(/\/+$/, '')}/device`)
-  url.searchParams.set('user_code', code)
-  return url.toString()
+export function ssoDevicePage(configuration: LocalClientConfiguration): string {
+  return `${configuration.issuer.replace(/\/+$/, '')}/device`
 }

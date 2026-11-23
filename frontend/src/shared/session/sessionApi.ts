@@ -16,6 +16,8 @@ export interface CurrentUser {
   /** `currency`: the organization's budget currency (ISO 4217); absent on older api builds. */
   organization?: { id: string; name: string; currency?: string }
   attachment_limit_bytes?: number
+  /** Web session only: desktop app sessions whose new-session notice was not seen (S-19). */
+  local_client_sessions_to_review?: number
 }
 
 /**

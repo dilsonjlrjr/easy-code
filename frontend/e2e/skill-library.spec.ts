@@ -80,7 +80,7 @@ test('US-44 CA-2, CA-3: a package without SKILL.md or above the limit is refused
 
   await sendPackage(page, 'big.zip')
   await expect(failure).toContainText('Pacote acima do tamanho máximo.', { timeout: 30_000 })
-  await expect(section.getByTestId('problem-limit')).toContainText('Limite: 5')
+  await expect(section.getByTestId('problem-limit')).toContainText('Limite: 2')
   expect(api.skills).toHaveLength(1)
 })
 
@@ -93,9 +93,9 @@ test('US-44 CA-4: a suspicious skill stays blocked until an administrator releas
   await api.install(page)
   await page.goto('/settings/skills')
 
-  // The git source: https only.
+  // The git source: https only; as built, refused until the egress gateway exists (ADR-16).
   const section = page.getByTestId('skill-import')
-  await section.getByRole('radio', { name: 'Repositório git' }).check()
+  await section.getByRole('radio', { name: 'Repositório git' }).check({ timeout: 30_000 })
   await section
     .getByLabel('Endereço do repositório (https)')
     .fill('http://git.local/suspicious.git')
@@ -105,6 +105,12 @@ test('US-44 CA-4: a suspicious skill stays blocked until an administrator releas
     .getByLabel('Endereço do repositório (https)')
     .fill('https://git.empresa.local/skills/suspicious.git')
   await section.getByRole('button', { name: 'Enviar' }).click()
+  await expect(section.getByTestId('git-unavailable')).toContainText('Envie a pasta compactada.', {
+    timeout: 30_000,
+  })
+
+  await section.getByRole('radio', { name: 'Pasta compactada (zip)' }).check()
+  await sendPackage(page, 'suspicious.zip')
 
   const row = page.getByTestId('skill-suspicious')
   await expect(row).toContainText('bloqueada')

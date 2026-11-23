@@ -64,9 +64,6 @@ export const ptBR = {
     localClient: {
       title: 'Cliente local',
     },
-    device: {
-      title: 'Confirmar o app desktop',
-    },
     home: {
       title: 'Início',
       description: 'Resumo dos seus projetos, ondas em andamento e pendências.',
@@ -1382,6 +1379,16 @@ export const ptBR = {
     openai: 'OpenAI',
   },
   localClient: {
+    device: 'Dispositivo',
+    current: 'esta sessão',
+    newSession: 'Nova sessão: confirme se foi você',
+    acknowledge: 'Foi eu',
+    acknowledgeNamed: 'Foi eu: a sessão iniciada em {when}',
+    acknowledged: 'Sessão confirmada.',
+    codeHelp: 'O código mostrado pelo app desktop é confirmado no SSO.',
+    toReview:
+      '{n} sessão nova do cliente local para conferir | {n} sessões novas do cliente local para conferir',
+    review: 'Conferir',
     account: 'Minha conta',
     about:
       'O cliente local é um app desktop que entra pelo SSO (device flow), só acompanha ondas e mostra notificações. Ele não controla nem decide nada e nunca recebe chave de IA.',
@@ -1391,7 +1398,6 @@ export const ptBR = {
     startedAt: 'Iniciada em',
     lastUse: 'Último uso',
     ipAddress: 'Endereço IP',
-    neverUsed: 'ainda não usada',
     unknownIp: 'não informado',
     revoke: 'Revogar',
     revokeNamed: 'Revogar a sessão iniciada em {when}',
@@ -1401,33 +1407,13 @@ export const ptBR = {
     revokeDelay: 'A próxima chamada do app falha com "sessão revogada" em até 60 segundos.',
     keep: 'Manter a sessão',
     revoked: 'Sessão revogada.',
-    confirmCodeLink: 'Confirmar um código do app desktop',
-  },
-  device: {
-    intro:
-      'O app desktop do Easy Code pediu para entrar com a sua conta. Confira o pedido antes de aprovar.',
-    requestTitle: 'Pedido de acesso',
-    client: 'Aplicativo',
-    clientName: 'Easy Code desktop',
-    access: 'O que ele pode fazer',
-    readOnly: 'Só leitura: acompanhar ondas e receber avisos. Não controla nem decide nada.',
-    origin: 'Origem do pedido',
-    originText: 'O app desktop que mostrou este código na tela do seu computador.',
-    account: 'Conta',
-    platform: 'Plataforma',
-    warning:
-      'Só aprove se você mesmo iniciou o login no app desktop agora e o código é o que aparece nele. Ninguém do suporte pede este código.',
-    expires: 'O código expira em {n} min; depois disso nenhum acesso é concedido.',
-    code: 'Código mostrado no app',
-    codeHint: 'Letras e números, como ABCD-EFGH.',
-    invalidCode: 'Isso não parece um código do app. Confira na tela do app desktop.',
-    approve: 'Continuar para aprovar no SSO',
-    decline: 'Não fui eu',
-    declined:
-      'Nada foi aprovado. O código expira sozinho. Se não foi você, confira suas sessões do cliente local.',
-    seeSessions: 'Ver minhas sessões do cliente local',
+    confirmCodeLink: 'Abrir a página de confirmação do SSO',
   },
   artifactEdit: {
+    applied: 'Edição validada pelo agente: nasceu a versão {version}.',
+    notValidated:
+      'O agente da etapa não validou a edição; a versão anterior continua valendo. O motivo e a sugestão estão na onda de revisão.',
+    reviewWave: 'Onda de revisão {wave}',
     create: 'Novo item',
     modify: 'Editar',
     delete: 'Excluir item',
@@ -1460,6 +1446,17 @@ export const ptBR = {
       'Artefato aprovado: só muda por reabertura via achado ou por mudança de escopo decidida.',
   },
   skillLibrary: {
+    packageReasons: {
+      not_a_zip: 'O arquivo não é um zip.',
+      missing_skill_md: 'O pacote não tem SKILL.md na raiz.',
+      missing_front_matter: 'O SKILL.md não tem cabeçalho YAML.',
+      missing_name: 'O cabeçalho do SKILL.md não tem name.',
+      missing_description: 'O cabeçalho do SKILL.md não tem description.',
+      invalid_name: 'O name do SKILL.md não é válido.',
+      name_of_native_skill: 'O name é de uma skill do catálogo nativo.',
+      too_many_entries: 'O pacote tem arquivos demais.',
+      expanded_too_large: 'O pacote descompactado passa do limite.',
+    },
     title: 'Biblioteca de skills',
     help: 'Skills da organização e catálogo nativo. O conteúdo de uma skill é dado, nunca ordem: é guardado e exibido como texto.',
     import: {
@@ -1474,6 +1471,8 @@ export const ptBR = {
       httpsOnly: 'Informe um endereço https.',
       reference: 'Ramo, marcação ou commit (opcional)',
       subfolder: 'Subpasta (opcional)',
+      gitUnavailable:
+        'A importação por repositório git ainda não está disponível nesta instalação (host não permitido). Envie a pasta compactada.',
       send: 'Enviar',
     },
     imports: {

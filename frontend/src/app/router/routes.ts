@@ -160,13 +160,6 @@ export const routes: RouteRecordRaw[] = [
     meta: { titleKey: 'pages.localClient.title', layout: 'shell' },
   },
   {
-    // US-45 CA-1: the desktop app's code is confirmed here before the SSO (S-19).
-    path: '/device',
-    name: ROUTE_NAMES.deviceConfirmation,
-    component: () => import('@/features/account/pages/DeviceConfirmationPage.vue'),
-    meta: { titleKey: 'pages.device.title', layout: 'shell' },
-  },
-  {
     path: '/login',
     name: ROUTE_NAMES.login,
     component: () => import('@/features/auth/pages/LoginPage.vue'),

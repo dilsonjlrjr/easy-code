@@ -76,11 +76,15 @@ test('US-53 CA-1: a member edits an item; the new version waits for the agent va
   await send.click()
 
   await expect(dialog).toBeHidden({ timeout: 30_000 })
-  await expect(page.getByTestId('artifact-edit-notice')).toContainText(
-    'aguarda a validação do agente',
-  )
+  // RN-1: the edit waits for the stage agent's review wave, then the validated version counts.
+  const notice = page.getByTestId('artifact-edit-notice')
+  await expect(notice).toContainText('aguarda a validação do agente')
+  await expect(notice.getByTestId('edit-review-wave')).toContainText('REQ-09')
+  await expect(notice).toContainText('Edição validada pelo agente: nasceu a versão 3.', {
+    timeout: 30_000,
+  })
   await expect(page.getByTestId('artifact-body')).toContainText('Corpo editado pela pessoa.')
-  await expect(page.getByText('editado por Dev, aguardando validação do agente')).toBeVisible()
+  await expect(page.getByText('editado por Dev, validado por')).toBeVisible()
   await expect(page.getByTestId('version-list').locator('li')).toHaveCount(3)
   const request = api.requests.find((item) => item.path.endsWith('/artifact-edits'))
   expect(request?.body).toMatchObject({
@@ -110,6 +114,27 @@ test('US-53 CA-2: a refused edit keeps the text typed and shows the reason', asy
   await expect(content).toHaveValue(/ONDA-ATIVA texto da pessoa/)
 })
 
+test('US-53 CA-2: an edit the agent does not validate leaves the previous version in force', async ({
+  page,
+}) => {
+  const { api } = seed()
+  await api.install(page)
+  await page.goto(`/projects/${PROJECT_ID}/artifacts/US-01`)
+  await page.getByTestId('edit-artifact').click({ timeout: 30_000 })
+  const dialog = page.getByTestId('artifact-edit-dialog')
+  await dialog
+    .getByLabel('Conteúdo (Markdown com cabeçalho YAML)')
+    .fill('---\nid: US-01\n---\nAGENTE-RECUSA critério sem verbo')
+  await dialog.getByLabel('Motivo da mudança').fill('Correção.')
+  await dialog.getByRole('button', { name: 'Enviar para validação' }).click()
+  await expect(dialog).toBeHidden({ timeout: 30_000 })
+  const notice = page.getByTestId('artifact-edit-notice')
+  await expect(notice).toContainText('não validou a edição', { timeout: 30_000 })
+  await expect(notice.getByTestId('edit-review-wave')).toBeVisible()
+  await expect(page.getByTestId('version-list').locator('li')).toHaveCount(2)
+  await expect(page.getByTestId('artifact-body')).toContainText('Corpo da história.')
+})
+
 test('US-53 CA-4: removing an item is a new version; no earlier version is deleted', async ({
   page,
 }) => {
@@ -122,7 +147,7 @@ test('US-53 CA-4: removing an item is a new version; no earlier version is delet
   await dialog.getByLabel('Motivo da mudança').fill('História fora do escopo.')
   await dialog.getByRole('button', { name: 'Excluir item' }).click()
   await expect(dialog).toBeHidden({ timeout: 30_000 })
-  await expect(page.getByTestId('version-list').locator('li')).toHaveCount(3)
+  await expect(page.getByTestId('version-list').locator('li')).toHaveCount(3, { timeout: 30_000 })
   const request = api.requests.find((item) => item.path.endsWith('/artifact-edits'))
   expect(request?.body).toEqual({
     operation: 'delete',
@@ -181,7 +206,7 @@ test('US-53 CA-5: a member records an imposed ADR citing a project constraint', 
   await dialog.getByRole('button', { name: 'Enviar para validação' }).click()
   await expect(dialog).toBeHidden({ timeout: 30_000 })
   await expect(page.getByTestId('artifact-edit-notice')).toBeVisible()
-  await expect(page.getByRole('link', { name: 'ADR-01' })).toBeVisible()
+  await expect(page.getByRole('link', { name: 'ADR-01' })).toBeVisible({ timeout: 30_000 })
   expect(project.artifacts['ADR-01']?.current.author).toMatchObject({ type: 'human' })
 
   await page.getByRole('link', { name: 'ADR-01' }).click()

@@ -3,6 +3,7 @@ import { mdiContentCopy } from '@mdi/js'
 import { computed } from 'vue'
 import { problemMessageKey } from './problemMessages'
 import { isApiError } from '@/shared/api/problemDetails'
+import { useI18n } from 'vue-i18n'
 import { useFormat } from '@/shared/format/useFormat'
 
 const props = defineProps<{
@@ -28,12 +29,14 @@ const extension = (field: string) =>
 const tool = extension('tool')
 const skill = extension('skill')
 const currentVersion = extension('current_version')
-/** US-44 CA-2: the package refusal says what is missing; that reason is the api's `detail`. */
-const packageReason = computed(() =>
-  isApiError(props.error) && props.error.slug === 'invalid-skill-package'
-    ? problem.value?.detail
-    : undefined,
-)
+const i18n = useI18n()
+/** US-44 CA-2: the package refusal says what is wrong, by its `reason` code (as built). */
+const packageReason = computed(() => {
+  if (!isApiError(props.error) || props.error.slug !== 'invalid-skill-package') return undefined
+  const reason = problem.value?.reason
+  const key = `skillLibrary.packageReasons.${String(reason)}`
+  return typeof reason === 'string' && i18n.te(key) ? i18n.t(key) : problem.value?.detail
+})
 const findingIds = computed(() => {
   const findings = problem.value?.findings
   return Array.isArray(findings) ? findings.filter((id) => typeof id === 'string') : []

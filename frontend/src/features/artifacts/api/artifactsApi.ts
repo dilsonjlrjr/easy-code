@@ -89,6 +89,19 @@ export interface ArtifactEdit {
   finding?: string
 }
 
+/** openapi `getArtifactEdit`: the guard (pending), the agent's `edit_review` wave, then the result. */
+export interface ArtifactEditStatus {
+  id: string
+  command: string
+  operation: ArtifactEdit['operation']
+  type: string
+  artifact?: string | null
+  state: 'pending' | 'reviewing' | 'applied' | 'refused'
+  review_wave?: string | null
+  version?: number | null
+  refusal_reason?: string | null
+}
+
 /** Up to 200 KiB of text (413 above). */
 export const ARTIFACT_EDIT_LIMIT = 204800
 
@@ -99,8 +112,13 @@ export interface ArtifactsApi {
   getVersion: (projectId: string, artifactId: string, version: number) => Promise<Artifact>
   /** The exact Markdown file of a version (`text/markdown`), for download. */
   getVersionFile: (projectId: string, artifactId: string, version: number) => Promise<string>
-  /** US-53: asynchronous command `edit_artifact` (202). */
-  editArtifact: (projectId: string, edit: ArtifactEdit, idempotencyKey: string) => Promise<Command>
+  /** US-53: asynchronous command `edit_artifact` (202, the command with `edit`, the edit id). */
+  editArtifact: (
+    projectId: string,
+    edit: ArtifactEdit,
+    idempotencyKey: string,
+  ) => Promise<Command & { edit: string }>
+  getArtifactEdit: (projectId: string, editId: string) => Promise<ArtifactEditStatus>
   /** US-27 CA-1: any two versions, not only neighbours (ER-21-6). */
   compareVersions: (
     projectId: string,
@@ -145,10 +163,18 @@ export function createArtifactsApi(client: HttpClient = apiClient): ArtifactsApi
       client.get<string>(`${artifactPath(projectId, artifactId)}/versions/${String(version)}`, {
         headers: { Accept: 'text/markdown' },
       }),
+    getArtifactEdit: (projectId, editId) =>
+      client.get<ArtifactEditStatus>(
+        `/projects/${encodeURIComponent(projectId)}/artifact-edits/${encodeURIComponent(editId)}`,
+      ),
     editArtifact: (projectId, edit, idempotencyKey) =>
-      client.post<Command>(`/projects/${encodeURIComponent(projectId)}/artifact-edits`, edit, {
-        headers: idempotencyHeaders(idempotencyKey),
-      }),
+      client.post<Command & { edit: string }>(
+        `/projects/${encodeURIComponent(projectId)}/artifact-edits`,
+        edit,
+        {
+          headers: idempotencyHeaders(idempotencyKey),
+        },
+      ),
     compareVersions: (projectId, artifactId, from, to) =>
       client.get<ArtifactComparison>(`${artifactPath(projectId, artifactId)}/comparison`, {
         query: { from, to },

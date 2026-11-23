@@ -72,9 +72,10 @@ describe('nextConfigurationFromForm (US-25 CA-2)', () => {
       tools: { read_file: ['docs/**'] },
       skills: [{ skill: 'sql-review', version: 1 }],
     })
-    expect(nextConfigurationFromForm(current, { adjustment: ' ', tools: [] })).not.toHaveProperty(
-      'adjustment_instructions',
-    )
+    // A cleared adjustment is sent as "" so the api removes it (an absent field would keep it).
+    expect(
+      nextConfigurationFromForm(current, { adjustment: ' ', tools: [] }).adjustment_instructions,
+    ).toBe('')
   })
 })
 

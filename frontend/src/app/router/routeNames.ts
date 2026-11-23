@@ -22,7 +22,6 @@ export const ROUTE_NAMES = {
   projectAgents: 'project-agents',
   settings: 'settings',
   localClientSessions: 'local-client-sessions',
-  deviceConfirmation: 'device-confirmation',
   login: 'login',
   accessDenied: 'access-denied',
 } as const

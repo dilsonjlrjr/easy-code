@@ -1,7 +1,8 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   awaitingAgentReview,
   canEditArtifact,
+  followArtifactEdit,
   isImposedAdr,
   newArtifactTemplate,
 } from '../composables/artifactEditing'
@@ -47,5 +48,43 @@ describe('newArtifactTemplate', () => {
     expect(text.startsWith('---\ntipo: ADR')).toBe(true)
     expect(isImposedAdr({ natureza: 'imposta' })).toBe(true)
     expect(isImposedAdr({})).toBe(false)
+  })
+})
+
+describe('followArtifactEdit (as built: pending, reviewing, applied or refused)', () => {
+  const status = (state: 'pending' | 'reviewing' | 'applied' | 'refused') => ({
+    id: 'e1',
+    command: 'c1',
+    operation: 'modify' as const,
+    type: 'US',
+    state,
+  })
+
+  it('waits while the state is one to wait for, then returns the settled edit', async () => {
+    const read = vi
+      .fn()
+      .mockResolvedValueOnce(status('reviewing'))
+      .mockResolvedValueOnce(status('applied'))
+    const settled = await followArtifactEdit(
+      status('pending'),
+      read,
+      (state) => state === 'pending' || state === 'reviewing',
+      { sleep: () => Promise.resolve() },
+    )
+    expect(settled.state).toBe('applied')
+    expect(read).toHaveBeenCalledTimes(2)
+  })
+
+  it('the dialog stops at the guard: reviewing is enough', async () => {
+    const read = vi.fn().mockResolvedValue(status('reviewing'))
+    const settled = await followArtifactEdit(
+      status('pending'),
+      read,
+      (state) => state === 'pending',
+      {
+        sleep: () => Promise.resolve(),
+      },
+    )
+    expect(settled.state).toBe('reviewing')
   })
 })

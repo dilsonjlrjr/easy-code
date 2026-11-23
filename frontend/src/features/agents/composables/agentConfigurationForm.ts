@@ -94,9 +94,9 @@ export function nextConfigurationFromForm(
   current: AgentConfiguration,
   form: AgentConfigurationForm,
 ): NewAgentConfiguration {
-  const adjustment = form.adjustment.trim()
+  // As built: an absent field keeps the adjustment and `""` removes it, so the form always sends it.
   return {
-    ...(adjustment ? { adjustment_instructions: adjustment } : {}),
+    adjustment_instructions: form.adjustment.trim(),
     tools: toolsFromKeys(form.tools),
     skills: current.skills.map(({ skill, version }) => ({ skill, version })),
   }

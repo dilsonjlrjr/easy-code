@@ -9,17 +9,13 @@ import StateLabel from '@/shared/ui/StateLabel.vue'
 import { useCurrentProjectStore } from '@/features/projects/stores/currentProjectStore'
 import { artifactsApi, type ArtifactSummary } from '../api/artifactsApi'
 import ArtifactEditDialog from '../components/ArtifactEditDialog.vue'
-import { useAnnouncer } from '@/shared/composables/useAnnouncer'
-import { useI18n } from 'vue-i18n'
+import { useArtifactEditNotice } from '../composables/useArtifactEditNotice'
 
 const store = useCurrentProjectStore()
 const format = useFormat()
 const artifacts = ref<ArtifactSummary[]>([])
 const projectId = computed(() => store.project?.id ?? '')
-const { t } = useI18n()
-const { message, announce } = useAnnouncer()
 const createOpen = ref(false)
-const notice = ref<string>()
 /** US-53 CA-1, CA-5: any project role creates an item or an imposed ADR while the project runs. */
 const canCreate = computed(
   () =>
@@ -28,15 +24,15 @@ const canCreate = computed(
     store.project.my_roles.length > 0,
 )
 
-function submitted(): void {
-  notice.value = t('artifactEdit.sent')
-  announce(notice.value)
-  void loader.run()
-}
-
 const loader = useLoader(async () => {
   artifacts.value = await artifactsApi.listArtifacts(projectId.value)
 })
+const {
+  notice,
+  message,
+  track: submitted,
+  dismiss,
+} = useArtifactEditNotice(() => projectId.value, loader.run)
 
 onMounted(() => {
   void loader.run()
@@ -66,7 +62,7 @@ onMounted(() => {
       class="mb-4"
       closable
       data-testid="artifact-edit-notice"
-      @click:close="notice = undefined"
+      @click:close="dismiss"
     >
       {{ notice }}
     </v-alert>

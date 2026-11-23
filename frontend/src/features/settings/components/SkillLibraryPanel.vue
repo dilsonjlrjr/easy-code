@@ -2,7 +2,7 @@
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { newIdempotencyKey } from '@/shared/api/idempotencyKey'
-import { ApiError } from '@/shared/api/problemDetails'
+import { ApiError, isApiError } from '@/shared/api/problemDetails'
 import { useLoader } from '@/shared/composables/useLoader'
 import { useFormat } from '@/shared/format/useFormat'
 import ConfirmActionDialog from '@/shared/ui/ConfirmActionDialog.vue'
@@ -59,6 +59,14 @@ const chosenFile = computed(() =>
 const gitValid = computed(() => isHttpsUrl(git.value.url))
 const canSend = computed(() =>
   source.value === 'upload' ? chosenFile.value !== undefined : gitValid.value,
+)
+/** As built: the git source answers 400 `host_not_allowed` until the egress gateway exists (ADR-16). */
+const gitUnavailable = computed(
+  () =>
+    isApiError(sendFailure.value) &&
+    (sendFailure.value.problem?.errors ?? []).some(
+      (error) => error.field === 'git_url' && error.message === 'host_not_allowed',
+    ),
 )
 const justificationValid = computed(() => {
   const length = justification.value.trim().length
@@ -214,6 +222,9 @@ async function submitAction(key: string): Promise<void> {
           class="my-2"
           data-testid="skill-send-failure"
         />
+        <p v-if="gitUnavailable" class="text-body-2 mb-2" data-testid="git-unavailable">
+          {{ $t('skillLibrary.import.gitUnavailable') }}
+        </p>
         <v-btn
           type="submit"
           color="primary"

@@ -22,7 +22,7 @@ import ArtifactComparisonPanel from '../components/ArtifactComparisonPanel.vue'
 import ArtifactEditDialog from '../components/ArtifactEditDialog.vue'
 import { awaitingAgentReview, canEditArtifact, isImposedAdr } from '../composables/artifactEditing'
 import type { ArtifactEdit } from '../api/artifactsApi'
-import { useAnnouncer } from '@/shared/composables/useAnnouncer'
+import { useArtifactEditNotice } from '../composables/useArtifactEditNotice'
 import ArtifactStructuredView from '../components/ArtifactStructuredView.vue'
 import QualityArtifactView from '../components/QualityArtifactView.vue'
 import {
@@ -43,14 +43,12 @@ const current = ref<Artifact>()
 const versions = ref<ArtifactVersionSummary[]>([])
 const shown = ref<Artifact>()
 const downloadFailure = ref<unknown>()
-const { message, announce } = useAnnouncer()
 /** US-53: the edit dialog, the file it starts from, and the notice after sending. */
 const editOperation = ref<ArtifactEdit['operation']>('modify')
 const editOpen = ref(false)
 const editContent = ref('')
 const editPreparing = ref(false)
 const editFailure = ref<unknown>()
-const editNotice = ref<string>()
 
 const requestedVersion = computed(() => {
   const value = Number(route.query.version)
@@ -189,11 +187,13 @@ async function startEdit(operation: 'modify' | 'delete'): Promise<void> {
   editOpen.value = true
 }
 
-function editSubmitted(): void {
-  editNotice.value = t('artifactEdit.sent')
-  announce(editNotice.value)
-  void loader.run()
-}
+const {
+  edit: trackedEdit,
+  notice: editNotice,
+  message,
+  track: editSubmitted,
+  dismiss: dismissEditNotice,
+} = useArtifactEditNotice(() => projectId, loader.run)
 
 async function downloadVersion(): Promise<void> {
   if (!shown.value) return
@@ -279,9 +279,18 @@ async function downloadVersion(): Promise<void> {
         class="mb-4"
         closable
         data-testid="artifact-edit-notice"
-        @click:close="editNotice = undefined"
+        @click:close="dismissEditNotice"
       >
         {{ editNotice }}
+        <!-- RN-1: the agent's review wave; when it refuses, its reason stays in the wave (CA-2). -->
+        <router-link
+          v-if="trackedEdit?.review_wave"
+          :to="{ name: ROUTE_NAMES.wave, params: { projectId, waveId: trackedEdit.review_wave } }"
+          class="d-block monospace"
+          data-testid="edit-review-wave"
+        >
+          {{ $t('artifactEdit.reviewWave', { wave: trackedEdit.review_wave }) }}
+        </router-link>
       </v-alert>
       <!-- US-53: edit or remove the item; the stage agent validates before it counts. -->
       <div v-if="editable" class="d-flex flex-wrap ga-2 mb-4" data-testid="artifact-edit-actions">

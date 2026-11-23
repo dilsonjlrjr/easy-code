@@ -182,10 +182,14 @@ export class FakeApi {
   ]
   /** `LocalClientSession` items of the signed-in person (US-45 CA-5). */
   localClientSessions: Json[] = []
+  /** Human artifact edits by id (US-53): the status and the version the review wave records. */
+  artifactEdits: Record<string, { status: Json; apply: () => number; agentRefuses: boolean }> = {}
   /** Skill imports by id (US-44): the answer of the next getSkillImport. */
   skillImports: Record<string, Json> = {}
+  /** The git source of skill imports works (an installation with the egress gateway). */
+  gitSkillImport = false
   /** Transport limit of a skill package (413 `too-large-package`, CA-3). */
-  skillPackageLimit = 5 * 1024 * 1024
+  skillPackageLimit = 2 * 1024 * 1024
   /** Requests seen, for assertions (method, path, headers, body). */
   readonly requests: Array<{
     method: string
@@ -429,6 +433,9 @@ export class FakeApi {
             ...(this.organizationCurrency ? { currency: this.organizationCurrency } : {}),
           },
           attachment_limit_bytes: this.attachmentLimit,
+          local_client_sessions_to_review: this.localClientSessions.filter(
+            (item) => item.acknowledged === false,
+          ).length,
           csrf_token: 'csrf-dev',
           authenticated_at: this.recentlyAuthenticated
             ? '2026-11-22T10:00:00-03:00'
@@ -451,9 +458,15 @@ export class FakeApi {
     }
     if (first === 'me' && second === 'local-client-sessions') {
       if (!third) return { status: 200, body: { items: this.localClientSessions } }
-      if (method !== 'DELETE') return { status: 404, body: problem('not-found', 404) }
       const exists = this.localClientSessions.some((item) => item.id === third)
       if (!exists) return { status: 404, body: problem('not-found', 404) }
+      if (method === 'POST' && fourth === 'acknowledgement') {
+        this.localClientSessions = this.localClientSessions.map((item) =>
+          item.id === third ? { ...item, acknowledged: true } : item,
+        )
+        return { status: 204 }
+      }
+      if (method !== 'DELETE') return { status: 404, body: problem('not-found', 404) }
       this.localClientSessions = this.localClientSessions.filter((item) => item.id !== third)
       return { status: 204 }
     }
@@ -712,6 +725,7 @@ export class FakeApi {
       return this.gateRounds(state, method, fourth, sixth, seventh, input, headers)
     if (third === 'deletion' && method === 'POST') return this.deleteProject(state, input)
     if (third === 'artifact-edits' && method === 'POST') return this.editArtifact(state, input)
+    if (third === 'artifact-edits' && fourth) return this.readArtifactEdit(fourth)
     if (third === 'agents' && fifth === 'configuration' && sixth === 'versions') {
       const agent = state.agents.find((item) => item.agent === fourth)
       if (!agent) return { status: 404, body: problem('not-found', 404) }
@@ -1049,8 +1063,14 @@ export class FakeApi {
     if (fileName === 'missing.zip')
       return {
         status: 400,
-        body: problem('invalid-skill-package', 400, {
-          detail: 'O pacote não tem SKILL.md na raiz.',
+        body: problem('invalid-skill-package', 400, { reason: 'missing_skill_md' }),
+      }
+    // As built: the git source is refused until the egress gateway exists (ADR-16).
+    if (json && !this.gitSkillImport)
+      return {
+        status: 400,
+        body: problem('validation', 400, {
+          errors: [{ field: 'git_url', message: 'host_not_allowed' }],
         }),
       }
     const skillId = json
@@ -1131,11 +1151,11 @@ export class FakeApi {
   }
 
   /**
-   * editArtifact (US-53): any project role; VISAO, US, RNF, BACKLOG or ADR; draft or in review, or
+   * editArtifact and getArtifactEdit (US-53, as built): any project role; draft or in review, or
    * approved with the scope change finding (CA-6, CA-7); `base_version` must be the current one
-   * (409 `outdated-version`). Content with `ONDA-ATIVA` is refused by the worker (an active wave of
-   * the stage, `state-conflict`). Accepted as pending; the next getCommand finds it applied and the
-   * new version waits for the agent (`reviewed_by: null`, RN-1).
+   * (409 `outdated-version`). Content with `ONDA-ATIVA` is refused by the guard (`state-conflict`);
+   * with `AGENTE-RECUSA` the review wave ends without a version (CA-2). Otherwise the first read
+   * finds the `edit_review` wave running and the next one the validated version (RN-1).
    */
   private editArtifact(state: ProjectState, input: Json): { status: number; body?: unknown } {
     const roles = (state.project.my_roles as string[] | undefined) ?? []
@@ -1143,37 +1163,8 @@ export class FakeApi {
       return { status: 403, body: problem('forbidden', 403) }
     const reason = typeof input.reason === 'string' ? input.reason.trim() : ''
     if (reason.length < 3) return { status: 400, body: problem('validation', 400) }
-    const author = {
-      type: 'human',
-      edited_by: { id: this.user.id, name: this.user.name },
-      reviewed_by: null,
-    }
     const content = typeof input.content === 'string' ? input.content : ''
-    const body = content.replace(/^---[\s\S]*?---\n?/, '')
-    if (input.operation === 'create') {
-      const type = String(input.type)
-      const number =
-        Object.keys(state.artifacts).filter((id) => id.startsWith(`${type}-`)).length + 1
-      const id = `${type}-${String(number).padStart(2, '0')}`
-      const created = {
-        id,
-        type,
-        title: /titulo: (.*)/.exec(content)?.[1]?.trim() || id,
-        state: 'draft',
-        version: 1,
-        stage: type === 'ADR' ? 'architecture' : 'requirements',
-        author,
-        wave: 'REQ-01',
-        header: type === 'ADR' ? { natureza: 'imposta' } : {},
-        body,
-        commit: null,
-      }
-      state.artifacts[id] = {
-        current: created,
-        versions: [{ version: 1, data: '2026-11-23', wave: 'REQ-01', author, description: reason }],
-        byVersion: { 1: created },
-      }
-    } else {
+    if (input.operation !== 'create') {
       const artifact = state.artifacts[String(input.artifact)]
       if (!artifact) return { status: 404, body: problem('not-found', 404) }
       const current = artifact.current
@@ -1185,37 +1176,116 @@ export class FakeApi {
           status: 409,
           body: problem('outdated-version', 409, { current_version: current.version }),
         }
-      if (!content.includes('ONDA-ATIVA')) {
-        const version = Number(current.version) + 1
-        const next = {
-          ...current,
-          version,
-          state: 'draft',
-          author,
-          body: input.operation === 'delete' ? '' : body,
-        }
-        artifact.current = next
-        artifact.byVersion[version] = next
-        artifact.versions.push({
-          version,
-          data: '2026-11-23',
-          wave: current.wave,
-          author,
-          description: reason,
-        })
-      }
     }
-    const refusal = content.includes('ONDA-ATIVA')
+    const guardRefusal = content.includes('ONDA-ATIVA')
       ? problem('state-conflict', 409, { current_state: 'running' })
       : undefined
     const command = this.command(
       'edit_artifact',
       'artifact',
       String(input.artifact ?? input.type),
-      refusal ? 'refused' : 'applied',
-      refusal,
+      guardRefusal ? 'refused' : 'applied',
+      guardRefusal,
     )
-    return { status: 202, body: { ...command, state: 'pending' } }
+    const editId = `00000000-0000-4000-b000-${String(this.nextId++).padStart(12, '0')}`
+    this.artifactEdits[editId] = {
+      status: {
+        id: editId,
+        command: command.id,
+        operation: input.operation,
+        type: input.type ?? state.artifacts[String(input.artifact)]?.current.type,
+        artifact: input.artifact ?? null,
+        state: guardRefusal ? 'refused' : 'reviewing',
+        review_wave: guardRefusal ? null : 'REQ-09',
+        version: null,
+        refusal_reason: guardRefusal ? 'state-conflict' : null,
+      },
+      apply: () => this.applyArtifactEdit(state, input, reason, content),
+      agentRefuses: content.includes('AGENTE-RECUSA'),
+    }
+    return { status: 202, body: { ...command, state: 'pending', edit: editId } }
+  }
+
+  private readArtifactEdit(editId: string): { status: number; body?: unknown } {
+    const record = this.artifactEdits[editId] as
+      { status: Json; apply: () => number; agentRefuses: boolean } | undefined
+    if (!record) return { status: 404, body: problem('not-found', 404) }
+    const answer = { ...record.status }
+    if (record.status.state === 'reviewing') {
+      // The next read finds the review wave finished.
+      if (record.agentRefuses) {
+        record.status = {
+          ...record.status,
+          state: 'refused',
+          refusal_reason: 'not_validated_by_agent',
+        }
+      } else {
+        record.status = { ...record.status, state: 'applied', version: record.apply() }
+      }
+    }
+    return { status: 200, body: answer }
+  }
+
+  /** The version the review wave records: human author, the stage agent as reviewer (RN-1). */
+  private applyArtifactEdit(
+    state: ProjectState,
+    input: Json,
+    reason: string,
+    content: string,
+  ): number {
+    const type = String(input.type ?? state.artifacts[String(input.artifact)]?.current.type)
+    const author = {
+      type: 'human',
+      edited_by: { id: this.user.id, name: this.user.name },
+      reviewed_by: type === 'ADR' ? 'architect-agent' : 'requirements-agent',
+    }
+    const body = content.replace(/^---[\s\S]*?---\n?/, '')
+    if (input.operation === 'create') {
+      const number =
+        Object.keys(state.artifacts).filter((id) => id.startsWith(`${type}-`)).length + 1
+      const id = `${type}-${String(number).padStart(2, '0')}`
+      const created = {
+        id,
+        type,
+        title: /titulo: (.*)/.exec(content)?.[1]?.trim() || id,
+        state: 'draft',
+        version: 1,
+        stage: type === 'ADR' ? 'architecture' : 'requirements',
+        author,
+        wave: 'REQ-09',
+        header: type === 'ADR' ? { natureza: 'imposta' } : {},
+        body,
+        commit: null,
+      }
+      state.artifacts[id] = {
+        current: created,
+        versions: [{ version: 1, data: '2026-11-23', wave: 'REQ-09', author, description: reason }],
+        byVersion: { 1: created },
+      }
+      return 1
+    }
+    const artifact = state.artifacts[String(input.artifact)]
+    if (!artifact) return 0
+    const current = artifact.current
+    const version = Number(current.version) + 1
+    const next = {
+      ...current,
+      version,
+      state: 'draft',
+      author,
+      wave: 'REQ-09',
+      body: input.operation === 'delete' ? '' : body,
+    }
+    artifact.current = next
+    artifact.byVersion[version] = next
+    artifact.versions.push({
+      version,
+      data: '2026-11-23',
+      wave: 'REQ-09',
+      author,
+      description: reason,
+    })
+    return version
   }
 
   /** Accumulated cost of the project (`ProjectSummary.accumulated_cost`), zero when not seeded. */

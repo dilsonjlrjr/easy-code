@@ -84,6 +84,19 @@ void costsLoader.run()
       {{ $t('home.greeting', { name: session.user.name }) }}
     </p>
     <p class="text-body-1 text-medium-emphasis mb-6">{{ $t('pages.home.description') }}</p>
+    <!-- S-19 (RK-16): every new desktop app session is flagged until the person reviews it. -->
+    <v-alert
+      v-if="(session.user?.local_client_sessions_to_review ?? 0) > 0"
+      type="warning"
+      variant="tonal"
+      class="mb-6"
+      data-testid="local-sessions-to-review"
+    >
+      {{ $t('localClient.toReview', session.user?.local_client_sessions_to_review ?? 0) }}
+      <router-link :to="{ name: ROUTE_NAMES.localClientSessions }" class="ml-1">
+        {{ $t('localClient.review') }}
+      </router-link>
+    </v-alert>
 
     <!-- ESP-03 3: indicators. -->
     <section aria-labelledby="home-indicators-heading" class="mb-8">

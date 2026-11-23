@@ -1,5 +1,5 @@
 import type { ProjectRole, ProjectState } from '@/shared/api/contract'
-import type { ArtifactAuthor, ArtifactSummary } from '../api/artifactsApi'
+import type { ArtifactAuthor, ArtifactEditStatus, ArtifactSummary } from '../api/artifactsApi'
 
 /** `x-human-edit-types` of the common header (openapi `editArtifact`): the types a person edits. */
 export const HUMAN_EDIT_TYPES = ['VISAO', 'US', 'RNF', 'BACKLOG', 'ADR'] as const
@@ -77,4 +77,28 @@ export function newArtifactTemplate(type: HumanEditType, constraint = 'RESTR-01'
     ],
   }
   return ['---', ...header[type], '---', '', ''].join('\n')
+}
+
+/**
+ * Follows an edit (getArtifactEdit) while `keepWaiting` holds for its state, by polling: the dialog
+ * waits only for the guard (`pending`), the page then waits for the agent's review (`reviewing`).
+ */
+export async function followArtifactEdit(
+  first: ArtifactEditStatus,
+  read: () => Promise<ArtifactEditStatus>,
+  keepWaiting: (state: ArtifactEditStatus['state']) => boolean,
+  options: { intervalMs?: number; timeoutMs?: number; sleep?: (ms: number) => Promise<void> } = {},
+): Promise<ArtifactEditStatus> {
+  const interval = options.intervalMs ?? 1000
+  const timeout = options.timeoutMs ?? 30_000
+  const sleep =
+    options.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)))
+  let current = first
+  let waited = 0
+  while (keepWaiting(current.state) && waited < timeout) {
+    await sleep(interval)
+    waited += interval
+    current = await read()
+  }
+  return current
 }
