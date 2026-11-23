@@ -104,13 +104,13 @@ const pairProviders = computed(() => {
 })
 const budgetErrors = computed(() => validateBudget(budget.value))
 /**
- * The organization's currency (ER-05-7): the contract gives it only through money values, so the
- * price of the chosen execution model, or else of any model, names it. Without a price the budget
- * is not sent and the start is refused listing the budget (US-05 CA-2).
+ * The organization's currency (ER-05-7), from the session (`organization.currency`). An api build
+ * without it falls back to the price of the chosen execution model, or else of any model.
  */
 const currency = computed(() => {
   const chosen = modelOptions.value.find((option) => option.value === form.execution)
   return (
+    session.user?.organization?.currency ??
     chosen?.model.current_price?.currency ??
     modelOptions.value.find((option) => option.model.current_price)?.model.current_price?.currency
   )

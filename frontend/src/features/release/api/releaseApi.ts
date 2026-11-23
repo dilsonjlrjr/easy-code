@@ -35,6 +35,8 @@ export interface ReleaseSummary {
   accepted_risks: Array<{ finding: FindingSummary; acceptance: Acceptance }>
   cost_total: DetailedCost
   blocks: ReleaseBlock[]
+  /** The RELEASE artifact of the stage, once the orchestrator wrote it (null before). */
+  release_artifact?: string | null
 }
 
 export interface ReleaseApi {

@@ -18,6 +18,7 @@ import {
   type ArtifactAuthor,
   type ArtifactVersionSummary,
 } from '../api/artifactsApi'
+import ArtifactComparisonPanel from '../components/ArtifactComparisonPanel.vue'
 import ArtifactStructuredView from '../components/ArtifactStructuredView.vue'
 import QualityArtifactView from '../components/QualityArtifactView.vue'
 import {
@@ -109,7 +110,9 @@ watch(
 void loader.run()
 
 function chooseVersion(version: number): void {
-  const query = version === current.value?.version ? {} : { version: String(version) }
+  const query = { ...route.query }
+  if (version === current.value?.version) delete query.version
+  else query.version = String(version)
   void router.replace({ query })
 }
 
@@ -289,6 +292,13 @@ async function downloadVersion(): Promise<void> {
               class="mt-2"
             />
           </section>
+
+          <!-- US-27: any two versions side by side (ESP-21 4, Phase 2). -->
+          <ArtifactComparisonPanel
+            :project-id="projectId"
+            :artifact-id="artifactId"
+            :versions="versions"
+          />
         </div>
 
         <aside aria-labelledby="versions-heading">
@@ -322,7 +332,20 @@ async function downloadVersion(): Promise<void> {
                 </router-link>
               </p>
               <p class="text-body-2">{{ item.description }}</p>
-              <p v-if="item.finding" class="text-body-2 monospace">{{ item.finding }}</p>
+              <!-- ER-21-7: the finding that drove a rework version, with a link. -->
+              <p v-if="item.finding" class="text-body-2">
+                {{ $t('artifacts.drivenBy') }}
+                <router-link
+                  :to="{
+                    name: ROUTE_NAMES.finding,
+                    params: { projectId, findingId: item.finding },
+                  }"
+                  class="monospace"
+                  :data-testid="`version-finding-${item.version}`"
+                >
+                  {{ item.finding }}
+                </router-link>
+              </p>
             </li>
           </ol>
         </aside>

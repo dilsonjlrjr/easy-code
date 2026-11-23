@@ -19,6 +19,7 @@ import ProblemAlert from '@/shared/ui/ProblemAlert.vue'
 import StateLabel from '@/shared/ui/StateLabel.vue'
 import { useFormat } from '@/shared/format/useFormat'
 import { moneyShare } from '@/shared/format/formatters'
+import { subtractMoney } from '@/shared/format/money'
 import type { Money } from '@/shared/api/contract'
 import ProjectLifecycleActions from '../components/ProjectLifecycleActions.vue'
 import StartRefusal from '../components/StartRefusal.vue'
@@ -38,6 +39,11 @@ const session = useSessionStore()
 const format = useFormat()
 /** US-39 CA-1: the last budget alert received live; the project state does not change. */
 const budgetAlert = ref<{ spend: Money; stopLimit: Money; percentage?: number }>()
+/**
+ * US-39 / PROJETO 10: why the project paused by budget, from the live `budget_exhausted` event:
+ * the spend reached the stop limit, or the estimate of the next wave exceeds the balance (US-40).
+ */
+const budgetExhausted = ref<{ cause?: string; estimate?: Money; balance?: Money }>()
 
 const projectId = computed(() => String(route.params.projectId))
 const startFailure = ref<unknown>()
@@ -86,6 +92,30 @@ const budgetUse = computed(() => {
   }
 })
 
+/**
+ * US-39 CA-1: the alert to show. The live event wins; after a reload the project keeps the last
+ * alert crossed (`summary.last_budget_alert_percentage`), so the warning does not vanish.
+ */
+const shownBudgetAlert = computed(() => {
+  if (budgetAlert.value) return budgetAlert.value
+  const summary = project.value?.summary
+  const percentage = summary?.last_budget_alert_percentage
+  if (percentage === null || percentage === undefined || !summary?.stop_limit) return undefined
+  if (project.value?.state !== 'in_progress') return undefined
+  return { spend: summary.accumulated_cost, stopLimit: summary.stop_limit, percentage }
+})
+
+/** ESP-06 6: paused shows who paused it and when. */
+const pausedBy = computed(() => {
+  const pause = project.value?.state === 'paused' ? project.value.pause : undefined
+  if (!pause) return undefined
+  const who =
+    pause.by.type === 'human'
+      ? (pause.by.user?.name ?? pause.by.id ?? '')
+      : t('agents.orchestrator')
+  return { who, when: pause.at }
+})
+
 /** ESP-30 2: the findings tab carries the count of open findings (`summary.open_findings`, PL-72). */
 const findingsTabLabel = computed(() => {
   const open = project.value?.summary?.open_findings
@@ -93,12 +123,19 @@ const findingsTabLabel = computed(() => {
   return total > 0 ? t('pages.project.findingsCount', { n: total }) : t('pages.project.findings')
 })
 
+/** ESP-27 2: the audit trail is for approvers and the lead (x-roles of listProjectAudit). */
+const seesAudit = computed(() =>
+  (project.value?.my_roles ?? []).some((role) => role === 'approver' || role === 'lead'),
+)
+
 const tabs = computed(() => [
   { name: ROUTE_NAMES.project, label: t('pages.project.workflow') },
   { name: ROUTE_NAMES.projectWaves, label: t('pages.project.waves') },
   { name: ROUTE_NAMES.projectArtifacts, label: t('pages.project.artifacts') },
   { name: ROUTE_NAMES.projectFindings, label: findingsTabLabel.value },
   { name: ROUTE_NAMES.traceability, label: t('pages.project.traceability') },
+  { name: ROUTE_NAMES.projectCosts, label: t('pages.project.costs') },
+  ...(seesAudit.value ? [{ name: ROUTE_NAMES.projectAudit, label: t('pages.project.audit') }] : []),
   { name: ROUTE_NAMES.projectConfiguration, label: t('pages.project.configuration') },
   { name: ROUTE_NAMES.projectMembers, label: t('pages.project.members') },
 ])
@@ -129,7 +166,16 @@ function handleEvent(event: CloudEvent, eventClass: EventClass): void {
     if (spend && stopLimit)
       budgetAlert.value = { spend, stopLimit, percentage: moneyShare(alertLimit, stopLimit) }
   }
-  if (type.startsWith('project.budget_exhausted')) budgetAlert.value = undefined
+  if (type.startsWith('project.budget_exhausted')) {
+    budgetAlert.value = undefined
+    const spend = event.data.spend as Money | undefined
+    const stopLimit = event.data.stop_limit as Money | undefined
+    budgetExhausted.value = {
+      cause: typeof event.data.cause === 'string' ? event.data.cause : undefined,
+      estimate: event.data.next_wave_estimate as Money | undefined,
+      balance: subtractMoney(stopLimit, spend),
+    }
+  }
   scheduleRefresh()
 }
 
@@ -202,6 +248,14 @@ onBeforeUnmount(() => {
       <p v-if="project.lead" class="text-body-2 mb-1">
         {{ $t('projects.list.lead', { name: project.lead.name }) }}
       </p>
+      <p v-if="pausedBy" class="text-body-2 mb-1" data-testid="paused-by">
+        {{
+          $t('projects.lifecycle.pausedBy', {
+            who: pausedBy.who,
+            when: format.dateTime(pausedBy.when),
+          })
+        }}
+      </p>
       <p v-if="budgetUse" class="text-body-2 mb-4" data-testid="budget-use">
         {{
           $t('projects.budget.use', {
@@ -261,6 +315,20 @@ onBeforeUnmount(() => {
               : $t('projects.budget.paused')
           }}
         </p>
+        <p
+          v-if="budgetExhausted?.cause === 'estimate_exceeds_balance'"
+          class="mt-1"
+          data-testid="budget-paused-estimate"
+        >
+          {{
+            budgetExhausted.estimate && budgetExhausted.balance
+              ? $t('projects.budget.estimateExceedsBalance', {
+                  estimate: format.money(budgetExhausted.estimate),
+                  balance: format.money(budgetExhausted.balance),
+                })
+              : $t('projects.budget.estimateExceedsBalanceShort')
+          }}
+        </p>
         <p class="mt-1">{{ $t('projects.budget.howToResume') }}</p>
         <router-link
           :to="{ name: ROUTE_NAMES.projectConfiguration, params: { projectId: project.id } }"
@@ -269,7 +337,7 @@ onBeforeUnmount(() => {
         </router-link>
       </v-alert>
       <v-alert
-        v-else-if="budgetAlert"
+        v-else-if="shownBudgetAlert"
         type="warning"
         variant="tonal"
         class="mb-4"
@@ -277,9 +345,9 @@ onBeforeUnmount(() => {
       >
         {{
           $t('projects.budget.alerted', {
-            percentage: format.percent(budgetAlert.percentage),
-            spend: format.money(budgetAlert.spend),
-            limit: format.money(budgetAlert.stopLimit),
+            percentage: format.percent(shownBudgetAlert.percentage),
+            spend: format.money(shownBudgetAlert.spend),
+            limit: format.money(shownBudgetAlert.stopLimit),
           })
         }}
       </v-alert>

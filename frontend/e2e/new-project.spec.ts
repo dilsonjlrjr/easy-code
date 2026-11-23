@@ -160,3 +160,18 @@ test('US-39 RN-1, RN-2, CA-05-8: a limit above zero and alerts from 1 to 99 with
   await page.getByRole('button', { name: 'Continuar' }).click()
   await expect(page.getByTestId('review-stop-limit')).toContainText('80,00')
 })
+
+test('ER-05-7: the budget uses the organization currency from the session, not a model price', async ({
+  page,
+}) => {
+  const api = configuredApi()
+  api.organizationCurrency = 'USD'
+  await api.install(page)
+  await page.goto('/projects/new')
+
+  await page.getByLabel('Nome do projeto').fill('Reserva de salas')
+  await page.getByLabel('Necessidade de negócio').fill('Reservar salas.')
+  await page.getByRole('button', { name: 'Continuar' }).click()
+  await chooseOption(page, page, 'Modelo de execução', /Modelo de execução Y/)
+  await expect(page.getByLabel('Limite de parada (USD)')).toBeVisible()
+})

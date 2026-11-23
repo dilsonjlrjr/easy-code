@@ -92,6 +92,18 @@ export const routes: RouteRecordRaw[] = [
         meta: { titleKey: 'pages.project.findings', layout: 'shell' },
       },
       {
+        path: 'costs',
+        name: ROUTE_NAMES.projectCosts,
+        component: () => import('@/features/costs/components/ProjectCostsTab.vue'),
+        meta: { titleKey: 'pages.project.costs', layout: 'shell' },
+      },
+      {
+        path: 'audit',
+        name: ROUTE_NAMES.projectAudit,
+        component: () => import('@/features/audit/components/ProjectAuditTab.vue'),
+        meta: { titleKey: 'pages.project.audit', layout: 'shell' },
+      },
+      {
         path: 'traceability/:view(links|coverage)?',
         name: ROUTE_NAMES.traceability,
         component: () => import('@/features/traceability/components/ProjectTraceabilityTab.vue'),
@@ -134,7 +146,7 @@ export const routes: RouteRecordRaw[] = [
     meta: { titleKey: 'pages.agents.title', layout: 'shell' },
   },
   {
-    path: '/settings/:tab(providers|prices)?',
+    path: '/settings/:tab(providers|prices|audit)?',
     name: ROUTE_NAMES.settings,
     component: () => import('@/features/settings/pages/SettingsPage.vue'),
     meta: { titleKey: 'pages.settings.title', layout: 'shell', administratorOnly: true },

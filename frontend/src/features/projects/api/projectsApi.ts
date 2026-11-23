@@ -34,6 +34,16 @@ export interface ProjectSummary {
   open_findings?: Partial<Record<'critical' | 'high' | 'medium' | 'low', number>>
   accumulated_cost: Money
   stop_limit?: Money | null
+  /** The last budget alert crossed (percentage of the stop limit), so it shows after a reload. */
+  last_budget_alert_percentage?: number | null
+}
+
+/** ESP-06 6: who paused the project and when (manual pause, or the orchestrator by budget). */
+export interface PauseRecord {
+  reason: 'manual' | 'budget'
+  by: { type: 'human' | 'agent' | 'orchestrator'; id?: string; user?: UserRef }
+  at: string
+  origin?: 'web' | 'local_client' | null
 }
 
 export interface Project {
@@ -51,6 +61,8 @@ export interface Project {
   available_actions?: AvailableAction[]
   summary?: ProjectSummary
   last_sequence?: number
+  /** Present while `paused` (ESP-06 6). */
+  pause?: PauseRecord | null
 }
 
 export interface ProjectsPage extends Page<Project> {

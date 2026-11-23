@@ -8,6 +8,8 @@ export const ROUTE_NAMES = {
   projectConfiguration: 'project-configuration',
   projectMembers: 'project-members',
   projectFindings: 'project-findings',
+  projectCosts: 'project-costs',
+  projectAudit: 'project-audit',
   finding: 'finding',
   traceability: 'traceability',
   stage: 'stage',
@@ -34,6 +36,8 @@ export const NAVIGATION_SECTIONS: Partial<Record<RouteName, RouteName>> = {
   [ROUTE_NAMES.projectConfiguration]: ROUTE_NAMES.projects,
   [ROUTE_NAMES.projectMembers]: ROUTE_NAMES.projects,
   [ROUTE_NAMES.projectFindings]: ROUTE_NAMES.projects,
+  [ROUTE_NAMES.projectCosts]: ROUTE_NAMES.projects,
+  [ROUTE_NAMES.projectAudit]: ROUTE_NAMES.projects,
   [ROUTE_NAMES.finding]: ROUTE_NAMES.projects,
   [ROUTE_NAMES.traceability]: ROUTE_NAMES.projects,
   [ROUTE_NAMES.stage]: ROUTE_NAMES.projects,
@@ -44,8 +48,8 @@ export const NAVIGATION_SECTIONS: Partial<Record<RouteName, RouteName>> = {
   [ROUTE_NAMES.projectAgents]: ROUTE_NAMES.agents,
 }
 
-/** Tabs of Settings in MARCO-1 (ESP-23): providers and models, price table. */
-export const SETTINGS_TABS = ['providers', 'prices'] as const
+/** Tabs of Settings (ESP-23): providers and models, price table; the organization trail (ESP-27). */
+export const SETTINGS_TABS = ['providers', 'prices', 'audit'] as const
 
 /** Why the login page is shown (ER-02-10): it never shows just because there is no session. */
 export const LOGIN_REASONS = {

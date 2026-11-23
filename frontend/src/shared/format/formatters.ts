@@ -96,6 +96,17 @@ export function formatDuration(locale: string, milliseconds: number): string {
   return format(seconds, 'second')
 }
 
+/** ESP-25 3: cycle and execution time in days, hours and minutes once they pass a day. */
+export function formatLongDuration(locale: string, milliseconds: number): string {
+  if (milliseconds < DAY) return formatDuration(locale, milliseconds)
+  const format = (value: number, unit: 'day' | 'hour' | 'minute') =>
+    new Intl.NumberFormat(locale, { style: 'unit', unit, unitDisplay: 'narrow' }).format(value)
+  const days = Math.floor(milliseconds / DAY)
+  const hours = Math.floor((milliseconds % DAY) / HOUR)
+  const minutes = Math.floor((milliseconds % HOUR) / MINUTE)
+  return `${format(days, 'day')} ${format(hours, 'hour')} ${format(minutes, 'minute')}`
+}
+
 export function formatBytes(locale: string, bytes: number): string {
   const units = ['byte', 'kilobyte', 'megabyte', 'gigabyte'] as const
   let value = bytes

@@ -13,12 +13,11 @@ import LiveConnectionStatus from '@/shared/ui/LiveConnectionStatus.vue'
 import LoadingState from '@/shared/ui/LoadingState.vue'
 import ProblemAlert from '@/shared/ui/ProblemAlert.vue'
 import {
-  gateRoundOf,
   noticesUrl,
   oldestFirst,
   SHOWN_TYPES,
+  pendingDestination,
   pendingItemsApi,
-  waveOfQuestion,
   type PendingItem,
   type PendingItemType,
 } from '../api/pendingItemsApi'
@@ -194,27 +193,8 @@ async function loadMore(): Promise<void> {
   }
 }
 
-/** ESP-19 section 2: each item leads to where it is decided or answered. */
 function destination(item: PendingItem): RouteLocationRaw {
-  const projectId = item.project.id
-  if (item.target.type === 'gate_round') {
-    const gate = gateRoundOf(item.target.id)
-    if (gate) return { name: ROUTE_NAMES.gate, params: { projectId, ...gate } }
-  }
-  if (item.target.type === 'question') {
-    const waveId = waveOfQuestion(item.target.id)
-    if (waveId) return { name: ROUTE_NAMES.wave, params: { projectId, waveId } }
-  }
-  // US-32 CA-4: the escalated finding opens on its decision (ESP-20).
-  if (item.target.type === 'finding')
-    return {
-      name: ROUTE_NAMES.finding,
-      params: { projectId, findingId: item.target.id },
-      hash: '#decision',
-    }
-  if (item.type === 'budget')
-    return { name: ROUTE_NAMES.projectConfiguration, params: { projectId } }
-  return { name: ROUTE_NAMES.project, params: { projectId } }
+  return pendingDestination(item)
 }
 
 function actionLabel(item: PendingItem): string {

@@ -1,5 +1,7 @@
 import { apiClient } from '@/shared/api/apiClient'
 import type { AgentId, Page, StageId } from '@/shared/api/contract'
+import type { RouteLocationRaw } from 'vue-router'
+import { ROUTE_NAMES } from '@/app/router/routeNames'
 import { joinUrl, type HttpClient } from '@/shared/api/httpClient'
 
 /** openapi `PendingItemType`. Phase 1 showed gates and questions (US-48 RN-1, CA-19-10). */
@@ -66,4 +68,27 @@ export function gateRoundOf(targetId: string): { gateId: string; round: number }
 /** CA-19-1 / ER-19-3: oldest first, whatever the order of the pages that arrived. */
 export function oldestFirst(items: PendingItem[]): PendingItem[] {
   return [...items].sort((left, right) => Date.parse(left.opened_at) - Date.parse(right.opened_at))
+}
+
+/** ESP-19 section 2 / ESP-03 2: each item leads to where it is decided or answered. */
+export function pendingDestination(item: PendingItem): RouteLocationRaw {
+  const projectId = item.project.id
+  if (item.target.type === 'gate_round') {
+    const gate = gateRoundOf(item.target.id)
+    if (gate) return { name: ROUTE_NAMES.gate, params: { projectId, ...gate } }
+  }
+  if (item.target.type === 'question') {
+    const waveId = waveOfQuestion(item.target.id)
+    if (waveId) return { name: ROUTE_NAMES.wave, params: { projectId, waveId } }
+  }
+  // US-32 CA-4: the escalated finding opens on its decision (ESP-20).
+  if (item.target.type === 'finding')
+    return {
+      name: ROUTE_NAMES.finding,
+      params: { projectId, findingId: item.target.id },
+      hash: '#decision',
+    }
+  if (item.type === 'budget')
+    return { name: ROUTE_NAMES.projectConfiguration, params: { projectId } }
+  return { name: ROUTE_NAMES.project, params: { projectId } }
 }

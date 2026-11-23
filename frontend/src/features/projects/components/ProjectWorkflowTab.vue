@@ -5,6 +5,7 @@ import { ROUTE_NAMES } from '@/app/router/routeNames'
 import { useFormat } from '@/shared/format/useFormat'
 import StateLabel from '@/shared/ui/StateLabel.vue'
 import RepositoryPanel from '@/features/repository/components/RepositoryPanel.vue'
+import ProjectCostSummary from '@/features/costs/components/ProjectCostSummary.vue'
 import type { StageSummary } from '../api/projectsApi'
 import { parallelStages } from '../composables/parallelStages'
 import { useCurrentProjectStore } from '../stores/currentProjectStore'
@@ -172,6 +173,9 @@ function waitingDependencies(stage: StageSummary): string {
         </li>
       </ul>
     </template>
+
+    <!-- ESP-06 3.6: cost and time, with the estimate of the next stage (US-38, US-40). -->
+    <ProjectCostSummary v-if="store.project" />
 
     <!-- ESP-06: the clone address of the project repository, for whoever has a role (US-42). -->
     <div class="mt-6">

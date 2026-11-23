@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import { ROUTE_NAMES } from '@/app/router/routeNames'
 import type { ProjectState } from '@/shared/api/contract'
+import { useAnnouncer } from '@/shared/composables/useAnnouncer'
 import { useLoader } from '@/shared/composables/useLoader'
 import { useFormat } from '@/shared/format/useFormat'
 import { useSessionStore } from '@/shared/session/sessionStore'
@@ -10,15 +12,29 @@ import LoadingState from '@/shared/ui/LoadingState.vue'
 import ProblemAlert from '@/shared/ui/ProblemAlert.vue'
 import StateLabel from '@/shared/ui/StateLabel.vue'
 import { projectsApi, type Project } from '../api/projectsApi'
+import ProjectSituation from '../components/ProjectSituation.vue'
+import {
+  STATE_FILTERS,
+  budgetUsed,
+  openFindings,
+  stateFilterFrom,
+  type StateFilter,
+} from '../composables/projectSituation'
 
-const STATE_FILTERS = ['in_progress', 'created', 'paused', 'completed', 'canceled'] as const
-type StateFilter = 'all' | (typeof STATE_FILTERS)[number]
 const STREAM_END_NOTICES = new Set(['access_removed', 'project_deleted', 'not_found'])
 
 const route = useRoute()
 const router = useRouter()
 const format = useFormat()
-const filter = ref<StateFilter>('all')
+const { t } = useI18n()
+const { message, announce } = useAnnouncer()
+/** ESP-04 2: the chosen state filter lives in the address, so a link keeps it. */
+const filter = computed<StateFilter>({
+  get: () => stateFilterFrom(route.query),
+  set: (value) => {
+    void router.replace({ query: { ...route.query, state: value === 'all' ? undefined : value } })
+  },
+})
 const session = useSessionStore()
 /** ESP-26 section 2: the administrator also lists every project of the organization (US-02 CA-6). */
 const scope = ref<'my' | 'organization'>('my')
@@ -36,6 +52,8 @@ const loader = useLoader(async () => {
   projects.value = page.items
   counts.value = page.count_by_state
   nextCursor.value = page.next_cursor
+  // ESP-04 8: changing the filter announces the number of results.
+  announce(t('dashboard.results', { n: filterCount(filter.value), shown: page.items.length }))
 })
 
 const totalCount = computed(() =>
@@ -78,7 +96,7 @@ function firstLine(text: string | undefined): string {
 }
 
 function dismissNotice(): void {
-  void router.replace({ name: ROUTE_NAMES.projects })
+  void router.replace({ name: ROUTE_NAMES.projects, query: { ...route.query, notice: undefined } })
 }
 </script>
 
@@ -143,6 +161,7 @@ function dismissNotice(): void {
       </v-btn>
     </div>
 
+    <div role="status" class="sr-only">{{ message }}</div>
     <LoadingState v-if="loader.loading.value" type="card@3" />
     <ProblemAlert
       v-else-if="loader.error.value"
@@ -176,27 +195,51 @@ function dismissNotice(): void {
               "
             />
           </div>
-          <p class="text-body-2 mt-2">
-            <template v-if="project.state === 'created'">{{
-              $t('projects.list.notStarted')
-            }}</template>
-            <template v-else-if="project.summary">
-              {{
-                $t('projects.list.stagesApproved', {
-                  approved: project.summary.approved_stages,
-                  total: project.summary.stages_total,
-                })
-              }}
-            </template>
+          <!-- CA-04-4: a created project has no stage counter. -->
+          <p v-if="project.state !== 'created' && project.summary" class="text-body-2 mt-2">
+            {{
+              $t('projects.list.stagesApproved', {
+                approved: project.summary.approved_stages,
+                total: project.summary.stages_total,
+              })
+            }}
           </p>
-          <p v-if="project.summary && project.summary.open_questions > 0" class="text-body-2">
-            {{ $t('projects.list.openQuestions', { count: project.summary.open_questions }) }}
-          </p>
+          <div class="mt-1">
+            <ProjectSituation :project="project" />
+          </div>
           <p v-if="project.lead" class="text-body-2">
             {{ $t('projects.list.lead', { name: project.lead.name }) }}
           </p>
           <p v-if="project.summary" class="text-body-2">
             {{ $t('projects.list.cost', { cost: format.money(project.summary.accumulated_cost) }) }}
+          </p>
+          <p
+            v-if="budgetUsed(project.summary) !== undefined"
+            class="text-body-2"
+            data-testid="project-budget-used"
+          >
+            {{
+              $t('dashboard.budgetUsed', {
+                percentage: format.percent(budgetUsed(project.summary)),
+              })
+            }}
+          </p>
+          <p v-if="project.summary" class="text-body-2" data-testid="project-open-findings">
+            <template v-if="openFindings(project.summary).length">
+              {{
+                $t('dashboard.openFindings', {
+                  list: openFindings(project.summary)
+                    .map(([severity, count]) =>
+                      $t('dashboard.severityCount', {
+                        n: count,
+                        severity: $t(`findings.severity.${severity}`),
+                      }),
+                    )
+                    .join(', '),
+                })
+              }}
+            </template>
+            <template v-else>{{ $t('dashboard.noOpenFindings') }}</template>
           </p>
         </v-card>
       </li>

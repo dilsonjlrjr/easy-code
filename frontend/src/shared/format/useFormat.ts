@@ -7,6 +7,7 @@ import {
   formatDecimalAmount,
   formatDuration,
   formatInteger,
+  formatLongDuration,
   formatMoney,
   formatPercent,
   formatRelativeAge,
@@ -24,6 +25,7 @@ export function useFormat() {
     date: (iso: string | null | undefined) => formatDate(locale.value, iso),
     age: (iso: string) => formatRelativeAge(locale.value, iso),
     duration: (milliseconds: number) => formatDuration(locale.value, milliseconds),
+    longDuration: (milliseconds: number) => formatLongDuration(locale.value, milliseconds),
     bytes: (bytes: number) => formatBytes(locale.value, bytes),
   }
 }

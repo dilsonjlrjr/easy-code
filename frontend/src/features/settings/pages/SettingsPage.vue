@@ -5,6 +5,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ROUTE_NAMES, SETTINGS_TABS } from '@/app/router/routeNames'
 import { useSessionStore } from '@/shared/session/sessionStore'
 import AppBreadcrumbs from '@/shared/ui/AppBreadcrumbs.vue'
+import AuditTrail from '@/features/audit/components/AuditTrail.vue'
 import PricesPanel from '../components/PricesPanel.vue'
 import ProvidersPanel from '../components/ProvidersPanel.vue'
 
@@ -49,6 +50,18 @@ const breadcrumbs = computed(() => [
         </v-tabs-window-item>
         <v-tabs-window-item value="prices">
           <PricesPanel v-if="tab === 'prices'" />
+        </v-tabs-window-item>
+        <!-- ESP-27: the organization trail (keys, prices, models, skills, sessions). -->
+        <v-tabs-window-item value="audit">
+          <section v-if="tab === 'audit'" aria-labelledby="organization-audit-heading">
+            <h2 id="organization-audit-heading" class="text-h6 mb-1">
+              {{ $t('audit.organizationTitle') }}
+            </h2>
+            <p class="text-body-2 text-medium-emphasis mb-4">
+              {{ $t('audit.organizationDescription') }}
+            </p>
+            <AuditTrail scope="organization" />
+          </section>
         </v-tabs-window-item>
       </v-tabs-window>
     </template>

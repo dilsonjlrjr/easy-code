@@ -77,6 +77,14 @@ export interface ProjectState {
   coverage: Json[]
   /** Parts of `getReleaseSummary` that replace the consolidation built from the state. */
   releaseOverrides?: Json
+  /** `ProjectCosts` by `group_by` (US-38); without one, the costs built from the budget. */
+  costsByGrouping?: Partial<Record<string, Json>>
+  /** `Estimate` by stage (US-40), or a problem to answer with (`model-without-current-price`). */
+  estimates?: Partial<Record<string, Json | { problem: Json }>>
+  /** `AuditRecord` items of the project trail, oldest first (US-35). */
+  audit?: Json[]
+  /** `ArtifactComparison` by `<artifact>:<from>:<to>` (US-27). */
+  comparisons?: Partial<Record<string, Json>>
 }
 
 export function problem(slug: string, status: number, extra: Json = {}): Json {
@@ -156,6 +164,15 @@ export class FakeApi {
   projects: Partial<Record<string, ProjectState>> = {}
   commands: Record<string, Json> = {}
   pendingItems: Json[] = []
+  /** `CurrentUser.organization.currency` (budget currency); absent like older api builds. */
+  organizationCurrency?: string
+  /** `getUserCosts` (`/me/costs`, PL-02); null answers zero in the organization currency. */
+  userCosts: Json | null = null
+  /** `AuditRecord` items of the organization trail, oldest first (ESP-27). */
+  organizationAudit: Json[] = []
+  /** Page size of the audit trails and of listProjects, to exercise "load more". */
+  auditPageSize = 50
+  projectsPageSize = 20
   /** Scripted connections of `watchNotices` (`/me/events`). */
   noticeStreams: StreamScript[] = []
   /** Organization directory for `searchUsers` (US-02). */
@@ -400,7 +417,11 @@ export class FakeApi {
         body: {
           ...this.user,
           access_medium: 'web',
-          organization: { id: 'org-1', name: 'Organização de desenvolvimento' },
+          organization: {
+            id: 'org-1',
+            name: 'Organização de desenvolvimento',
+            ...(this.organizationCurrency ? { currency: this.organizationCurrency } : {}),
+          },
           attachment_limit_bytes: this.attachmentLimit,
           csrf_token: 'csrf-dev',
           authenticated_at: this.recentlyAuthenticated
@@ -419,6 +440,27 @@ export class FakeApi {
         (item) => !types.length || types.includes(String(item.type)),
       )
       return { status: 200, body: { items, next_cursor: null, total: items.length } }
+    }
+    if (first === 'me' && second === 'costs') {
+      return {
+        status: 200,
+        body: this.userCosts ?? {
+          from: '2026-11-01',
+          until: '2026-12-01',
+          total: {
+            useful: { value: '0', currency: 'BRL' },
+            lost: { value: '0', currency: 'BRL' },
+            total: { value: '0', currency: 'BRL' },
+          },
+          rework_percentage: 0,
+          largest_spend: [],
+        },
+      }
+    }
+    if (first === 'audit' && !second) {
+      if (!this.user.organization_roles.includes('administrator'))
+        return { status: 403, body: problem('forbidden', 403) }
+      return this.auditPage(this.organizationAudit, url)
     }
     if (first === 'me' && second === 'events') {
       const script = this.noticeStreams.shift()
@@ -536,13 +578,17 @@ export class FakeApi {
       const counts: Record<string, number> = {}
       for (const item of items) counts[String(item.state)] = (counts[String(item.state)] ?? 0) + 1
       const filter = url.searchParams.getAll('state')
+      const matching = filter.length
+        ? items.filter((item) => filter.includes(String(item.state)))
+        : items
+      const offset = Number(url.searchParams.get('cursor') ?? '0')
+      const limit = Number(url.searchParams.get('limit') ?? String(this.projectsPageSize))
+      const end = offset + limit
       return {
         status: 200,
         body: {
-          items: filter.length
-            ? items.filter((item) => filter.includes(String(item.state)))
-            : items,
-          next_cursor: null,
+          items: matching.slice(offset, end),
+          next_cursor: end < matching.length ? String(end) : null,
           count_by_state: counts,
         },
       }
@@ -633,7 +679,27 @@ export class FakeApi {
         third === 'completion')
     )
       return this.projectLifecycle(state, third, input)
-    if (third === 'costs') return { status: 200, body: this.costs(state) }
+    if (third === 'costs') {
+      const grouping = url.searchParams.get('group_by') ?? 'stage'
+      if (!['stage', 'agent', 'model', 'provider'].includes(grouping))
+        return { status: 400, body: problem('validation', 400) }
+      return { status: 200, body: state.costsByGrouping?.[grouping] ?? this.costs(state) }
+    }
+    if (third === 'audit' && !fourth) {
+      const roles = (state.project.my_roles as string[] | undefined) ?? []
+      if (!roles.includes('approver') && !roles.includes('lead'))
+        return { status: 403, body: problem('forbidden', 403) }
+      return this.auditPage(state.audit ?? [], url)
+    }
+    if (third === 'stages' && fourth && fifth === 'estimate') {
+      const estimate = state.estimates?.[fourth]
+      if (!estimate) return { status: 404, body: problem('not-found', 404) }
+      if ('problem' in estimate) {
+        const answer = estimate.problem as Json
+        return { status: Number(answer.status), body: answer }
+      }
+      return { status: 200, body: estimate }
+    }
     if (third === 'release' && !fourth) return { status: 200, body: this.releaseSummary(state) }
     if (third === 'commands' && fourth) return { status: 200, body: this.commands[fourth] }
     if (third === 'workflow') return { status: 200, body: state.workflow }
@@ -724,6 +790,13 @@ export class FakeApi {
       if (!artifact) return { status: 404, body: problem('not-found', 404) }
       if (!fifth) return { status: 200, body: artifact.current }
       if (fifth === 'versions' && !sixth) return { status: 200, body: { items: artifact.versions } }
+      if (fifth === 'comparison') {
+        const key = `${fourth}:${url.searchParams.get('from') ?? ''}:${url.searchParams.get('to') ?? ''}`
+        const comparison = state.comparisons?.[key]
+        return comparison
+          ? { status: 200, body: comparison }
+          : { status: 404, body: problem('not-found', 404) }
+      }
       if (fifth === 'versions' && sixth) {
         const version = artifact.byVersion[Number(sixth)]
         return version
@@ -885,6 +958,40 @@ export class FakeApi {
   }
 
   /** getProjectCosts (US-38, US-39): the total and the budget with its balance. */
+  /**
+   * listProjectAudit and listOrganizationAudit (US-35): filters by action and period, `order`
+   * (`asc` by default, the screen asks `desc`), cursor pages. There is no write on the trail.
+   */
+  private auditPage(records: Json[], url: URL): { status: number; body: unknown } {
+    const actions = url.searchParams.getAll('action')
+    const from = url.searchParams.get('from')
+    const until = url.searchParams.get('until')
+    if (from && until && Date.parse(from) > Date.parse(until))
+      return { status: 400, body: problem('validation', 400) }
+    const matching = records.filter((record) => {
+      const when = Date.parse(String(record.when))
+      return (
+        (!actions.length || actions.includes(String(record.action))) &&
+        (!from || when >= Date.parse(from)) &&
+        (!until || when <= Date.parse(until))
+      )
+    })
+    if (url.searchParams.get('order') === 'desc') matching.reverse()
+    const offset = Number(url.searchParams.get('cursor') ?? '0')
+    const limit = Math.min(
+      Number(url.searchParams.get('limit') ?? String(this.auditPageSize)),
+      this.auditPageSize,
+    )
+    const end = offset + limit
+    return {
+      status: 200,
+      body: {
+        items: matching.slice(offset, end),
+        next_cursor: end < matching.length ? String(end) : null,
+      },
+    }
+  }
+
   private costs(state: ProjectState): Json {
     const spend = this.spend(state)
     const limit = (state.configuration.budget as Json | null)?.stop_limit as Json | undefined

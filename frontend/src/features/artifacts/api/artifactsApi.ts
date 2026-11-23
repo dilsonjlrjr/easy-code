@@ -49,6 +49,30 @@ export interface ArtifactVersionSummary {
   commit?: string | null
 }
 
+/** openapi `ArtifactComparison` (US-27): header fields and body lines added, removed and modified. */
+export interface ArtifactComparison {
+  artifact: string
+  /** The compared versions (the openapi draft named them `from_state` and `to_state`). */
+  from?: number
+  to?: number
+  header: Array<{
+    /** JSON pointer of the field. */
+    path: string
+    operation: 'added' | 'removed' | 'modified'
+    before?: unknown
+    after?: unknown
+  }>
+  /** Unified diff by line. */
+  body: Array<{
+    operation: 'equal' | 'added' | 'removed'
+    line_from?: number | null
+    line_to?: number | null
+    text: string
+  }>
+  /** The findings that drove the versions (CA-2). */
+  driving_findings?: string[]
+}
+
 export interface ArtifactsApi {
   listArtifacts: (projectId: string, filters?: { type?: string }) => Promise<ArtifactSummary[]>
   getArtifact: (projectId: string, artifactId: string) => Promise<Artifact>
@@ -56,6 +80,13 @@ export interface ArtifactsApi {
   getVersion: (projectId: string, artifactId: string, version: number) => Promise<Artifact>
   /** The exact Markdown file of a version (`text/markdown`), for download. */
   getVersionFile: (projectId: string, artifactId: string, version: number) => Promise<string>
+  /** US-27 CA-1: any two versions, not only neighbours (ER-21-6). */
+  compareVersions: (
+    projectId: string,
+    artifactId: string,
+    from: number,
+    to: number,
+  ) => Promise<ArtifactComparison>
 }
 
 function artifactPath(projectId: string, artifactId: string): string {
@@ -92,6 +123,10 @@ export function createArtifactsApi(client: HttpClient = apiClient): ArtifactsApi
     getVersionFile: (projectId, artifactId, version) =>
       client.get<string>(`${artifactPath(projectId, artifactId)}/versions/${String(version)}`, {
         headers: { Accept: 'text/markdown' },
+      }),
+    compareVersions: (projectId, artifactId, from, to) =>
+      client.get<ArtifactComparison>(`${artifactPath(projectId, artifactId)}/comparison`, {
+        query: { from, to },
       }),
   }
 }

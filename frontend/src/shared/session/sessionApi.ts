@@ -13,7 +13,8 @@ export interface CurrentUser {
   /** Sent as `X-CSRF-Token` on critical decisions (approve and reject a gate, ADR-19). */
   csrf_token?: string
   lead_in_any_project?: boolean
-  organization?: { id: string; name: string }
+  /** `currency`: the organization's budget currency (ISO 4217); absent on older api builds. */
+  organization?: { id: string; name: string; currency?: string }
   attachment_limit_bytes?: number
 }
 

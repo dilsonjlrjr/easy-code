@@ -2,6 +2,7 @@
 import { computed, ref, watch } from 'vue'
 import { useLoader } from '@/shared/composables/useLoader'
 import { useFormat } from '@/shared/format/useFormat'
+import { useSessionStore } from '@/shared/session/sessionStore'
 import ConfirmActionDialog from '@/shared/ui/ConfirmActionDialog.vue'
 import ProblemAlert from '@/shared/ui/ProblemAlert.vue'
 import type { Budget, ProjectConfiguration, ProjectCosts } from '../api/projectsApi'
@@ -30,6 +31,7 @@ const props = defineProps<{
   /** Saves `budget`; it never throws (the tab shows the failure). Resolves true when saved. */
   save: (budget: Budget) => Promise<boolean>
 }>()
+const session = useSessionStore()
 
 const format = useFormat()
 const store = useCurrentProjectStore()
@@ -61,9 +63,13 @@ watch(
 
 const ceiling = computed(() => props.configuration.stop_limit_ceiling ?? null)
 const spend = computed(() => costs.value?.total.total ?? project.value?.summary?.accumulated_cost)
-/** The organization's currency: the limit's, else the ceiling's, else the spend's (ER-29-12). */
+/**
+ * The organization's currency (ER-29-12): the session's, else the limit's, the ceiling's or the
+ * spend's on api builds without `organization.currency`.
+ */
 const currency = computed(
   () =>
+    session.user?.organization?.currency ??
     props.configuration.budget?.stop_limit.currency ??
     ceiling.value?.currency ??
     spend.value?.currency,

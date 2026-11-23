@@ -11,6 +11,8 @@ import ProblemAlert from '@/shared/ui/ProblemAlert.vue'
 import StateLabel from '@/shared/ui/StateLabel.vue'
 import RepositoryPanel from '@/features/repository/components/RepositoryPanel.vue'
 import TaskPlan from '@/features/tasks/components/TaskPlan.vue'
+import StageEstimate from '@/features/costs/components/StageEstimate.vue'
+import { subtractMoney } from '@/shared/format/money'
 import type { Stage } from '../api/projectsApi'
 import { parallelStages } from '../composables/parallelStages'
 import { currentProjectApi, useCurrentProjectStore } from '../stores/currentProjectStore'
@@ -61,6 +63,10 @@ const blockedByReopening = computed(
     ),
 )
 const isApprover = computed(() => store.project?.my_roles.includes('approver') ?? false)
+/** US-40: the budget balance, to say beforehand when the estimate exceeds it. */
+const balance = computed(() =>
+  subtractMoney(store.project?.summary?.stop_limit, store.project?.summary?.accumulated_cost),
+)
 
 function siblingName(id: string): string {
   const key = `stages.${id}`
@@ -211,6 +217,14 @@ watch([stageId, () => store.revision], () => void loader.run(), { immediate: tru
         <dt>{{ $t('waves.cost.total') }}</dt>
         <dd>{{ format.money(stage.detailed_cost.total) }}</dd>
       </dl>
+
+      <!-- US-40 (ESP-07 3, ESP-08 3): estimate with its basis, estimated × performed. -->
+      <StageEstimate
+        :project-id="projectId"
+        :stage="stage.id"
+        :balance="balance"
+        :revision="store.revision"
+      />
 
       <h3 class="text-subtitle-1 font-weight-medium mb-2">{{ $t('pages.project.waves') }}</h3>
       <p v-if="stage.waves.length === 0" class="text-body-2 mb-4">

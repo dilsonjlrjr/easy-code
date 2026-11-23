@@ -158,9 +158,12 @@ const separationOfDuties = computed(() => {
 const releaseApproved = computed(
   () => (stage.value?.state ?? summary.value?.stage_state) === 'approved',
 )
-const releaseArtifact = computed(() =>
-  stage.value?.artifacts.find((artifact) => artifact.type === 'RELEASE'),
-)
+const releaseArtifact = computed(() => {
+  const id = summary.value?.release_artifact
+  return stage.value?.artifacts.find((artifact) =>
+    id ? artifact.id === id : artifact.type === 'RELEASE',
+  )
+})
 
 function stageLabel(id: string): string {
   return i18n.te(`stages.${id}`) ? t(`stages.${id}`) : id
@@ -572,6 +575,17 @@ async function submitComplete(key: string): Promise<void> {
           · {{ releaseArtifact.title }} ·
           {{ $t('artifacts.versionNumber', { n: releaseArtifact.version }) }} ·
           {{ $t(`states.artifact.${releaseArtifact.state}`) }}
+        </p>
+        <!-- The summary names the RELEASE artifact even before the stage lists it. -->
+        <p v-else-if="summary?.release_artifact" class="text-body-2" data-testid="release-artifact">
+          <router-link
+            :to="{
+              name: ROUTE_NAMES.artifact,
+              params: { projectId, artifactId: summary.release_artifact },
+            }"
+            class="monospace"
+            >{{ summary.release_artifact }}</router-link
+          >
         </p>
         <p v-else class="text-body-2">{{ $t('release.notes.none') }}</p>
         <p class="text-body-2 mt-2">{{ $t('release.notes.docs') }}</p>
