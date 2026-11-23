@@ -41,8 +41,9 @@ type Dependencies struct {
 	Workflow      WorkflowUseCases
 	Artifacts     ArtifactUseCases
 	Waves         WaveUseCases
-	Skills        SkillUseCases // US-43
-	Agents        AgentUseCases // US-43
+	Skills        SkillUseCases       // US-43
+	SkillImports  SkillImportUseCases // US-44
+	Agents        AgentUseCases       // US-43
 	Gates         GateUseCases
 	Release       ReleaseUseCases      // US-08
 	Findings      FindingUseCases      // US-32, US-33

@@ -211,6 +211,7 @@ func productDependencies(cfg config.Config, pool *pgxpool.Pool, logger *slog.Log
 		Waves:                waves,
 		Access:               waves,
 		Skills:               appskill.NewService(postgres.NewSkills(pool)),
+		SkillImports:         appskill.NewImporter(tx, postgres.NewSkillImports(pool), postgres.NewSkills(pool), trail, specs.YAMLToJSON),
 		Agents:               appskill.NewAgents(tx, projects, specs.AgentProfiles{}, postgres.NewSkills(pool), postgres.NewSkills(pool), trail),
 		Repository:           apprepository.NewService(projects, git.New(cfg.ReposDir), cfg.GitBaseURL, git.MainBranch),
 		Costs:                appcost.NewService(projects, postgres.NewCosts(pool, definition), definition.StageIDs()),

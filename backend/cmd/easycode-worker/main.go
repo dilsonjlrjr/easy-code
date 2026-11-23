@@ -142,6 +142,7 @@ func work(ctx context.Context, proc process.Process) error {
 	go runCommandQueue(ctx, jobs, dispatcher, commandWake, cfg.Worker.CommandPollInterval)
 	startSSOSync(ctx, cfg, pool, jobs, proc.Logger)
 	startRetention(ctx, cfg, pool, jobs)
+	startSkillImports(ctx, cfg, pool, jobs)
 
 	runHeartbeat(ctx, jobs, health, cfg.Worker.HeartbeatInterval)
 	return nil
@@ -330,6 +331,26 @@ func startRetention(ctx context.Context, cfg config.Config, pool *pgxpool.Pool, 
 			jobs.run(ctx, "retention", true, func(ctx context.Context) ([]slog.Attr, error) {
 				done, err := job.Run(ctx)
 				return []slog.Attr{slog.Int("anonymized_projects", done)}, err
+			})
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+			}
+		}
+	}()
+}
+
+// startSkillImports turns the received skill uploads into scanned versions (US-44) at every command poll interval.
+func startSkillImports(ctx context.Context, cfg config.Config, pool *pgxpool.Pool, jobs jobRunner) {
+	tx, imports := postgres.NewTxRunner(pool), postgres.NewSkillImports(pool)
+	go func() {
+		ticker := time.NewTicker(cfg.Worker.CommandPollInterval)
+		defer ticker.Stop()
+		for {
+			jobs.run(ctx, "skill_imports", true, func(ctx context.Context) ([]slog.Attr, error) {
+				done, err := appskill.ProcessImports(ctx, tx, imports, specs.AgentProfiles{}, specs.YAMLToJSON)
+				return []slog.Attr{slog.Int("imported", done)}, err
 			})
 			select {
 			case <-ctx.Done():

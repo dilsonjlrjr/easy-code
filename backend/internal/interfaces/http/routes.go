@@ -109,6 +109,12 @@ func (a *api) register(router *Router) {
 		router.Handle(fasthttp.MethodGet, APIPrefix+"/skills", auth(a.listSkills))
 		router.Handle(fasthttp.MethodGet, APIPrefix+"/skills/{skillId}", auth(a.getSkill))
 	}
+	if a.deps.SkillImports != nil {
+		router.Handle(fasthttp.MethodPost, APIPrefix+"/skills/imports", auth(a.importSkill))
+		router.Handle(fasthttp.MethodGet, APIPrefix+"/skills/imports/{importId}", auth(a.getSkillImport))
+		router.Handle(fasthttp.MethodPost, APIPrefix+"/skills/{skillId}/versions/{version}/unblock", auth(a.unblockSkill))
+		router.Handle(fasthttp.MethodPost, APIPrefix+"/skills/{skillId}/versions/{version}/deactivation", auth(a.deactivateSkill))
+	}
 	if a.deps.Agents != nil {
 		p := APIPrefix + "/projects/{projectId}/agents"
 		router.Handle(fasthttp.MethodGet, p, auth(a.listProjectAgents))

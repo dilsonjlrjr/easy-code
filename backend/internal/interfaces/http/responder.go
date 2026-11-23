@@ -3,6 +3,7 @@ package http
 import (
 	"encoding/json"
 	"log/slog"
+	"strconv"
 
 	"github.com/valyala/fasthttp"
 	"go.opentelemetry.io/otel/trace"
@@ -109,8 +110,11 @@ func (r *Responder) Problem(rc *fasthttp.RequestCtx, err error) {
 func (r *Responder) problemBody(rc *fasthttp.RequestCtx, classified *failure.Error, status int) Problem {
 	params := map[string]string{"method": string(rc.Method())}
 	for name, value := range classified.Extensions {
-		if text, ok := value.(string); ok {
-			params[name] = text
+		switch v := value.(type) {
+		case string:
+			params[name] = v
+		case int:
+			params[name] = strconv.Itoa(v)
 		}
 	}
 	problem := Problem{
@@ -167,6 +171,7 @@ var statusByCode = map[string]int{
 	codeMethodNotAllowed:     fasthttp.StatusMethodNotAllowed,
 	codeRequiredPrecondition: fasthttp.StatusPreconditionRequired,
 	codeFailedPrecondition:   fasthttp.StatusPreconditionFailed,
+	"too-large-package":      fasthttp.StatusRequestEntityTooLarge, // US-44 CA-3
 }
 
 // statusFor maps a failure to its HTTP status: first by code, then by kind (ADR-17).
