@@ -92,6 +92,7 @@ services:
       context: ./backend
       args:
         BINARY: easycode-api
+        VERSION: ${EASYCODE_VERSION:-dev}
     command: ["migrate"]
     environment:
       <<: *sso
@@ -108,6 +109,7 @@ services:
       context: ./backend
       args:
         BINARY: easycode-gateway
+        VERSION: ${EASYCODE_VERSION:-dev}
     command: ["keygen", "/run/easycode-gateway-key/private.pem", "/run/easycode-sealing/public.pem"]
     volumes:
       - gateway-key:/run/easycode-gateway-key
@@ -121,6 +123,7 @@ services:
       target: runtime-git
       args:
         BINARY: easycode-api
+        VERSION: ${EASYCODE_VERSION:-dev}
     environment:
       <<: [*backend-env, *sso]
       EASYCODE_HTTP_ADDR: ":8080"
@@ -150,6 +153,7 @@ services:
       target: runtime-git
       args:
         BINARY: easycode-worker
+        VERSION: ${EASYCODE_VERSION:-dev}
     environment:
       <<: [*backend-env, *sso]
       EASYCODE_SSO_EVENTS_CLIENT_ID: easycode-events
@@ -175,6 +179,7 @@ services:
       context: ./backend
       args:
         BINARY: easycode-sandbox
+        VERSION: ${EASYCODE_VERSION:-dev}
     environment:
       EASYCODE_LOG_LEVEL: ${EASYCODE_LOG_LEVEL:-debug}
       EASYCODE_SANDBOX_IMAGES: go=easycode-sandbox-go:dev
@@ -209,6 +214,7 @@ services:
       context: ./backend
       args:
         BINARY: easycode-gateway
+        VERSION: ${EASYCODE_VERSION:-dev}
     environment:
       EASYCODE_LOG_LEVEL: ${EASYCODE_LOG_LEVEL:-debug}
       EASYCODE_GATEWAY_PROVIDERS: ${EASYCODE_GATEWAY_PROVIDERS:-anthropic=fake,openai=fake}

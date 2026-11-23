@@ -273,6 +273,28 @@ func (a *Admin) get(ctx context.Context, path string, query url.Values, out any)
 	return json.NewDecoder(limited(resp)).Decode(out)
 }
 
+// delete calls DELETE on the admin API; a 404 is not an error (already gone).
+func (a *Admin) delete(ctx context.Context, path string) error {
+	token, err := a.accessToken(ctx)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, a.settings.adminBase()+path, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := a.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("admin api: %w", errors.Unwrap(err))
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode >= 300 && resp.StatusCode != http.StatusNotFound {
+		return fmt.Errorf("admin api delete: status %d", resp.StatusCode)
+	}
+	return nil
+}
+
 // DirectoryUser is a person of the realm directory: opaque id and display name only (no e-mail
 // leaves this package, PERSIST minimization).
 type DirectoryUser struct {

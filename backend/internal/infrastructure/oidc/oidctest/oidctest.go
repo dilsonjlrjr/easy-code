@@ -92,6 +92,7 @@ func New(t *testing.T) *Server {
 	mux.HandleFunc("/admin"+realmPath+"/users", s.searchUsers)
 	mux.HandleFunc("/admin"+realmPath+"/users/", s.user)
 	mux.HandleFunc("/admin"+realmPath+"/events", s.listEvents)
+	mux.HandleFunc("/admin"+realmPath+"/sessions/", s.deleteSession)
 	s.Server = httptest.NewServer(mux)
 	t.Cleanup(s.Close)
 	return s
@@ -193,6 +194,26 @@ func (s *Server) EndAppSession(subject, sid string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.appSessions[subject], sid)
+}
+
+func (s *Server) deleteSession(w http.ResponseWriter, r *http.Request) {
+	if !s.admin(w, r) || r.Method != http.MethodDelete {
+		return
+	}
+	sid := strings.TrimPrefix(r.URL.Path, "/admin"+realmPath+"/sessions/")
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, sessions := range s.appSessions {
+		delete(sessions, sid)
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// AppSessionOpen reports whether the realm still has the SSO session of the desktop app (refresh would work).
+func (s *Server) AppSessionOpen(subject, sid string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.appSessions[subject][sid]
 }
 
 func (s *Server) sign(claims map[string]any) string {
@@ -325,6 +346,11 @@ func (s *Server) user(w http.ResponseWriter, r *http.Request) {
 	subject := strings.TrimPrefix(r.URL.Path, "/admin"+realmPath+"/users/")
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if person, found := strings.CutSuffix(subject, "/consents/"+DesktopClientID); found && r.Method == http.MethodDelete {
+		delete(s.appSessions, person)
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
 	if person, found := strings.CutSuffix(subject, "/sessions"); found {
 		s.SessionChecks++
 		if _, ok := s.users[person]; !ok {

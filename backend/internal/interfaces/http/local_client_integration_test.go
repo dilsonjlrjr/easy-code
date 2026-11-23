@@ -165,6 +165,9 @@ func TestLocalClientRevocation(t *testing.T) {
 	if rc := live.bearer("GET", "/api/v1/projects", token, ""); rc.Response.StatusCode() != 401 || decode(t, rc)["type"] != "urn:easycode:problem:revoked-session" {
 		t.Fatalf("after revoke: %d %s", rc.Response.StatusCode(), rc.Response.Body())
 	}
+	if live.idp.AppSessionOpen("carla", "sid-revoke") {
+		t.Fatal("the SSO session of the app must end too (refresh fails with invalid_grant)")
+	}
 	if rc := web.send("DELETE", "/api/v1/me/local-client-sessions/"+id, "", nil); rc.Response.StatusCode() != 404 {
 		t.Fatalf("revoke twice: %d", rc.Response.StatusCode())
 	}

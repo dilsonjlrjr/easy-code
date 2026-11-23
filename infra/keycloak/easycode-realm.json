@@ -2,7 +2,7 @@
   "realm": "easycode",
   "displayName": "Easy Code (desenvolvimento)",
   "enabled": true,
-  "sslRequired": "none",
+  "sslRequired": "external",
   "registrationAllowed": false,
   "loginWithEmailAllowed": true,
   "duplicateEmailsAllowed": false,
@@ -805,7 +805,8 @@
       "serviceAccountClientId": "easycode-api",
       "clientRoles": {
         "realm-management": [
-          "view-users"
+          "view-users",
+          "manage-users"
         ]
       }
     },

@@ -120,16 +120,44 @@ var _ localclient.Directory = AppSessions{}
 // NewAppSessions builds the directory.
 func NewAppSessions(admin *Admin) AppSessions { return AppSessions{admin: admin} }
 
-// AppSessionAlive implements localclient.Directory.
-func (d AppSessions) AppSessionAlive(ctx context.Context, subject, sessionID string) (bool, error) {
-	var sessions []struct {
-		ID      string            `json:"id"`
-		Clients map[string]string `json:"clients"`
-	}
+type userSession struct {
+	ID      string            `json:"id"`
+	Clients map[string]string `json:"clients"`
+}
+
+func (d AppSessions) sessions(ctx context.Context, subject string) ([]userSession, error) {
+	var sessions []userSession
 	err := d.admin.get(ctx, "/users/"+url.PathEscape(subject)+"/sessions", nil, &sessions)
 	if errors.Is(err, errNotFound) {
-		return false, nil
+		return nil, nil
 	}
+	return sessions, err
+}
+
+// RevokeAppSession implements localclient.Directory: the refresh token of the app stops working (invalid_grant).
+// An SSO session used only by the app is logged out; a session shared with the web login (the code was approved
+// in a browser already signed in) keeps the web, and the consent of the app is revoked instead, which ends every
+// client session of easycode-desktop of the person (needs the manage-users role of the api service account).
+func (d AppSessions) RevokeAppSession(ctx context.Context, subject, sessionID string) error {
+	sessions, err := d.sessions(ctx, subject)
+	if err != nil {
+		return err
+	}
+	for _, s := range sessions {
+		if s.ID != sessionID {
+			continue
+		}
+		if len(s.Clients) == 1 {
+			return d.admin.delete(ctx, "/sessions/"+url.PathEscape(sessionID))
+		}
+		return d.admin.delete(ctx, "/users/"+url.PathEscape(subject)+"/consents/"+localclient.ClientID)
+	}
+	return nil
+}
+
+// AppSessionAlive implements localclient.Directory.
+func (d AppSessions) AppSessionAlive(ctx context.Context, subject, sessionID string) (bool, error) {
+	sessions, err := d.sessions(ctx, subject)
 	if err != nil {
 		return false, err
 	}

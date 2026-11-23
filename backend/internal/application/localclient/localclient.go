@@ -61,6 +61,8 @@ type Verifier interface {
 type Directory interface {
 	// AppSessionAlive reports whether the person still has the SSO session with the app client in it.
 	AppSessionAlive(ctx context.Context, subject, sessionID string) (bool, error)
+	// RevokeAppSession ends the SSO session of the app, so its refresh token fails with invalid_grant.
+	RevokeAppSession(ctx context.Context, subject, sessionID string) error
 }
 
 // Record is a stored session of the desktop app.
@@ -332,11 +334,17 @@ func (s *Service) Revoke(ctx context.Context, principal identity.Principal, publ
 		if err := s.store.End(ctx, record.ID, "revoked"); err != nil {
 			return err
 		}
-		_, err = s.trail.Append(ctx, domainaudit.Record{
+		if _, err = s.trail.Append(ctx, domainaudit.Record{
 			OrganizationID: principal.OrganizationID, Actor: domainaudit.Actor{Type: domainaudit.ActorHuman, ID: principal.Subject},
 			Origin: domainaudit.OriginWeb, Action: "local_client_session.revoke", Target: "local-client-sessions/" + record.PublicID,
-		})
-		return err
+		}); err != nil {
+			return err
+		}
+		// The SSO ends the session of the app too (its refresh fails with invalid_grant). The api already refuses
+		// the session, so an unreachable SSO does not block the revocation: the refresh then only yields tokens
+		// the api refuses with revoked-session.
+		_ = s.directory.RevokeAppSession(ctx, record.Subject, record.SessionID)
+		return nil
 	})
 }
 
