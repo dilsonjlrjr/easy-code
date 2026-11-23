@@ -61,6 +61,10 @@ func (a *api) register(router *Router) {
 		router.Handle(fasthttp.MethodGet, APIPrefix+"/projects/{projectId}/artifacts/{artifactId}/versions/{version}", auth(a.getArtifactVersion))
 		router.Handle(fasthttp.MethodGet, APIPrefix+"/projects/{projectId}/artifacts/{artifactId}/comparison", auth(a.compareArtifactVersions))
 	}
+	if a.deps.ArtifactEdits != nil {
+		router.Handle(fasthttp.MethodPost, APIPrefix+"/projects/{projectId}/artifact-edits", auth(a.editArtifact))
+		router.Handle(fasthttp.MethodGet, APIPrefix+"/projects/{projectId}/artifact-edits/{editId}", auth(a.getArtifactEdit))
+	}
 	if a.deps.Waves != nil {
 		p := APIPrefix + "/projects/{projectId}/waves"
 		router.Handle(fasthttp.MethodGet, p, auth(a.listWaves))

@@ -288,7 +288,9 @@ func (e *Executor) claimedEvents(ctx context.Context, c Claimed) error {
 		// Only the waves that redo the stage work move it (revalidation and reevaluation waves run beside it);
 		// an activity runs again from completed (estados.yaml, machine activity).
 		moves := c.Purpose == "" || c.Purpose == PurposeExecution || c.Purpose == PurposeRework || c.Purpose == PurposeEditReview
-		if moves && (c.StageState == "ready" || c.StageState == "returned" || c.StageState == "reopened" || c.StageState == "completed") {
+		// The review wave of a human edit also takes the stage back from awaiting_gate (the edit invalidated the round, US-53).
+		reviewing := c.Purpose == PurposeEditReview && c.StageState == "awaiting_gate"
+		if moves && (reviewing || c.StageState == "ready" || c.StageState == "returned" || c.StageState == "reopened" || c.StageState == "completed") {
 			if err := e.ledger.SetStageState(ctx, c.ProjectID, c.Stage, "running"); err != nil {
 				return err
 			}
@@ -347,12 +349,15 @@ func (e *Executor) execute(ctx context.Context, c Claimed) error {
 		WritablePaths: agent.WritablePaths, Outputs: e.outputs(c.Stage), Models: inputs.Models, Feedback: inputs.Feedback,
 		Policy: agent.Policy, Approved: inputs.Approved, Mode: agent.ModeIn(c.Stage), Task: inputs.Task, Image: e.settings.Image,
 		Opinions: inputs.Opinions, Skills: inputs.Skills, SkillFiles: inputs.SkillFiles, Purpose: c.Purpose, Finding: inputs.Finding,
+		Edit: inputs.Edit,
 	}
 	if wave.Purpose == "" {
 		wave.Purpose = PurposeExecution
 	}
-	if wave.Reviewing() || (wave.Purpose != PurposeExecution && wave.Purpose != PurposeEditReview) {
-		wave.Outputs = nil // the delivery of a participant, rework, revalidation or reevaluation wave is not the full stage output
+	if wave.Reviewing() || wave.Purpose != PurposeExecution {
+		// the delivery of a participant, rework, revalidation, reevaluation or edit review wave is not the full stage output
+		// (an edit review delivers the edited artifact, or nothing when the agent refuses the edit, US-53 CA-2)
+		wave.Outputs = nil
 	}
 	if agent.Policy != nil {
 		wave.Limits = agent.Policy.Ceiling.Min(e.settings.ProjectLimits)

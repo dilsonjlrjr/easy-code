@@ -40,6 +40,7 @@ type Dependencies struct {
 	Configuration ConfigurationUseCases
 	Workflow      WorkflowUseCases
 	Artifacts     ArtifactUseCases
+	ArtifactEdits ArtifactEditUseCases // US-53
 	Waves         WaveUseCases
 	Skills        SkillUseCases       // US-43
 	SkillImports  SkillImportUseCases // US-44

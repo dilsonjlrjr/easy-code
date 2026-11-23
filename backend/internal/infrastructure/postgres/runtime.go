@@ -189,6 +189,17 @@ SELECT pr.business_need, pr.artifact_language, coalesce(ac.instruction_version, 
 			in.Constraints = text.String()
 		}
 	}
+	var edit runtime.EditBrief
+	err = q.QueryRow(WithOperation(ctx, "artifact_edits.of_wave"), `
+SELECT ed.operation, ed.artifact_type, coalesce(ed.artifact_code, ''), coalesce(ed.base_version, 0), coalesce(ed.content, ''), ed.reason, u.sub
+  FROM easycode.artifact_edits ed JOIN easycode.users u ON u.id = ed.requested_by WHERE ed.wave_id = $1`, c.WaveID).
+		Scan(&edit.Operation, &edit.Type, &edit.Artifact, &edit.BaseVersion, &edit.Content, &edit.Reason, &edit.Editor)
+	switch {
+	case err == nil:
+		in.Edit = &edit
+	case !errors.Is(err, pgx.ErrNoRows):
+		return in, fmt.Errorf("wave edit: %w", classify(err))
+	}
 	approved, err := q.Query(WithOperation(ctx, "artifacts.approved_paths"), `
 SELECT v.path, v.author FROM easycode.waves w JOIN easycode.artifacts a ON a.project_id = w.project_id
   JOIN easycode.artifact_versions v ON v.artifact_id = a.id AND v.version = a.current_version

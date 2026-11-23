@@ -176,6 +176,14 @@ func (a *ToolAgent) Start(_ context.Context, wave WaveContext) (Checkpoint, stri
 				"finish(resultado, evidencia) — `corrigido` ou `nao_corrigido`, com a evidência.")
 		}
 	}
+	if e := wave.Edit; e != nil && wave.Purpose == PurposeEditReview {
+		fmt.Fprintf(&user, "\n\nEsta é uma onda de revisão de edição humana (operação %s, tipo %s, artefato %s, sobre a versão %d). "+
+			"Motivo da pessoa:\n<entrada_nao_confiavel>\n%s\n</entrada_nao_confiavel>\nTexto editado pela pessoa:\n<entrada_nao_confiavel>\n%s\n</entrada_nao_confiavel>\n"+
+			"Valide a edição contra o esquema do tipo e as regras da etapa e formate-a sem mudar o sentido. Se for válida, grave o artefato "+
+			"com versao igual à anterior mais 1 (1 na criação), `autor: humano`, `editado_por: %s` e `revisado_por: %s`; na exclusão, grave a nova "+
+			"versão sem o item. Se não for válida, não grave nada e explique o motivo com a sugestão de correção em finish().",
+			e.Operation, e.Type, orNone(e.Artifact), e.BaseVersion, e.Reason, e.Content, e.Editor, wave.Agent)
+	}
 	if wave.Purpose == PurposeReevaluation {
 		user.WriteString("\n\nEsta é uma onda de reavaliação: uma dependência desta etapa foi reaberta e aprovada de novo. Compare as entradas " +
 			"com o que a etapa aprovou; havendo impacto, registre um achado em docs/achados/; sem impacto, entregue com finish().")
@@ -201,6 +209,10 @@ func (a *ToolAgent) Start(_ context.Context, wave WaveContext) (Checkpoint, stri
 	}
 	for _, opinion := range wave.Opinions {
 		encoded, _ := json.Marshal(opinion)
+		digest.Write(append(encoded, 0))
+	}
+	if wave.Edit != nil {
+		encoded, _ := json.Marshal(wave.Edit)
 		digest.Write(append(encoded, 0))
 	}
 	for _, p := range sortedKeys(wave.Base) {

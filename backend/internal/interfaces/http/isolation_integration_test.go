@@ -13,7 +13,7 @@ import (
 var pathValues = map[string]string{
 	"{waveId}": "REQ-01", "{questionId}": "PERG-1", "{gateId}": "gate.requirements", "{round}": "1",
 	"{artifactId}": "VISAO", "{version}": "1", "{commandId}": "0193a5c0-44aa-7e01-b2c9-7f3d1e6a9b99",
-	"{userId}": "ana", "{stage}": "requirements",
+	"{userId}": "ana", "{stage}": "requirements", "{editId}": "0193a5c0-44aa-7e01-b2c9-7f3d1e6a9b98", "{agent}": "requirements-agent",
 }
 
 // RNF-04 (and US-02 CA-3): a person without a role in project B gets, on every route of the

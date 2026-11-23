@@ -14,6 +14,7 @@ import (
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/trace"
 
+	appartifact "easycode/internal/application/artifact"
 	"easycode/internal/application/command"
 	apphealth "easycode/internal/application/health"
 	"easycode/internal/application/providerkey"
@@ -22,6 +23,7 @@ import (
 	"easycode/internal/application/ssosync"
 	appwave "easycode/internal/application/wave"
 	appworkflow "easycode/internal/application/workflow"
+	domainworkflow "easycode/internal/domain/workflow"
 	"easycode/internal/infrastructure/config"
 	"easycode/internal/infrastructure/git"
 	"easycode/internal/infrastructure/logging"
@@ -230,6 +232,16 @@ func runOutboxPublisher(ctx context.Context, jobs jobRunner, publisher outboxPub
 	}
 }
 
+// stageAgent gives the agent of a stage of the workflow in force.
+func stageAgent(definition domainworkflow.Definition) func(string) string {
+	return func(stage string) string {
+		if s, ok := definition.Stage(stage); ok {
+			return s.Agent
+		}
+		return ""
+	}
+}
+
 // newDispatcher registers the handler of each command type the worker applies.
 func newDispatcher(cfg config.Config, pool *pgxpool.Pool, propagator propagation.TextMapPropagator, logger *slog.Logger) (*command.Dispatcher, runtimeParts, error) {
 	tx := postgres.NewTxRunner(pool)
@@ -251,6 +263,9 @@ func newDispatcher(cfg config.Config, pool *pgxpool.Pool, propagator propagation
 	dispatcher.Register("project.resume", orchestrator.ResumeProject)
 	dispatcher.Register("project.cancel", orchestrator.CancelProject)
 	dispatcher.Register("project.record_publication", orchestrator.CompleteProject)
+	// US-53: a human edit becomes the edit_review wave of the stage agent.
+	dispatcher.Register("edit_artifact", appartifact.NewEditApplier(postgres.NewArtifactEdits(pool), orchestrator,
+		appartifact.OutboxEmitter(postgres.NewOutbox(pool)), stageAgent(wf.Definition)).Handle)
 	parts, err := newRuntime(cfg, pool, propagator, orchestrator, workflows, wf, logger)
 	if err != nil {
 		return nil, runtimeParts{}, err

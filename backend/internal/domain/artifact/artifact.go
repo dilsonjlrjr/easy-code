@@ -82,5 +82,13 @@ var ownerStages = map[string]string{
 	"VALIDACAO": "validation", "CT": "validation", "AMEACAS": "validation", "REL-QA": "qa", "REL-SEG": "security", "RELEASE": "release",
 }
 
+// TypeOf is the type of an artifact id: "US-03" → "US", "VISAO" → "VISAO", "REL-QA-01" → "REL-QA".
+func TypeOf(code string) string {
+	if i := strings.LastIndex(code, "-"); i > 0 && strings.Trim(code[i+1:], "0123456789") == "" {
+		return code[:i]
+	}
+	return code
+}
+
 // OwnerStage is the stage whose gate approves the type (artifacts.owner_stage); "" for ACH.
 func OwnerStage(artifactType string) string { return ownerStages[artifactType] }

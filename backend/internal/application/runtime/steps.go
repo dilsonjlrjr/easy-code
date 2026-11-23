@@ -66,6 +66,20 @@ type WaveContext struct {
 	// revalidation wave (its evidence and suggestion are untrusted input).
 	Purpose string
 	Finding *FindingBrief
+	// Edit is the human edit of an edit_review wave (US-53).
+	Edit *EditBrief
+}
+
+// EditBrief is the human edit the stage agent validates and formats (US-53, PD-03): the whole file as the
+// person left it, the operation and the reason; the text is untrusted input (RNF-05).
+type EditBrief struct {
+	Operation   string // create | modify | delete
+	Type        string
+	Artifact    string
+	BaseVersion int
+	Content     string
+	Reason      string
+	Editor      string // sub of the person (editado_por)
 }
 
 // Wave purposes (waves.purpose).

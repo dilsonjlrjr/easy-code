@@ -202,6 +202,7 @@ func productDependencies(cfg config.Config, pool *pgxpool.Pool, logger *slog.Log
 		Configuration:        appproject.NewConfigurationService(tx, projects, projects, postgres.NewCatalog(pool), trail, definition),
 		Workflow:             appworkflow.NewService(tx, projects, workflows, workflows, workflows, trail).WithLifecycle(workflows, members),
 		Artifacts:            appartifact.NewQueries(projects, postgres.NewArtifacts(pool)),
+		ArtifactEdits:        appartifact.NewEditor(tx, projects, postgres.NewArtifactEdits(pool), trail),
 		Gates:                appgate.NewDecisions(tx, projects, postgres.NewGates(pool), postgres.NewOutbox(pool), trail).WithRelease(release),
 		Release:              release,
 		Findings:             appfinding.NewDecisions(tx, projects, postgres.NewFindings(pool), postgres.NewOutbox(pool), trail),

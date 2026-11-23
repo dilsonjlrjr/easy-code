@@ -58,6 +58,7 @@ var anonymizations = []string{
 	`UPDATE easycode.question_items i SET answer = $2 FROM easycode.wave_questions q
   WHERE q.id = i.question_id AND q.project_id = $1 AND i.answer IS NOT NULL`,
 	`UPDATE easycode.audit_records SET justification = $2 WHERE project_id = $1 AND justification IS NOT NULL`,
+	`UPDATE easycode.artifact_edits SET content = CASE WHEN content IS NULL THEN NULL ELSE $2 END, reason = $2 WHERE project_id = $1`,
 	`UPDATE easycode.model_calls c SET content = NULL, content_purged_at = now() FROM easycode.waves w
   WHERE w.id = c.wave_id AND w.project_id = $1 AND c.content IS NOT NULL AND $2::text IS NOT NULL`,
 	`UPDATE easycode.wave_checkpoints c SET agent_state = NULL, content_purged_at = now() FROM easycode.waves w

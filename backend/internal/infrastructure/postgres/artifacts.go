@@ -73,8 +73,11 @@ UPDATE easycode.artifact_versions SET description = $3, path = $4, header = $5::
  WHERE artifact_id = $1 AND version = $2 AND git_commit IS NULL`, artifactID, v.Version, v.Description, v.Path, string(v.Header), v.Body, v.ContentHash)
 	} else {
 		_, err = q.Exec(WithOperation(ctx, "artifact_versions.insert"), `
-INSERT INTO easycode.artifact_versions (artifact_id, version, wave_id, author, wave_code, description, path, header, body, content_hash, finding_id)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, (SELECT w.finding_id FROM easycode.waves w WHERE w.id = $3 AND w.purpose = 'rework' AND $11 <> 'ACH'))`,
+INSERT INTO easycode.artifact_versions (artifact_id, version, wave_id, author, author_user_id, reviewed_by, wave_code, description, path, header, body,
+                                       content_hash, finding_id)
+SELECT $1, $2, $3, CASE WHEN ed.id IS NULL THEN $4 ELSE 'human' END, ed.requested_by, CASE WHEN ed.id IS NULL THEN NULL ELSE $4 END,
+       $5, $6, $7, $8::jsonb, $9, $10, (SELECT w.finding_id FROM easycode.waves w WHERE w.id = $3 AND w.purpose = 'rework' AND $11 <> 'ACH')
+  FROM (SELECT 1) one LEFT JOIN easycode.artifact_edits ed ON ed.wave_id = $3`, // US-53: the version of an edit_review wave is the human edit, reviewed by the agent
 			artifactID, v.Version, waveID, v.Author, v.WaveCode, v.Description, v.Path, string(v.Header), v.Body, v.ContentHash, v.Type)
 	}
 	if err != nil {

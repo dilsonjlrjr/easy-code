@@ -91,6 +91,8 @@
   "problem.invalid-skill-package.detail": "O pacote precisa de SKILL.md com name e description no cabeçalho ({reason}).",
   "problem.too-large-package.title": "Pacote grande demais",
   "problem.too-large-package.detail": "O pacote passa do limite de {limit_bytes} bytes.",
+  "problem.outdated-version.title": "Versão desatualizada",
+  "problem.outdated-version.detail": "O artefato mudou desde que você o abriu (versão atual {current_version}). Abra a versão atual e edite de novo.",
   "problem.budget-exhausted.title": "Orçamento esgotado",
   "problem.budget-exhausted.detail": "O gasto chegou ao limite de parada. Amplie o limite acima do gasto antes de retomar.",
   "problem.blocking-finding.title": "Aprovação bloqueada por achado",

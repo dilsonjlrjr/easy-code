@@ -77,6 +77,8 @@ type Inputs struct {
 	SkillFiles map[string]string
 	// Finding is the ACH of a rework or revalidation wave.
 	Finding *FindingBrief
+	// Edit is the human edit an edit_review wave validates and formats (US-53).
+	Edit *EditBrief
 }
 
 // Totals are the accumulated tokens and costs of the wave (exact decimals, RNF-16).
