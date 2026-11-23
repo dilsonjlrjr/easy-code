@@ -57,3 +57,9 @@ specs:
 	docker run --rm -e PIP_ROOT_USER_ACTION=ignore -e PIP_DISABLE_PIP_VERSION_CHECK=1 \
 		-v "$(REPO_ROOT)":/repo:ro -w /repo $(PYTHON_IMAGE) \
 		sh -c 'pip install -q --no-cache-dir $(PY_DEPS) && python3 specs/dominio/ferramentas/validar_tudo.py'
+
+# easycode-desktop (ADR-20): Go and UI tests plus the Linux binary, in containers. Not part of `ci`: the first
+# run builds an image with GTK 4 and WebKitGTK 6 and compiles them through cgo, which takes minutes.
+.PHONY: desktop-ci
+desktop-ci:
+	$(MAKE) -C desktop ci
