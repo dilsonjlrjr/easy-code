@@ -116,10 +116,32 @@ const pausedBy = computed(() => {
   return { who, when: pause.at }
 })
 
+/**
+ * The cause of a pause by budget: the live event, else the pause record read by REST, so it
+ * survives a reload (`pause.cause`, `pause.next_wave_estimate`).
+ */
+const exhaustedCause = computed(() => {
+  if (budgetExhausted.value) return budgetExhausted.value
+  const pause = project.value?.state === 'paused' ? project.value.pause : undefined
+  if (!pause?.cause) return undefined
+  const summary = project.value?.summary
+  return {
+    cause: pause.cause,
+    estimate: pause.next_wave_estimate ?? undefined,
+    balance: subtractMoney(summary?.stop_limit, summary?.accumulated_cost),
+  }
+})
+
 /** ESP-30 2: the findings tab carries the count of open findings (`summary.open_findings`, PL-72). */
 const findingsTabLabel = computed(() => {
   const open = project.value?.summary?.open_findings
-  const total = open ? Object.values(open).reduce((sum, value) => sum + value, 0) : 0
+  // `escalated` is also inside the severity counts: it is not added again.
+  const total = open
+    ? (['critical', 'high', 'medium', 'low'] as const).reduce(
+        (sum, severity) => sum + (open[severity] ?? 0),
+        0,
+      )
+    : 0
   return total > 0 ? t('pages.project.findingsCount', { n: total }) : t('pages.project.findings')
 })
 
@@ -316,15 +338,15 @@ onBeforeUnmount(() => {
           }}
         </p>
         <p
-          v-if="budgetExhausted?.cause === 'estimate_exceeds_balance'"
+          v-if="exhaustedCause?.cause === 'estimate_exceeds_balance'"
           class="mt-1"
           data-testid="budget-paused-estimate"
         >
           {{
-            budgetExhausted.estimate && budgetExhausted.balance
+            exhaustedCause.estimate && exhaustedCause.balance
               ? $t('projects.budget.estimateExceedsBalance', {
-                  estimate: format.money(budgetExhausted.estimate),
-                  balance: format.money(budgetExhausted.balance),
+                  estimate: format.money(exhaustedCause.estimate),
+                  balance: format.money(exhaustedCause.balance),
                 })
               : $t('projects.budget.estimateExceedsBalanceShort')
           }}

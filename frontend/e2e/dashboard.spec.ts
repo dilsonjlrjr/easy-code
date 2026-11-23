@@ -39,7 +39,7 @@ function seedDashboard(api: FakeApi): void {
       current_stages: [{ stage: 'architecture', state: 'running' }],
       active_waves: [{ wave: 'ARQ-01', agent: 'architect-agent', state: 'running' }],
       gates_awaiting: 1,
-      open_findings: { critical: 1, high: 2, low: 1 },
+      open_findings: { critical: 1, high: 2, low: 1, escalated: 1 },
     }),
   })
   api.addProject({ project: project(2, 'paused') })
@@ -65,6 +65,7 @@ test('US-50 CA-1/CA-2: the dashboard shows each project situation and filters by
   await expect(first.getByTestId('project-open-findings')).toContainText(
     '1 Crítico, 2 Alto, 1 Baixo',
   )
+  await expect(first.getByTestId('project-open-findings')).toContainText('1 escalados')
   await expect(first).toContainText('Responsável: Dev')
   // CA-04-4: a created project says the workflow did not start, with no stage counter.
   const created = page.getByRole('listitem').filter({ hasText: 'Projeto 003' })

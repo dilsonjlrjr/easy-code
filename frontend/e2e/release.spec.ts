@@ -158,6 +158,8 @@ test('US-08 CA-1, US-33 CA-4: the consolidation shows gates, tests, findings, ac
   await expectNoSeriousA11yViolations(page)
   await page.getByRole('tab', { name: 'Entrega' }).click()
   await expect(page.getByTestId('release-to-mark')).toContainText('bbbbbbbbbbbb')
+  // The mark the approval writes (`ReleaseSummary.mark_name`).
+  await expect(page.getByTestId('release-mark-name')).toHaveText('release-01')
   await expect(page.getByTestId('release-phase-note')).toContainText('Fase 3')
   await expect(page.getByTestId('condition-releaseApproved')).toContainText('pendente')
   await expectNoSeriousA11yViolations(page)

@@ -1850,6 +1850,8 @@ export const en: MessageSchema = {
     priceTable: 'Price table',
     priceTableVersion: 'version {version}',
     historicalAverage: 'Historical average',
+    inputPrice: 'Current input price',
+    perMillion: '{price} per million tokens',
     consideredWaves: '{n} waves considered',
     comparisonCaption: 'Estimated and performed cost of the stage',
     estimatedColumn: 'Estimated',
@@ -2104,6 +2106,7 @@ export const en: MessageSchema = {
     openFindings: 'Open findings: {list}',
     severityCount: '{n} {severity}',
     noOpenFindings: 'No open finding',
+    escalated: '{n} escalated',
   },
   home: {
     greeting: 'Hello, {name}.',

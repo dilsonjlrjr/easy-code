@@ -231,6 +231,9 @@ test('US-40 CA-1/CA-3: the stage shows the estimate with its basis and estimated
         basis: {
           input_size_tokens: 48210,
           price_table_version: '2026-11-01',
+          input_price_per_million: BRL('15.00'),
+          factor: '1.04',
+          method: 'input_times_price_times_history',
           historical_average: BRL('11.90'),
           considered_waves: 3,
         },
@@ -254,6 +257,7 @@ test('US-40 CA-1/CA-3: the stage shows the estimate with its basis and estimated
   await expect(page.getByTestId('estimate-basis')).toContainText('versão 2026-11-01')
   await expect(page.getByTestId('estimate-basis')).toContainText('11,90')
   await expect(page.getByTestId('estimate-basis')).toContainText('3 ondas consideradas')
+  await expect(page.getByTestId('estimate-basis')).toContainText('15,00 por milhão de tokens')
   await expect(page.getByTestId('estimate-no-history')).toHaveCount(0)
   // CA-3: estimated × performed side by side.
   const performed = page.getByTestId('estimate-performed')
@@ -384,4 +388,34 @@ test('ESP-06 6 / US-39 CA-1: paused shows who and when; the last budget alert st
   await page.reload()
   await expect(page.getByTestId('budget-alert')).toContainText('80%', { timeout: 30_000 })
   await expect(page.getByTestId('paused-by')).toHaveCount(0)
+})
+
+test('US-39 estimate_exceeds_balance: after a reload the cause comes from the pause record', async ({
+  page,
+}) => {
+  const api = signedIn()
+  seed(
+    api,
+    {},
+    {
+      state: 'paused',
+      pause_reason: 'budget',
+      available_actions: ['resume', 'cancel'],
+      pause: {
+        reason: 'budget',
+        by: { type: 'orchestrator', id: 'orchestrator' },
+        at: '2026-11-22T14:30:00-03:00',
+        origin: null,
+        cause: 'estimate_exceeds_balance',
+        next_wave_estimate: BRL('22.00'),
+      },
+    },
+  )
+  await api.install(page)
+  await page.goto(`/projects/${PROJECT_ID}`)
+  await expect(page.getByTestId('budget-paused-estimate')).toContainText('22,00', {
+    timeout: 30_000,
+  })
+  await expect(page.getByTestId('budget-paused-estimate')).toContainText('15,00')
+  await expect(page.getByTestId('paused-by')).toContainText('Orquestrador')
 })

@@ -108,9 +108,9 @@ describe('audit trail view (ESP-27, US-35)', () => {
       name: 'finding',
       params: { projectId: PROJECT, findingId: 'ACH-07' },
     })
-    expect(
-      targetLocation(record('a', { target: { type: 'provider', id: 'anthropic' } }), PROJECT),
-    ).toBeUndefined()
+    // agent, provider, budget and constraints have a label but no screen of their own.
+    for (const type of ['agent', 'provider', 'budget', 'constraints'])
+      expect(targetLocation(record('a', { target: { type, id: 'x' } }), PROJECT)).toBeUndefined()
     // Organization trail: the project of the record.
     expect(
       targetLocation(

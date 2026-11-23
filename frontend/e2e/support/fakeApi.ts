@@ -1355,6 +1355,8 @@ export class FakeApi {
       })),
       cost_total: this.costs(state).total,
       blocks,
+      release_artifact: null,
+      mark_name: 'release-01',
       ...(state.releaseOverrides ?? {}),
     }
   }

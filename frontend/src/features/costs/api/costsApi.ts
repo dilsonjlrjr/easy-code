@@ -14,12 +14,20 @@ export interface Estimate {
   no_history: boolean
   basis: {
     input_size_tokens: number
+    /** Id of the price period used (`""` without a model, the orchestrator's stage). */
     price_table_version: string
-    historical_average?: Money
+    input_price_per_million?: Money
+    /** Mean cost of the considered waves; null without history. */
+    historical_average?: Money | null
+    /** Real cost ÷ (size × price) of the considered waves, decimal text; null without history. */
+    factor?: string | null
     considered_waves?: number
+    method?: 'input_times_price' | 'input_times_price_times_history' | 'none'
   }
   /** What the last concluded wave of the stage cost (CA-3); null before any. */
   performed?: Money | null
+  /** The wave of the recorded estimate (the last concluded); null for the live estimate. */
+  wave?: string | null
 }
 
 /** openapi `UserCosts` (PL-02): the month of the user's projects on the Home page. */

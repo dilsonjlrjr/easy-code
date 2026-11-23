@@ -240,6 +240,11 @@ function dismissNotice(): void {
               }}
             </template>
             <template v-else>{{ $t('dashboard.noOpenFindings') }}</template>
+            <!-- ESP-04 3: escalated in text (also counted in the severities above). -->
+            <template v-if="(project.summary.open_findings?.escalated ?? 0) > 0">
+              ·
+              {{ $t('dashboard.escalated', { n: project.summary.open_findings?.escalated ?? 0 }) }}
+            </template>
           </p>
         </v-card>
       </li>

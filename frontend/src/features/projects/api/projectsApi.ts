@@ -31,7 +31,7 @@ export interface ProjectSummary {
   gates_awaiting: number
   open_questions: number
   /** Open findings by severity (ESP-30 2, PL-72). */
-  open_findings?: Partial<Record<'critical' | 'high' | 'medium' | 'low', number>>
+  open_findings?: Partial<Record<'critical' | 'high' | 'medium' | 'low' | 'escalated', number>>
   accumulated_cost: Money
   stop_limit?: Money | null
   /** The last budget alert crossed (percentage of the stop limit), so it shows after a reload. */
@@ -44,6 +44,9 @@ export interface PauseRecord {
   by: { type: 'human' | 'agent' | 'orchestrator'; id?: string; user?: UserRef }
   at: string
   origin?: 'web' | 'local_client' | null
+  /** Pause by budget: the spend reached the limit, or the next wave's estimate exceeds the balance. */
+  cause?: 'spend_reached_limit' | 'estimate_exceeds_balance' | null
+  next_wave_estimate?: Money | null
 }
 
 export interface Project {

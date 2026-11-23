@@ -37,6 +37,8 @@ export interface ReleaseSummary {
   blocks: ReleaseBlock[]
   /** The RELEASE artifact of the stage, once the orchestrator wrote it (null before). */
   release_artifact?: string | null
+  /** The version mark the approval writes in the repository, e.g. `release-01`. */
+  mark_name?: string | null
 }
 
 export interface ReleaseApi {

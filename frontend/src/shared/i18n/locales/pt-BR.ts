@@ -1858,6 +1858,8 @@ export const ptBR = {
     priceTable: 'Tabela de preços',
     priceTableVersion: 'versão {version}',
     historicalAverage: 'Média histórica',
+    inputPrice: 'Preço vigente da entrada',
+    perMillion: '{price} por milhão de tokens',
     consideredWaves: '{n} ondas consideradas',
     comparisonCaption: 'Estimado e realizado da etapa',
     estimatedColumn: 'Estimado',
@@ -2112,6 +2114,7 @@ export const ptBR = {
     openFindings: 'Achados abertos: {list}',
     severityCount: '{n} {severity}',
     noOpenFindings: 'Nenhum achado aberto',
+    escalated: '{n} escalados',
   },
   home: {
     greeting: 'Olá, {name}.',

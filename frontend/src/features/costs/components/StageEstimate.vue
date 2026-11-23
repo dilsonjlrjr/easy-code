@@ -76,6 +76,16 @@ watch(
         <dd>
           {{ $t('estimate.priceTableVersion', { version: estimate.basis.price_table_version }) }}
         </dd>
+        <template v-if="estimate.basis.input_price_per_million">
+          <dt>{{ $t('estimate.inputPrice') }}</dt>
+          <dd>
+            {{
+              $t('estimate.perMillion', {
+                price: format.money(estimate.basis.input_price_per_million),
+              })
+            }}
+          </dd>
+        </template>
         <template v-if="!estimate.no_history && estimate.basis.historical_average">
           <dt>{{ $t('estimate.historicalAverage') }}</dt>
           <dd>

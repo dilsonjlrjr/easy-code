@@ -610,6 +610,10 @@ async function submitComplete(key: string): Promise<void> {
         <template v-else>
           <p class="text-body-2 mb-2" data-testid="release-to-mark">
             {{ $t('release.delivery.willMark') }}
+            <template v-if="summary?.mark_name">
+              <span class="monospace" data-testid="release-mark-name">{{ summary.mark_name }}</span>
+              ·
+            </template>
             <template v-if="repository?.clone_url">
               <span class="monospace">{{ repository.clone_url }}</span>
             </template>
