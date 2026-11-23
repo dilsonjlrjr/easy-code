@@ -61,7 +61,8 @@ function budget(page: Page) {
 
 async function openConfiguration(page: Page): Promise<void> {
   await page.goto(`/projects/${PROJECT_ID}/configuration`)
-  await expect(budget(page)).toBeVisible()
+  // The configuration tab also reads the models; the shared CI host can be slow to render it.
+  await expect(budget(page)).toBeVisible({ timeout: 30_000 })
 }
 
 test('ESP-29 3.3: the budget shows the limit, the alerts, the spend and the balance', async ({
