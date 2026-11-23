@@ -296,12 +296,19 @@ func (s *Service) Authenticate(ctx context.Context, token string) (identity.Prin
 	if err != nil {
 		return identity.Principal{}, identity.Session{}, err
 	}
-	if err := s.store.Touch(ctx, current.ID, now, checked, sealed); err != nil {
-		return identity.Principal{}, identity.Session{}, err
+	// The activity is written at most every TouchEvery (the idle limit is 30 min, so the precision is kept) and
+	// always with an SSO check: a read does not cost a write per request (RNF-09).
+	if checked != nil || now.Sub(current.LastSeenAt) >= TouchEvery {
+		if err := s.store.Touch(ctx, current.ID, now, checked, sealed); err != nil {
+			return identity.Principal{}, identity.Session{}, err
+		}
+		current.LastSeenAt = now
 	}
-	current.LastSeenAt = now
 	return principal, current, nil
 }
+
+// TouchEvery is how often the activity of a web session is recorded (web_sessions.last_seen_at).
+const TouchEvery = 30 * time.Second
 
 // checkWithIDP refreshes the SSO session when the last check is older than 60 s. A refused
 // refresh ends the session (revoked-session); an unreachable SSO keeps it until the next request,

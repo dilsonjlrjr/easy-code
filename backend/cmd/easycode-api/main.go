@@ -128,7 +128,7 @@ func serve(ctx context.Context, proc process.Process) error {
 	}
 	defer shutdownTelemetry(tracing, proc.Logger)
 
-	pool, err := postgres.NewPool(ctx, postgres.PoolSettings{URL: cfg.Database.URL, MaxConns: cfg.Database.MaxConns}, proc.Logger)
+	pool, err := postgres.NewPool(ctx, postgres.PoolSettings{URL: cfg.Database.URL, MaxConns: cfg.Database.MaxConns, GenericPlans: true}, proc.Logger)
 	if err != nil {
 		return err
 	}

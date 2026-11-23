@@ -43,24 +43,30 @@ func (t *Tokens) add(o Tokens) {
 // Time is the execution time and the cycle time (with human wait, US-10 CA-3) in milliseconds.
 type Time struct{ ExecutionMs, CycleMs int64 }
 
-// WaveCost is one wave as the aggregation reads it.
+// WaveCost is the sum of the waves of a project that share stage, agent, purpose and finding (the reader
+// aggregates in SQL, RNF-09): how many, their cost, the part estimated (lost cost of a wave resumed after a
+// crash), tokens and times.
 type WaveCost struct {
-	Code, Stage, Agent, Purpose string
-	Finding                     string // ACH of a rework wave
-	Useful, Lost                string
-	EstimatedLost               bool
-	Tokens                      Tokens
-	Time                        Time
+	Stage, Agent, Purpose string
+	Finding               string // ACH of rework waves
+	Count                 int
+	Useful, Lost          string
+	Estimated             string
+	Tokens                Tokens
+	Time                  Time
 }
 
-// CallCost is the cost of the calls of one wave to one model (grouping by model and provider).
+// CallCost is the sum of the calls of the waves sharing stage, agent and purpose to one model (grouping by model
+// and provider, per provider totals). Waves is how many distinct waves called the model. A row with Model ""
+// only carries, in Waves, how many distinct waves of the stage, agent and purpose called the provider.
 type CallCost struct {
-	Wave, Purpose   string
-	Provider, Model string
-	Useful, Lost    string
-	Estimated       string // lost cost of calls marked estimated
-	Tokens          Tokens
-	DurationMs      int64
+	Stage, Agent, Purpose string
+	Provider, Model       string
+	Waves                 int
+	Useful, Lost          string
+	Estimated             string // lost cost of calls marked estimated
+	Tokens                Tokens
+	DurationMs            int64
 }
 
 // Detailed is DetailedCost: useful, lost, total, rework, estimated lost and the total per provider.
@@ -274,16 +280,12 @@ func Aggregate(facts ProjectFacts, groupBy string) ProjectCosts {
 	findings := map[string]bool{}
 	for _, w := range facts.Waves {
 		rework := w.Purpose == PurposeRework
-		estimated := ""
-		if w.EstimatedLost {
-			estimated = w.Lost
-		}
-		total.add(w.Useful, w.Lost, estimated, rework)
+		total.add(w.Useful, w.Lost, w.Estimated, rework)
 		out.Tokens.add(w.Tokens)
 		out.Time.ExecutionMs += w.Time.ExecutionMs
 		out.Time.CycleMs += w.Time.CycleMs
 		if rework {
-			out.Rework.Waves++
+			out.Rework.Waves += w.Count
 			if w.Finding != "" && !findings[w.Finding] {
 				findings[w.Finding] = true
 				out.Rework.Findings = append(out.Rework.Findings, w.Finding)
@@ -291,21 +293,22 @@ func Aggregate(facts ProjectFacts, groupBy string) ProjectCosts {
 		}
 	}
 	for _, c := range facts.Calls {
-		total.provider(c.Provider, c.Useful, c.Lost)
+		if c.Model != "" {
+			total.provider(c.Provider, c.Useful, c.Lost)
+		}
 	}
 	sort.Strings(out.Rework.Findings)
 	out.Total = total.detailed()
 	type bucket struct {
 		cost  *accumulator
 		group Group
-		waves map[string]bool
 	}
 	buckets := map[string]*bucket{}
 	order := []string{}
 	get := func(key string) *bucket {
 		b, ok := buckets[key]
 		if !ok {
-			b = &bucket{cost: newAccumulator(), group: Group{Key: key}, waves: map[string]bool{}}
+			b = &bucket{cost: newAccumulator(), group: Group{Key: key}}
 			buckets[key] = b
 			order = append(order, key)
 		}
@@ -313,36 +316,33 @@ func Aggregate(facts ProjectFacts, groupBy string) ProjectCosts {
 	}
 	switch groupBy {
 	case GroupStage, GroupAgent:
-		for _, w := range facts.Waves {
-			key := w.Stage
+		keyOf := func(stage, agent string) string {
 			if groupBy == GroupAgent {
-				key = w.Agent
+				return agent
 			}
-			b := get(key)
-			estimated := ""
-			if w.EstimatedLost {
-				estimated = w.Lost
-			}
-			b.cost.add(w.Useful, w.Lost, estimated, w.Purpose == PurposeRework)
+			return stage
+		}
+		for _, w := range facts.Waves {
+			b := get(keyOf(w.Stage, w.Agent))
+			b.cost.add(w.Useful, w.Lost, w.Estimated, w.Purpose == PurposeRework)
 			b.group.Tokens.add(w.Tokens)
 			b.group.Time.ExecutionMs += w.Time.ExecutionMs
 			b.group.Time.CycleMs += w.Time.CycleMs
-			b.waves[w.Code] = true
-		}
-		keyOf := make(map[string]string, len(facts.Waves))
-		for _, w := range facts.Waves {
-			keyOf[w.Code] = w.Stage
-			if groupBy == GroupAgent {
-				keyOf[w.Code] = w.Agent
-			}
+			b.group.Waves += w.Count
 		}
 		for _, c := range facts.Calls {
-			if b, ok := buckets[keyOf[c.Wave]]; ok {
+			if b, ok := buckets[keyOf(c.Stage, c.Agent)]; ok && c.Model != "" {
 				b.cost.provider(c.Provider, c.Useful, c.Lost)
 			}
 		}
 	default:
 		for _, c := range facts.Calls {
+			if c.Model == "" {
+				if groupBy == GroupProvider {
+					get(c.Provider).group.Waves += c.Waves
+				}
+				continue
+			}
 			key := c.Provider
 			if groupBy == GroupModel {
 				key = c.Provider + "/" + c.Model
@@ -353,12 +353,14 @@ func Aggregate(facts ProjectFacts, groupBy string) ProjectCosts {
 			b.group.Tokens.add(c.Tokens)
 			b.group.Time.ExecutionMs += c.DurationMs
 			b.group.Time.CycleMs += c.DurationMs
-			b.waves[c.Wave] = true
+			if groupBy == GroupModel {
+				b.group.Waves += c.Waves
+			}
 		}
 	}
 	for _, key := range order {
 		b := buckets[key]
-		b.group.Cost, b.group.Waves = b.cost.detailed(), len(b.waves)
+		b.group.Cost = b.cost.detailed()
 		out.Groups = append(out.Groups, b.group)
 	}
 	if facts.StopLimit != "" {

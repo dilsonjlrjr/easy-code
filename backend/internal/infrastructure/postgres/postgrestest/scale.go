@@ -153,8 +153,8 @@ SELECT x.uid, $1, x.project_id, x.seq, 'br.easycode.wave.started.v1', 'waves/' |
                row_number() OVER (PARTITION BY w.project_id ORDER BY w.id, k) AS seq
           FROM easycode.waves w JOIN easycode.projects p ON p.id = w.project_id CROSS JOIN generate_series(1, $2::int) k
          WHERE p.organization_id = $1 AND p.name LIKE '` + ScaleProjectPrefix + `%') x`,
-	`INSERT INTO easycode.project_counters (project_id, name, value)
-SELECT e.project_id, 'event', max(e.sequence) FROM easycode.events e JOIN easycode.projects p ON p.id = e.project_id
+	`INSERT INTO easycode.project_counters (project_id, name, value, updated_at)
+SELECT e.project_id, 'event', max(e.sequence), max(e.occurred_at) FROM easycode.events e JOIN easycode.projects p ON p.id = e.project_id
  WHERE p.organization_id = $1 AND p.name LIKE '` + ScaleProjectPrefix + `%' GROUP BY e.project_id`,
 	// $2 is the number of records per project; a tenth of them goes to the trail of the organization.
 	`INSERT INTO easycode.audit_records (organization_id, project_id, recorded_at, actor_type, actor_id, origin, action, target, justification, correlationid)

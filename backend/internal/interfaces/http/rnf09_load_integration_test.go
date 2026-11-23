@@ -1,6 +1,8 @@
 package http_test
 
 import (
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	"fmt"
 	"math/rand/v2"
 	"os"
@@ -24,6 +26,9 @@ import (
 	httpapi "easycode/internal/interfaces/http"
 )
 
+// scalePool is the pool of the reads under load, for its acquire statistics.
+var scalePool *pgxpool.Pool
+
 // EnvLoadTest turns on the load test of RNF-09 (make load-test); it seeds the base of S-4 and takes minutes.
 const EnvLoadTest = "EASYCODE_LOAD_TEST"
 
@@ -32,6 +37,7 @@ const EnvLoadTest = "EASYCODE_LOAD_TEST"
 func scaleDeps(t *testing.T) func(*httpapi.Dependencies, *postgrestest.Database) {
 	return func(d *httpapi.Dependencies, db *postgrestest.Database) {
 		pool := db.PoolOf("easycode_api", 10)
+		scalePool = pool
 		wf, err := specs.StandardWorkflow(specs.ReleaseAgents)
 		if err != nil {
 			t.Fatal(err)
@@ -135,7 +141,8 @@ const thinkTime = time.Second
 // of the screens (dashboard, project, costs, estimate, trail, comparison, artifact, waves, workflow, home
 // card) answers within 500 ms at p95 and the write (createProject) within 1 s. The model providers are out
 // of the measure (no model call is made). The 50 people work at the same time, each with a think time between
-// requests (about 50 requests per second in all). Run it with make load-test.
+// requests (about 50 requests per second in all), after one unmeasured round that warms the api. Run it with
+// make load-test.
 func TestRNF09LoadAtScaleS4(t *testing.T) {
 	if os.Getenv(EnvLoadTest) == "" {
 		t.Skip(EnvLoadTest + " not set (make load-test)")
@@ -165,16 +172,24 @@ func TestRNF09LoadAtScaleS4(t *testing.T) {
 		go func(n int, person liveAPI) {
 			defer wg.Done()
 			random := rand.New(rand.NewPCG(uint64(n), 7))
+			warm := true
 			measure := func(operation string, write bool, method, path, body string, headers map[string]string) {
 				at := time.Now()
 				rc := person.send(method, path, body, headers)
 				mu.Lock()
-				samples = append(samples, sample{operation: operation, write: write, elapsed: time.Since(at), status: rc.Response.StatusCode()})
+				if !warm {
+					samples = append(samples, sample{operation: operation, write: write, elapsed: time.Since(at), status: rc.Response.StatusCode()})
+				}
 				mu.Unlock()
 				// A person reads the screen before the next action: think time of 0.5 to 1.5 s.
 				time.Sleep(thinkTime/2 + time.Duration(random.Int64N(int64(thinkTime))))
 			}
-			for r := 0; r < rounds; r++ {
+			// People do not all press the first key in the same millisecond: each starts within one think time.
+			time.Sleep(time.Duration(random.Int64N(int64(thinkTime))))
+			// The first round warms the api (connections of the pool, prepared statements and their plans, caches)
+			// and is not measured: RNF-09 is about the platform in use, not right after a restart.
+			for r := -1; r < rounds; r++ {
+				warm = r < 0
 				base := "/api/v1/projects/" + startedIDs[random.IntN(len(startedIDs))]
 				measure("listProjects", false, "GET", "/api/v1/projects", "", nil)
 				measure("listProjects?state", false, "GET", "/api/v1/projects?state=in_progress", "", nil)
@@ -188,7 +203,7 @@ func TestRNF09LoadAtScaleS4(t *testing.T) {
 				measure("compareArtifactVersions", false, "GET", base+"/artifacts/VISAO/comparison?from=1&to=2", "", nil)
 				measure("getArtifact", false, "GET", base+"/artifacts/VISAO", "", nil)
 				measure("getUserCosts", false, "GET", "/api/v1/me/costs", "", nil)
-				body := strings.Replace(newProjectBody, "Reserva de salas", fmt.Sprintf("Escrita %02d-%d", n, r), 1)
+				body := strings.Replace(newProjectBody, "Reserva de salas", fmt.Sprintf("Escrita %02d-%d", n, r+1), 1)
 				key := map[string]string{"Idempotency-Key": fmt.Sprintf("0193a5c0-44aa-7e01-b2c9-%012d", 900000+keys.Add(1))}
 				measure("createProject", true, "POST", "/api/v1/projects", body, key)
 			}
@@ -227,6 +242,11 @@ func TestRNF09LoadAtScaleS4(t *testing.T) {
 		if p95 > limit {
 			t.Errorf("RNF-09: %s p95 %s > %s", name, p95.Round(time.Millisecond), limit)
 		}
+	}
+	stat := scalePool.Stat()
+	if stat.AcquireCount() > 0 {
+		t.Logf("  pool: %d acquires, %d waited for a connection, mean wait %s", stat.AcquireCount(), stat.EmptyAcquireCount(),
+			(stat.AcquireDuration() / time.Duration(stat.AcquireCount())).Round(time.Microsecond))
 	}
 	t.Logf("  reads p95=%s, writes p95=%s", percentile(reads, 0.95).Round(time.Millisecond), percentile(writes, 0.95).Round(time.Millisecond))
 }

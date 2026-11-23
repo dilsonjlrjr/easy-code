@@ -76,9 +76,10 @@ func (o Outbox) append(ctx context.Context, q querier, draft event.Draft) (event
 	}
 	var sequence int64
 	err = q.QueryRow(WithOperation(ctx, "outbox.next_sequence"), `
-INSERT INTO easycode.project_counters (project_id, name, value) VALUES ($1, 'event', 1)
-ON CONFLICT (project_id, name) DO UPDATE SET value = project_counters.value + 1
-RETURNING value`, projectID).Scan(&sequence)
+INSERT INTO easycode.project_counters (project_id, name, value, updated_at) VALUES ($1, 'event', 1, $2)
+ON CONFLICT (project_id, name) DO UPDATE SET value = project_counters.value + 1,
+  updated_at = greatest(project_counters.updated_at, excluded.updated_at)
+RETURNING value`, projectID, draft.Time).Scan(&sequence)
 	if err != nil {
 		return event.Envelope{}, fmt.Errorf("next event sequence: %w", err)
 	}

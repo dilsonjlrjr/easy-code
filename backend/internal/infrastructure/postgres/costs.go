@@ -36,16 +36,41 @@ const cycleSQL = `(extract(epoch FROM coalesce(w.finished_at, now()) - coalesce(
 
 // ProjectFacts implements appcost.Reader.
 func (c Costs) ProjectFacts(ctx context.Context, projectID string) (appcost.ProjectFacts, error) {
-	q := conn(ctx, c.pool)
 	var facts appcost.ProjectFacts
-	var internalID int64
 	var stopLimit *string
 	var alerts []int16
 	var last *int16
-	err := q.QueryRow(WithOperation(ctx, "costs.project"), `
-SELECT pr.id, o.currency, pr.budget_stop_limit::text, pr.budget_alert_limits, pr.last_alert_percentage
-  FROM easycode.projects pr JOIN easycode.organizations o ON o.id = pr.organization_id WHERE pr.public_id = $1::uuid`, projectID).
-		Scan(&internalID, &facts.Currency, &stopLimit, &alerts, &last)
+	// The project, its waves and their calls in one round trip (a pipelined batch, RNF-09). The waves and calls
+	// come summed by stage, agent and purpose (and model), in the order of the first wave of each group: the api
+	// adds a few rows instead of every wave and call.
+	batch := &pgx.Batch{}
+	batch.Queue(`
+SELECT o.currency, pr.budget_stop_limit::text, pr.budget_alert_limits, pr.last_alert_percentage
+  FROM easycode.projects pr JOIN easycode.organizations o ON o.id = pr.organization_id WHERE pr.public_id = $1::uuid`, projectID)
+	batch.Queue(`
+SELECT w.stage, w.agent, w.purpose, coalesce(f.code, ''), count(*)::int, sum(w.useful_cost)::text, sum(w.lost_cost)::text,
+       coalesce(sum(w.lost_cost) FILTER (WHERE w.estimated_lost_cost), 0)::text,
+       sum(w.input_tokens)::bigint, sum(w.output_tokens)::bigint, sum(w.read_cache_tokens)::bigint, sum(w.write_cache_tokens)::bigint,
+       sum(w.execution_duration_ms)::bigint, sum(`+cycleSQL+`)::bigint
+  FROM easycode.waves w LEFT JOIN easycode.artifacts f ON f.id = w.finding_id
+ WHERE w.project_id = (SELECT p.id FROM easycode.projects p WHERE p.public_id = $1::uuid)
+ GROUP BY w.stage, w.agent, w.purpose, f.code ORDER BY min(w.id)`, projectID)
+	batch.Queue(`
+SELECT w.stage, w.agent, w.purpose, m.provider, coalesce(m.name, ''), count(DISTINCT w.id)::int,
+       coalesce(sum(mc.cost) FILTER (WHERE NOT mc.lost), 0)::text, coalesce(sum(mc.cost) FILTER (WHERE mc.lost), 0)::text,
+       coalesce(sum(mc.cost) FILTER (WHERE mc.lost AND mc.estimated_cost), 0)::text,
+       coalesce(sum(mc.input_tokens), 0)::bigint, coalesce(sum(mc.output_tokens), 0)::bigint,
+       coalesce(sum(mc.read_cache_tokens), 0)::bigint, coalesce(sum(mc.write_cache_tokens), 0)::bigint,
+       coalesce(sum(extract(epoch FROM mc.finished_at - mc.started_at) * 1000), 0)::bigint
+  FROM easycode.model_calls mc JOIN easycode.waves w ON w.id = mc.wave_id JOIN easycode.models m ON m.id = mc.model_id
+ -- the waves of the project as an array: one scan of model_calls_wave_idx per partition, not a hash join that
+ -- reads every call of the organization (RNF-09)
+ WHERE mc.wave_id = ANY(ARRAY(SELECT x.id FROM easycode.waves x WHERE x.project_id = (SELECT p.id FROM easycode.projects p WHERE p.public_id = $1::uuid)))
+ GROUP BY GROUPING SETS ((w.stage, w.agent, w.purpose, m.provider, m.name), (w.stage, w.agent, w.purpose, m.provider))
+ ORDER BY min(w.id), m.provider, m.name NULLS LAST`, projectID)
+	results := conn(ctx, c.pool).SendBatch(WithOperation(ctx, "costs.project"), batch)
+	defer results.Close()
+	err := results.QueryRow().Scan(&facts.Currency, &stopLimit, &alerts, &last)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return facts, failure.New(failure.KindNotFound, failure.CodeNotFound, nil)
 	}
@@ -62,42 +87,27 @@ SELECT pr.id, o.currency, pr.budget_stop_limit::text, pr.budget_alert_limits, pr
 		n := int(*last)
 		facts.LastAlert = &n
 	}
-	rows, err := q.Query(WithOperation(ctx, "costs.waves"), `
-SELECT w.code, w.stage, w.agent, w.purpose, coalesce(f.code, ''), w.useful_cost::text, w.lost_cost::text, w.estimated_lost_cost,
-       w.input_tokens, w.output_tokens, w.read_cache_tokens, w.write_cache_tokens, w.execution_duration_ms, `+cycleSQL+`
-  FROM easycode.waves w LEFT JOIN easycode.artifacts f ON f.id = w.finding_id
- WHERE w.project_id = $1 ORDER BY w.id`, internalID)
+	rows, err := results.Query()
 	if err != nil {
 		return facts, fmt.Errorf("cost waves: %w", classify(err))
 	}
 	facts.Waves, err = pgx.CollectRows(rows, func(row pgx.CollectableRow) (appcost.WaveCost, error) {
 		var w appcost.WaveCost
-		err := row.Scan(&w.Code, &w.Stage, &w.Agent, &w.Purpose, &w.Finding, &w.Useful, &w.Lost, &w.EstimatedLost,
+		err := row.Scan(&w.Stage, &w.Agent, &w.Purpose, &w.Finding, &w.Count, &w.Useful, &w.Lost, &w.Estimated,
 			&w.Tokens.Input, &w.Tokens.Output, &w.Tokens.ReadCache, &w.Tokens.WriteCache, &w.Time.ExecutionMs, &w.Time.CycleMs)
-		w.Useful, w.Lost = pricing.NormalizeDecimal(w.Useful), pricing.NormalizeDecimal(w.Lost)
+		w.Useful, w.Lost, w.Estimated = pricing.NormalizeDecimal(w.Useful), pricing.NormalizeDecimal(w.Lost), pricing.NormalizeDecimal(w.Estimated)
 		return w, err
 	})
 	if err != nil {
 		return facts, fmt.Errorf("scan cost waves: %w", err)
 	}
-	rows, err = q.Query(WithOperation(ctx, "costs.calls"), `
-SELECT w.code, w.purpose, m.provider, m.name,
-       coalesce(sum(mc.cost) FILTER (WHERE NOT mc.lost), 0)::text, coalesce(sum(mc.cost) FILTER (WHERE mc.lost), 0)::text,
-       coalesce(sum(mc.cost) FILTER (WHERE mc.lost AND mc.estimated_cost), 0)::text,
-       coalesce(sum(mc.input_tokens), 0)::bigint, coalesce(sum(mc.output_tokens), 0)::bigint,
-       coalesce(sum(mc.read_cache_tokens), 0)::bigint, coalesce(sum(mc.write_cache_tokens), 0)::bigint,
-       coalesce(sum(extract(epoch FROM mc.finished_at - mc.started_at) * 1000), 0)::bigint
-  FROM easycode.model_calls mc JOIN easycode.waves w ON w.id = mc.wave_id JOIN easycode.models m ON m.id = mc.model_id
- -- the waves of the project as an array: one scan of model_calls_wave_idx per partition, not a hash join that
- -- reads every call of the organization (RNF-09)
- WHERE mc.wave_id = ANY(ARRAY(SELECT x.id FROM easycode.waves x WHERE x.project_id = $1))
- GROUP BY w.id, w.code, w.purpose, m.provider, m.name ORDER BY w.id, m.provider, m.name`, internalID)
+	rows, err = results.Query()
 	if err != nil {
 		return facts, fmt.Errorf("cost calls: %w", classify(err))
 	}
 	facts.Calls, err = pgx.CollectRows(rows, func(row pgx.CollectableRow) (appcost.CallCost, error) {
 		var call appcost.CallCost
-		err := row.Scan(&call.Wave, &call.Purpose, &call.Provider, &call.Model, &call.Useful, &call.Lost, &call.Estimated,
+		err := row.Scan(&call.Stage, &call.Agent, &call.Purpose, &call.Provider, &call.Model, &call.Waves, &call.Useful, &call.Lost, &call.Estimated,
 			&call.Tokens.Input, &call.Tokens.Output, &call.Tokens.ReadCache, &call.Tokens.WriteCache, &call.DurationMs)
 		call.Useful, call.Lost, call.Estimated = pricing.NormalizeDecimal(call.Useful), pricing.NormalizeDecimal(call.Lost), pricing.NormalizeDecimal(call.Estimated)
 		return call, err

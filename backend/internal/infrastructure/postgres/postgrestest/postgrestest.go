@@ -88,6 +88,9 @@ func (d *Database) PoolOf(role string, maxConns int32) *pgxpool.Pool {
 	config.MaxConns = maxConns
 	config.ConnConfig.Tracer = postgres.NewQueryTracer(d.Logger)
 	postgres.SetSchemaSearchPath(config.ConnConfig)
+	if role == "easycode_api" {
+		postgres.UseGenericPlans(config.ConnConfig) // as cmd/easycode-api
+	}
 	config.AfterConnect = func(ctx context.Context, conn *pgx.Conn) error {
 		_, err := conn.Exec(ctx, "SET ROLE "+pgx.Identifier{role}.Sanitize())
 		return err

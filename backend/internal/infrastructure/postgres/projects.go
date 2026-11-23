@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -135,9 +136,9 @@ func (r Projects) BudgetRules(ctx context.Context, organizationID string) (strin
 	return currency, ceiling, nil
 }
 
-// updatedAtSQL is the time of the last event of the project: the event of the highest sequence, read through
-// events_sequence_idx (a max(occurred_at) would scan every event of the project; RNF-09).
-const updatedAtSQL = `coalesce((SELECT e.occurred_at FROM easycode.events e WHERE e.project_id = pr.id ORDER BY e.sequence DESC LIMIT 1), pr.created_at)`
+// updatedAtSQL is the time of the last event of the project, kept by the outbox in the event counter of the
+// project (project_counters.updated_at): no read of the partitioned events per listed project (RNF-09).
+const updatedAtSQL = `coalesce((SELECT c.updated_at FROM easycode.project_counters c WHERE c.project_id = pr.id AND c.name = 'event'), pr.created_at)`
 
 // Get implements appproject.Repository.
 func (r Projects) Get(ctx context.Context, p identity.Principal, projectID string) (appproject.View, error) {
@@ -151,16 +152,30 @@ func (r Projects) Get(ctx context.Context, p identity.Principal, projectID strin
 	return views[0], nil
 }
 
-// views reads the projects (in the order of ids) where the person has a role, with the dashboard summary,
-// in a fixed number of queries whatever the number of projects (listProjects pages, RNF-09). A project
-// without a role or deleted is left out (RNF-04).
+// views reads the projects (in the order of ids) where the person has a role, with the dashboard summary, in
+// one query whatever the number of projects: each indicator is a subquery of the row (JSON aggregates), so a
+// page of listProjects costs one round trip (RNF-09). A project without a role or deleted is left out (RNF-04).
 func (r Projects) views(ctx context.Context, p identity.Principal, ids []string) ([]appproject.View, error) {
-	q := conn(ctx, r.pool)
-	rows, err := q.Query(WithOperation(ctx, "projects.get"), `
-SELECT pr.id, pr.public_id::text, pr.state, roles.list, pr.name, pr.pause_reason, pr.business_need, pr.provider_acknowledgment_at,
+	rows, err := conn(ctx, r.pool).Query(WithOperation(ctx, "projects.get"), `
+SELECT pr.public_id::text, pr.state, roles.list, pr.name, pr.pause_reason, pr.business_need, pr.provider_acknowledgment_at,
        ack.sub, ack.display_name, pr.created_at, cr.sub, cr.display_name, `+updatedAtSQL+`, ld.sub, ld.display_name,
        pr.budget_stop_limit::text, o.currency, wc.workflow_id, pr.last_alert_percentage,
-       coalesce((SELECT c.value FROM easycode.project_counters c WHERE c.project_id = pr.id AND c.name = 'event'), 0)
+       coalesce((SELECT c.value FROM easycode.project_counters c WHERE c.project_id = pr.id AND c.name = 'event'), 0),
+       (SELECT coalesce(json_agg(json_build_array(s.stage, s.state) ORDER BY s.id), '[]') FROM easycode.stages s
+         WHERE s.project_id = pr.id AND s.type = 'stage'),
+       (SELECT coalesce(json_agg(json_build_array(w.code, w.agent, w.state) ORDER BY w.created_at), '[]') FROM easycode.waves w
+         WHERE w.project_id = pr.id AND w.state IN ('queued','running','awaiting_user','pausing','paused')),
+       (SELECT count(*) FROM easycode.gate_rounds g WHERE g.project_id = pr.id AND g.state = 'awaiting_human'),
+       (SELECT count(*) FROM easycode.wave_questions wq JOIN easycode.waves w ON w.id = wq.wave_id WHERE w.project_id = pr.id AND wq.answered_at IS NULL),
+       (SELECT coalesce(sum(w.useful_cost + w.lost_cost), 0)::text FROM easycode.waves w WHERE w.project_id = pr.id),
+       -- by severity, and apart the escalated ones (shown in text, US-48 RN-1; the severity counts include them)
+       (SELECT coalesce(json_object_agg(f.severity, f.n), '{}') FROM (SELECT severity, count(*) AS n FROM easycode.findings
+         WHERE project_id = pr.id AND status IN ('open','in_rework','revalidating','escalated','awaiting_scope') GROUP BY severity) f),
+       (SELECT count(*) FROM easycode.findings WHERE project_id = pr.id AND status = 'escalated'),
+       pause.occurred_at, coalesce(pause.envelope->'data'->>'pause_reason', ''), coalesce(pause.envelope->'data'->'actor'->>'type', ''),
+       coalesce(pause.envelope->'data'->'actor'->>'id', ''), coalesce(pu.display_name, ''), coalesce(pause.envelope->'data'->'actor'->>'origin', ''),
+       coalesce(budget.envelope->'data'->>'cause', ''), coalesce(budget.envelope->'data'->'next_wave_estimate'->>'value', ''),
+       coalesce(budget.envelope->'data'->'next_wave_estimate'->>'currency', '')
   FROM easycode.projects pr
   JOIN LATERAL (SELECT array_agg(m.role ORDER BY m.role) AS list FROM easycode.project_members m
                  WHERE m.project_id = pr.id AND m.user_id = `+principalUserIDSQL+`) roles ON roles.list IS NOT NULL
@@ -170,24 +185,39 @@ SELECT pr.id, pr.public_id::text, pr.state, roles.list, pr.name, pr.pause_reason
   JOIN easycode.project_members lm ON lm.project_id = pr.id AND lm.role = 'lead'
   JOIN easycode.users ld ON ld.id = lm.user_id
   LEFT JOIN easycode.workflow_configurations wc ON wc.project_id = pr.id
+  -- who paused the project and when (ESP-06 section 6): its last project.paused; a pause by the budget follows its
+  -- budget_exhausted, with the cause and the estimate that exceeded the balance
+  LEFT JOIN LATERAL (SELECT ev.occurred_at, ev.envelope FROM easycode.events ev
+                      WHERE pr.state = 'paused' AND ev.project_id = pr.id AND ev.type = 'br.easycode.project.paused.v1'
+                      ORDER BY ev.sequence DESC LIMIT 1) pause ON true
+  LEFT JOIN easycode.users pu ON pu.organization_id = pr.organization_id AND pu.sub = pause.envelope->'data'->'actor'->>'id'
+                              AND pause.envelope->'data'->'actor'->>'type' = 'human'
+  LEFT JOIN LATERAL (SELECT be.envelope FROM easycode.events be
+                      WHERE pause.envelope->'data'->>'pause_reason' = 'budget' AND be.project_id = pr.id
+                        AND be.type = 'br.easycode.project.budget_exhausted.v1'
+                      ORDER BY be.sequence DESC LIMIT 1) budget ON true
  WHERE pr.public_id = ANY($3::uuid[]) AND pr.deletion_requested_at IS NULL`, p.OrganizationID, p.Subject, ids)
 	if err != nil {
 		return nil, fmt.Errorf("read projects: %w", classify(err))
 	}
+	defer rows.Close()
 	byID := map[string]*appproject.View{}
-	internal := map[int64]*appproject.View{}
-	var internalIDs, pausedIDs []int64
 	for rows.Next() {
 		view := &appproject.View{Workflow: r.workflowID}
-		var id int64
 		var roles []string
 		var pause, workflowID, stopLimit *string
 		var lastAlert *int16
-		if err := rows.Scan(&id, &view.ID, &view.State, &roles, &view.Name, &pause, &view.BusinessNeed, &view.AcknowledgedAt,
+		var currency, cost string
+		var stages, active, findings []byte
+		var escalated int
+		var pausedAt *time.Time
+		var record appproject.PauseRecord
+		if err := rows.Scan(&view.ID, &view.State, &roles, &view.Name, &pause, &view.BusinessNeed, &view.AcknowledgedAt,
 			&view.AcknowledgedBy.Subject, &view.AcknowledgedBy.Name, &view.CreatedAt, &view.CreatedBy.Subject, &view.CreatedBy.Name,
-			&view.UpdatedAt, &view.Lead.Subject, &view.Lead.Name, &stopLimit, &view.Summary.AccumulatedCost.Currency, &workflowID, &lastAlert,
-			&view.LastSequence); err != nil {
-			rows.Close()
+			&view.UpdatedAt, &view.Lead.Subject, &view.Lead.Name, &stopLimit, &currency, &workflowID, &lastAlert, &view.LastSequence,
+			&stages, &active, &view.Summary.GatesAwaiting, &view.Summary.OpenQuestions, &cost, &findings, &escalated,
+			&pausedAt, &record.Reason, &record.ActorType, &record.ActorID, &record.ActorName, &record.Origin,
+			&record.Cause, &record.NextWaveEstimate.Value, &record.NextWaveEstimate.Currency); err != nil {
 			return nil, fmt.Errorf("scan project: %w", err)
 		}
 		for _, role := range roles {
@@ -200,34 +230,17 @@ SELECT pr.id, pr.public_id::text, pr.state, roles.list, pr.name, pr.pause_reason
 			view.Workflow = *workflowID
 		}
 		view.AvailableActions = project.Actions(view.State, view.MyRoles, p.Administrator)
-		currency := view.Summary.AccumulatedCost.Currency
-		view.Summary = appproject.Summary{StagesTotal: r.stagesInPhase, CurrentStages: []appproject.StageState{}, ActiveWaves: []appproject.WaveRef{},
-			AccumulatedCost: project.Money{Value: "0", Currency: currency},
-			OpenFindings:    map[string]int{"critical": 0, "high": 0, "medium": 0, "low": 0, "escalated": 0}}
-		if stopLimit != nil {
-			view.Summary.StopLimit = &project.Money{Value: project.TrimDecimal(*stopLimit), Currency: currency}
+		if err := r.fillSummary(view, currency, cost, stopLimit, lastAlert, stages, active, findings, escalated); err != nil {
+			return nil, err
 		}
-		if lastAlert != nil {
-			n := int(*lastAlert)
-			view.Summary.LastBudgetAlert = &n
+		if pausedAt != nil {
+			record.At = *pausedAt
+			view.Pause = &record
 		}
-		byID[view.ID], internal[id] = view, view
-		internalIDs = append(internalIDs, id)
-		if view.State == project.StatePaused {
-			pausedIDs = append(pausedIDs, id)
-		}
+		byID[view.ID] = view
 	}
-	rows.Close()
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("read projects: %w", classify(err))
-	}
-	if len(internalIDs) > 0 {
-		if err := r.summaries(ctx, q, internalIDs, internal); err != nil {
-			return nil, err
-		}
-		if err := r.pauseRecords(ctx, q, pausedIDs, internal); err != nil {
-			return nil, err
-		}
 	}
 	out := make([]appproject.View, 0, len(byID))
 	for _, id := range ids {
@@ -238,23 +251,30 @@ SELECT pr.id, pr.public_id::text, pr.state, roles.list, pr.name, pr.pause_reason
 	return out, nil
 }
 
-// summaries fills the dashboard indicators of the projects (ProjectSummary) with one query per indicator.
-func (r Projects) summaries(ctx context.Context, q querier, ids []int64, views map[int64]*appproject.View) error {
-	rows, err := q.Query(WithOperation(ctx, "projects.summary_stages"),
-		"SELECT project_id, stage, state FROM easycode.stages WHERE project_id = ANY($1::bigint[]) AND type = 'stage' ORDER BY project_id, id", ids)
-	if err != nil {
-		return fmt.Errorf("summary stages: %w", classify(err))
+// fillSummary decodes the indicators of the dashboard read by views (ProjectSummary).
+func (r Projects) fillSummary(view *appproject.View, currency, cost string, stopLimit *string, lastAlert *int16, stages, active, findings []byte, escalated int) error {
+	summary := &view.Summary
+	summary.StagesTotal, summary.CurrentStages, summary.ActiveWaves = r.stagesInPhase, []appproject.StageState{}, []appproject.WaveRef{}
+	summary.AccumulatedCost = project.Money{Value: project.TrimDecimal(cost), Currency: currency}
+	if stopLimit != nil {
+		summary.StopLimit = &project.Money{Value: project.TrimDecimal(*stopLimit), Currency: currency}
 	}
-	counted := map[int64]int{}
-	for rows.Next() {
-		var id int64
-		var s appproject.StageState
-		if err := rows.Scan(&id, &s.Stage, &s.State); err != nil {
-			rows.Close()
-			return err
-		}
-		summary := &views[id].Summary
-		counted[id]++
+	if lastAlert != nil {
+		n := int(*lastAlert)
+		summary.LastBudgetAlert = &n
+	}
+	var stageRows, waveRows [][]string
+	if err := json.Unmarshal(stages, &stageRows); err != nil {
+		return fmt.Errorf("summary stages: %w", err)
+	}
+	if err := json.Unmarshal(active, &waveRows); err != nil {
+		return fmt.Errorf("summary waves: %w", err)
+	}
+	if len(stageRows) > 0 {
+		summary.StagesTotal = len(stageRows)
+	}
+	for _, row := range stageRows {
+		s := appproject.StageState{Stage: row[0], State: row[1]}
 		switch s.State {
 		case "approved":
 			summary.ApprovedStages++
@@ -262,104 +282,15 @@ func (r Projects) summaries(ctx context.Context, q querier, ids []int64, views m
 			summary.CurrentStages = append(summary.CurrentStages, s)
 		}
 	}
-	rows.Close()
-	for id, n := range counted {
-		views[id].Summary.StagesTotal = n
+	for _, row := range waveRows {
+		summary.ActiveWaves = append(summary.ActiveWaves, appproject.WaveRef{Code: row[0], Agent: row[1], State: row[2]})
 	}
-	rows, err = q.Query(WithOperation(ctx, "projects.summary_waves"), `
-SELECT project_id, code, agent, state FROM easycode.waves
- WHERE project_id = ANY($1::bigint[]) AND state IN ('queued','running','awaiting_user','pausing','paused') ORDER BY created_at`, ids)
-	if err != nil {
-		return fmt.Errorf("summary waves: %w", classify(err))
+	summary.OpenFindings = map[string]int{"critical": 0, "high": 0, "medium": 0, "low": 0}
+	if err := json.Unmarshal(findings, &summary.OpenFindings); err != nil {
+		return fmt.Errorf("summary findings: %w", err)
 	}
-	for rows.Next() {
-		var id int64
-		var w appproject.WaveRef
-		if err := rows.Scan(&id, &w.Code, &w.Agent, &w.State); err != nil {
-			rows.Close()
-			return err
-		}
-		views[id].Summary.ActiveWaves = append(views[id].Summary.ActiveWaves, w)
-	}
-	rows.Close()
-	rows, err = q.Query(WithOperation(ctx, "projects.summary_counts"), `
-SELECT x.id,
-       (SELECT count(*) FROM easycode.gate_rounds g WHERE g.project_id = x.id AND g.state = 'awaiting_human'),
-       (SELECT count(*) FROM easycode.wave_questions wq JOIN easycode.waves w ON w.id = wq.wave_id WHERE w.project_id = x.id AND wq.answered_at IS NULL),
-       (SELECT coalesce(sum(w.useful_cost + w.lost_cost), 0)::text FROM easycode.waves w WHERE w.project_id = x.id)
-  FROM unnest($1::bigint[]) x(id)`, ids)
-	if err != nil {
-		return fmt.Errorf("summary counts: %w", classify(err))
-	}
-	for rows.Next() {
-		var id int64
-		var gates, questions int
-		var cost string
-		if err := rows.Scan(&id, &gates, &questions, &cost); err != nil {
-			rows.Close()
-			return err
-		}
-		summary := &views[id].Summary
-		summary.GatesAwaiting, summary.OpenQuestions = gates, questions
-		summary.AccumulatedCost.Value = project.TrimDecimal(cost)
-	}
-	rows.Close()
-	// By severity, and apart the escalated ones (shown in text, US-48 RN-1; the severity counts include them).
-	rows, err = q.Query(WithOperation(ctx, "projects.summary_findings"), `
-SELECT project_id, severity, count(*) FROM easycode.findings
- WHERE project_id = ANY($1::bigint[]) AND status IN ('open','in_rework','revalidating','escalated','awaiting_scope') GROUP BY project_id, severity
-UNION ALL
-SELECT project_id, 'escalated', count(*) FROM easycode.findings WHERE project_id = ANY($1::bigint[]) AND status = 'escalated' GROUP BY project_id`, ids)
-	if err != nil {
-		return fmt.Errorf("summary findings: %w", classify(err))
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var id int64
-		var key string
-		var n int
-		if err := rows.Scan(&id, &key, &n); err != nil {
-			return err
-		}
-		views[id].Summary.OpenFindings[key] = n
-	}
-	return rows.Err()
-}
-
-// pauseRecords fills who paused each paused project and when (ESP-06 section 6), from its last project.paused.
-func (r Projects) pauseRecords(ctx context.Context, q querier, ids []int64, views map[int64]*appproject.View) error {
-	if len(ids) == 0 {
-		return nil
-	}
-	rows, err := q.Query(WithOperation(ctx, "projects.pause_records"), `
-SELECT x.id, e.occurred_at, coalesce(e.envelope->'data'->>'pause_reason', ''), coalesce(e.envelope->'data'->'actor'->>'type', ''),
-       coalesce(e.envelope->'data'->'actor'->>'id', ''), coalesce(u.display_name, ''), coalesce(e.envelope->'data'->'actor'->>'origin', ''),
-       coalesce(b.envelope->'data'->>'cause', ''), coalesce(b.envelope->'data'->'next_wave_estimate'->>'value', ''),
-       coalesce(b.envelope->'data'->'next_wave_estimate'->>'currency', '')
-  FROM unnest($1::bigint[]) x(id)
-  CROSS JOIN LATERAL (SELECT ev.occurred_at, ev.envelope, ev.organization_id FROM easycode.events ev
-                       WHERE ev.project_id = x.id AND ev.type = 'br.easycode.project.paused.v1' ORDER BY ev.sequence DESC LIMIT 1) e
-  LEFT JOIN easycode.users u ON u.organization_id = e.organization_id AND u.sub = e.envelope->'data'->'actor'->>'id'
-                             AND e.envelope->'data'->'actor'->>'type' = 'human'
-  -- a pause by the budget follows its budget_exhausted: the cause and, by estimate, the estimate that exceeded
-  LEFT JOIN LATERAL (SELECT be.envelope FROM easycode.events be
-                      WHERE be.project_id = x.id AND be.type = 'br.easycode.project.budget_exhausted.v1'
-                        AND e.envelope->'data'->>'pause_reason' = 'budget'
-                      ORDER BY be.sequence DESC LIMIT 1) b ON true`, ids)
-	if err != nil {
-		return fmt.Errorf("pause records: %w", classify(err))
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var id int64
-		var record appproject.PauseRecord
-		if err := rows.Scan(&id, &record.At, &record.Reason, &record.ActorType, &record.ActorID, &record.ActorName, &record.Origin,
-			&record.Cause, &record.NextWaveEstimate.Value, &record.NextWaveEstimate.Currency); err != nil {
-			return err
-		}
-		views[id].Pause = &record
-	}
-	return rows.Err()
+	summary.OpenFindings["escalated"] = escalated
+	return nil
 }
 
 // List implements appproject.Repository (projects where the person has a role, updated_at descending).
@@ -377,33 +308,25 @@ func (r Projects) List(ctx context.Context, p identity.Principal, filter appproj
 		mine = `FROM easycode.projects pr JOIN easycode.organizations oo ON oo.id = pr.organization_id
  WHERE pr.deletion_requested_at IS NULL AND oo.public_id = $1::uuid AND $2::text IS NOT NULL`
 	}
-	rows, err := q.Query(WithOperation(ctx, "projects.count_by_state"),
-		"SELECT pr.state, count(*) "+mine+" GROUP BY pr.state", p.OrganizationID, p.Subject)
-	if err != nil {
-		return page, fmt.Errorf("count projects: %w", classify(err))
-	}
-	for rows.Next() {
-		var state string
-		var n int
-		if err := rows.Scan(&state, &n); err != nil {
-			rows.Close()
-			return page, err
-		}
-		page.CountByState[state] = n
-	}
-	rows.Close()
 	after, afterID, err := decodeCursor(filter.Cursor)
 	if err != nil {
 		return page, failure.Invalid(failure.FieldError{Field: "cursor", Message: "invalid"})
 	}
-	rows, err = q.Query(WithOperation(ctx, "projects.list"), `
-SELECT id, updated_at FROM (
+	// The counts by state (without the state filter, PL-15) and the page come in one round trip (RNF-09): the
+	// rows of the page, then one row per state with its count (id NULL).
+	rows, err := q.Query(WithOperation(ctx, "projects.list"), `
+WITH mine AS (
   SELECT pr.public_id::text AS id, `+updatedAtSQL+` AS updated_at, pr.state `+mine+`
-) x
- WHERE (coalesce(cardinality($3::text[]), 0) = 0 OR x.state = ANY($3::text[]))
-   AND ($4::timestamptz IS NULL OR (x.updated_at, x.id) < ($4::timestamptz, $5::text))
- ORDER BY x.updated_at DESC, x.id DESC
- LIMIT $6`, p.OrganizationID, p.Subject, filter.States, after, afterID, filter.Limit+1)
+), page AS (
+  SELECT x.id, x.updated_at FROM mine x
+   WHERE (coalesce(cardinality($3::text[]), 0) = 0 OR x.state = ANY($3::text[]))
+     AND ($4::timestamptz IS NULL OR (x.updated_at, x.id) < ($4::timestamptz, $5::text))
+   ORDER BY x.updated_at DESC, x.id DESC
+   LIMIT $6
+)
+SELECT p.id, p.updated_at, NULL::text, 0 FROM page p
+UNION ALL
+SELECT NULL, NULL, m.state, count(*)::int FROM mine m GROUP BY m.state`, p.OrganizationID, p.Subject, filter.States, after, afterID, filter.Limit+1)
 	if err != nil {
 		return page, fmt.Errorf("list projects: %w", classify(err))
 	}
@@ -411,13 +334,31 @@ SELECT id, updated_at FROM (
 		id string
 		at time.Time
 	}
-	keys, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (key, error) {
-		var k key
-		return k, row.Scan(&k.id, &k.at)
-	})
-	if err != nil {
-		return page, fmt.Errorf("scan projects: %w", err)
+	var keys []key
+	for rows.Next() {
+		var id, state *string
+		var at *time.Time
+		var n int
+		if err := rows.Scan(&id, &at, &state, &n); err != nil {
+			rows.Close()
+			return page, fmt.Errorf("scan projects: %w", err)
+		}
+		if id == nil {
+			page.CountByState[*state] = n
+			continue
+		}
+		keys = append(keys, key{id: *id, at: *at})
 	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return page, fmt.Errorf("list projects: %w", classify(err))
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		if !keys[i].at.Equal(keys[j].at) {
+			return keys[i].at.After(keys[j].at)
+		}
+		return keys[i].id > keys[j].id
+	})
 	if len(keys) > filter.Limit {
 		last := keys[filter.Limit-1]
 		page.NextCursor = encodeCursor(last.at, last.id)

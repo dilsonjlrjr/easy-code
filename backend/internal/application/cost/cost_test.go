@@ -41,18 +41,23 @@ func (r *reader) EstimateFacts(context.Context, string, string) (EstimateFacts, 
 func referenceFacts() ProjectFacts {
 	return ProjectFacts{Currency: "BRL", StopLimit: "1", AlertPercentages: []int{50, 80},
 		Waves: []WaveCost{
-			{Code: "REQ-01", Stage: "requirements", Agent: "requirements-agent", Purpose: "execution", Useful: "0.076", Lost: "0",
+			{Stage: "requirements", Agent: "requirements-agent", Purpose: "execution", Count: 1, Useful: "0.076", Lost: "0",
 				Tokens: Tokens{Input: 1800, Output: 400}, Time: Time{ExecutionMs: 1000, CycleMs: 61000}},
-			{Code: "REQ-02", Stage: "requirements", Agent: "requirements-agent", Purpose: "rework", Finding: "ACH-01", Useful: "0.038", Lost: "0.01",
-				EstimatedLost: true, Tokens: Tokens{Input: 900, Output: 200}, Time: Time{ExecutionMs: 500, CycleMs: 900}},
-			{Code: "ARQ-01", Stage: "architecture", Agent: "architect-agent", Purpose: "execution", Useful: "0.2", Lost: "0",
+			{Stage: "requirements", Agent: "requirements-agent", Purpose: "rework", Finding: "ACH-01", Count: 1, Useful: "0.038", Lost: "0.01",
+				Estimated: "0.01", Tokens: Tokens{Input: 900, Output: 200}, Time: Time{ExecutionMs: 500, CycleMs: 900}},
+			{Stage: "architecture", Agent: "architect-agent", Purpose: "execution", Count: 1, Useful: "0.2", Lost: "0",
 				Tokens: Tokens{Input: 5000}, Time: Time{ExecutionMs: 2000, CycleMs: 3000}},
 		},
 		Calls: []CallCost{
-			{Wave: "REQ-01", Purpose: "execution", Provider: "anthropic", Model: "r", Useful: "0.076", Tokens: Tokens{Input: 1800, Output: 400}, DurationMs: 900},
-			{Wave: "REQ-02", Purpose: "rework", Provider: "anthropic", Model: "r", Useful: "0.038", Lost: "0.01", Estimated: "0.01",
-				Tokens: Tokens{Input: 900, Output: 200}, DurationMs: 400},
-			{Wave: "ARQ-01", Purpose: "execution", Provider: "openai", Model: "e", Useful: "0.2", Tokens: Tokens{Input: 5000}, DurationMs: 1500},
+			{Stage: "requirements", Agent: "requirements-agent", Purpose: "execution", Provider: "anthropic", Model: "r", Waves: 1, Useful: "0.076",
+				Tokens: Tokens{Input: 1800, Output: 400}, DurationMs: 900},
+			{Stage: "requirements", Agent: "requirements-agent", Purpose: "rework", Provider: "anthropic", Model: "r", Waves: 1, Useful: "0.038",
+				Lost: "0.01", Estimated: "0.01", Tokens: Tokens{Input: 900, Output: 200}, DurationMs: 400},
+			{Stage: "architecture", Agent: "architect-agent", Purpose: "execution", Provider: "openai", Model: "e", Waves: 1, Useful: "0.2",
+				Tokens: Tokens{Input: 5000}, DurationMs: 1500},
+			{Stage: "requirements", Agent: "requirements-agent", Purpose: "execution", Provider: "anthropic", Waves: 1},
+			{Stage: "requirements", Agent: "requirements-agent", Purpose: "rework", Provider: "anthropic", Waves: 1},
+			{Stage: "architecture", Agent: "architect-agent", Purpose: "execution", Provider: "openai", Waves: 1},
 		}}
 }
 
@@ -92,6 +97,10 @@ func TestProjectCostsGroupsAddUpToTheTotal(t *testing.T) {
 	model, _ := s.ProjectCosts(context.Background(), identity.Principal{}, "p", GroupModel)
 	if model.Groups[0].Key != "anthropic/r" || model.Groups[0].Waves != 2 || model.Groups[0].Time.ExecutionMs != 1300 {
 		t.Fatalf("by model: %+v", model.Groups)
+	}
+	provider, _ := s.ProjectCosts(context.Background(), identity.Principal{}, "p", GroupProvider)
+	if provider.Groups[0].Key != "anthropic" || provider.Groups[0].Waves != 2 || provider.Groups[1].Waves != 1 {
+		t.Fatalf("by provider: %+v", provider.Groups)
 	}
 	if _, err := s.ProjectCosts(context.Background(), identity.Principal{}, "p", "week"); failure.From(err).Code != failure.CodeValidation {
 		t.Fatalf("bad grouping: %v", err)

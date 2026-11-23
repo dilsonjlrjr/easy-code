@@ -16,6 +16,10 @@ import (
 type PoolSettings struct {
 	URL      string
 	MaxConns int32
+	// GenericPlans makes the prepared statements of the pool use their generic plan from the first run
+	// (plan_cache_mode = force_generic_plan). The api reads join many tables and take longer to plan than to
+	// run; pgx prepares every statement once per connection, so a generic plan is planned once (RNF-09).
+	GenericPlans bool
 }
 
 // NewPool opens a traced connection pool and checks that the database answers.
@@ -27,6 +31,9 @@ func NewPool(ctx context.Context, settings PoolSettings, logger *slog.Logger) (*
 	poolConfig.MaxConns = settings.MaxConns
 	poolConfig.ConnConfig.Tracer = NewQueryTracer(logger)
 	SetSchemaSearchPath(poolConfig.ConnConfig)
+	if settings.GenericPlans {
+		UseGenericPlans(poolConfig.ConnConfig)
+	}
 
 	pool, err := pgxpool.NewWithConfig(ctx, poolConfig)
 	if err != nil {
@@ -51,6 +58,11 @@ func SetSchemaSearchPath(config *pgx.ConnConfig) {
 	if _, ok := config.RuntimeParams["search_path"]; !ok {
 		config.RuntimeParams["search_path"] = schemaSearchPath
 	}
+}
+
+// UseGenericPlans sets plan_cache_mode = force_generic_plan for the sessions of a pool (PoolSettings.GenericPlans).
+func UseGenericPlans(config *pgx.ConnConfig) {
+	config.RuntimeParams["plan_cache_mode"] = "force_generic_plan"
 }
 
 // DatabaseProbe reports whether PostgreSQL answers a trivial query.
