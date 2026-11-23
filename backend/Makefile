@@ -17,7 +17,7 @@ DOCKER_GID      := $(shell stat -c %g $(DOCKER_SOCKET) 2>/dev/null)
 TEST_DOCKER     := $(if $(DOCKER_GID),-v $(DOCKER_SOCKET):/var/run/docker.sock --group-add $(DOCKER_GID) -e EASYCODE_TEST_DOCKER_SOCKET=/var/run/docker.sock -e EASYCODE_TEST_SANDBOX_IMAGE=$(SANDBOX_TEST_IMAGE) -v "$(CURDIR)/../infra/backup":/infra/backup:ro -e EASYCODE_TEST_BACKUP_SCRIPTS=/infra/backup,)
 RUN_ENV         ?= --network host -e EASYCODE_DATABASE_URL -e EASYCODE_HTTP_ADDR -e EASYCODE_LOG_LEVEL
 
-.PHONY: build test test-race test-integration lint run migrate image fmt tidy cache ci check-specs sync-specs sandbox-image
+.PHONY: build test test-race test-integration lint run migrate image fmt tidy cache ci check-specs sync-specs sandbox-image load-test test-load
 
 cache:
 	@docker volume create easycode-go-cache >/dev/null
@@ -36,6 +36,15 @@ test-race: cache
 # Runs every test, integration included, against a throwaway PostgreSQL container.
 test-integration: sandbox-image
 	./scripts/with-postgres.sh $(MAKE) test
+
+# RNF-09: the load test at the scale of assumption S-4 (100 projects, 20,000 waves, 50 people at once) against a
+# throwaway PostgreSQL; it fails when a read of the screens passes 500 ms at p95 or the write 1 s. Out of ci: it
+# needs a host without other load (it seeds for about a minute and runs for minutes).
+load-test:
+	./scripts/with-postgres.sh $(MAKE) test-load
+
+test-load: cache
+	$(DOCKER_GO) -e EASYCODE_TEST_DATABASE_URL -e EASYCODE_LOAD_TEST=1 $(TEST_NETWORK) $(GO_IMAGE) go test -count=1 -timeout 20m -run 'TestRNF09' -v ./internal/interfaces/http/
 
 # Go sandbox image with the warm build cache (ADR-07), used by the sandbox tests.
 sandbox-image:

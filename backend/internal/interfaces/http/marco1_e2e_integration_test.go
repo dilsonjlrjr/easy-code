@@ -22,11 +22,13 @@ import (
 
 	appartifact "easycode/internal/application/artifact"
 	"easycode/internal/application/command"
+	appcost "easycode/internal/application/cost"
 	appevent "easycode/internal/application/event"
 	appgate "easycode/internal/application/gate"
 	appgateway "easycode/internal/application/gateway"
 	apppending "easycode/internal/application/pending"
 	"easycode/internal/application/runtime"
+	apptrail "easycode/internal/application/trail"
 	appwave "easycode/internal/application/wave"
 	appworkflow "easycode/internal/application/workflow"
 	"easycode/internal/domain/provider"
@@ -235,6 +237,8 @@ func liveRuntimeDeps(broker *appevent.Broker, shutdown chan struct{}) func(*http
 		d.Events, d.History, d.Shutdown = broker, postgres.NewOutbox(pool), shutdown
 		d.Pending = apppending.NewService(postgres.NewPending(pool, wf.Definition))
 		d.Notices = postgres.NewOutbox(pool)
+		d.Costs = appcost.NewService(projects, postgres.NewCosts(pool, wf.Definition), wf.Definition.StageIDs())
+		d.Audit = apptrail.NewQueries(projects, postgres.NewAuditReader(pool))
 	}
 }
 

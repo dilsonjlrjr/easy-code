@@ -39,7 +39,7 @@ func newLiveAPI(t *testing.T, options ...func(*httpapi.Dependencies, *postgreste
 	if err := postgres.EnsureOrganization(context.Background(), db.Admin, idp.Issuer(), "Test organization"); err != nil {
 		t.Fatal(err)
 	}
-	pool := db.PoolAs("easycode_api")
+	pool := db.PoolOf("easycode_api", 10)
 	translator, err := i18n.NewTranslator()
 	if err != nil {
 		t.Fatal(err)

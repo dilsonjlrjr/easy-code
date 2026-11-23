@@ -75,11 +75,17 @@ func New(t *testing.T) *Database {
 // easycode_worker, easycode_retention), so tests exercise the real grants.
 func (d *Database) PoolAs(role string) *pgxpool.Pool {
 	d.t.Helper()
+	return d.PoolOf(role, 4)
+}
+
+// PoolOf is PoolAs with maxConns connections (the load test of RNF-09 uses the size of production).
+func (d *Database) PoolOf(role string, maxConns int32) *pgxpool.Pool {
+	d.t.Helper()
 	config, err := pgxpool.ParseConfig(d.URL)
 	if err != nil {
 		d.t.Fatal(err)
 	}
-	config.MaxConns = 4
+	config.MaxConns = maxConns
 	config.ConnConfig.Tracer = postgres.NewQueryTracer(d.Logger)
 	postgres.SetSchemaSearchPath(config.ConnConfig)
 	config.AfterConnect = func(ctx context.Context, conn *pgx.Conn) error {

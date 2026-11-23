@@ -514,7 +514,8 @@ func marco6Release(t *testing.T, live liveAPI, work qualityWorker, repos git.Rep
 	accepted := summary["accepted_risks"].([]any)
 	if len(summary["blocks"].([]any)) != 0 || len(accepted) != 1 || accepted[0].(map[string]any)["finding"].(map[string]any)["id"] != "ACH-04" ||
 		accepted[0].(map[string]any)["acceptance"].(map[string]any)["justification"] == "" || summary["tests"].(map[string]any)["ct_total"] != float64(4) ||
-		summary["cost_total"].(map[string]any)["total"].(map[string]any)["value"] == "0" || len(summary["gates"].([]any)) != 9 {
+		summary["cost_total"].(map[string]any)["total"].(map[string]any)["value"] == "0" || len(summary["gates"].([]any)) != 9 ||
+		summary["release_artifact"] != "RELEASE-01" || summary["mark_name"] != "release-01" {
 		t.Fatalf("US-08 CA-1: %v", summary)
 	}
 	// US-52 CA-2: the project does not conclude before the Release is approved.
