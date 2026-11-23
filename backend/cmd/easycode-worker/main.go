@@ -17,11 +17,13 @@ import (
 	"easycode/internal/application/command"
 	apphealth "easycode/internal/application/health"
 	"easycode/internal/application/providerkey"
+	"easycode/internal/application/retention"
 	appskill "easycode/internal/application/skill"
 	"easycode/internal/application/ssosync"
 	appwave "easycode/internal/application/wave"
 	appworkflow "easycode/internal/application/workflow"
 	"easycode/internal/infrastructure/config"
+	"easycode/internal/infrastructure/git"
 	"easycode/internal/infrastructure/logging"
 	"easycode/internal/infrastructure/oidc"
 	"easycode/internal/infrastructure/postgres"
@@ -139,6 +141,7 @@ func work(ctx context.Context, proc process.Process) error {
 	go func() { _ = commandListener.Run(ctx, func(string, string) { commandSignal() }) }()
 	go runCommandQueue(ctx, jobs, dispatcher, commandWake, cfg.Worker.CommandPollInterval)
 	startSSOSync(ctx, cfg, pool, jobs, proc.Logger)
+	startRetention(ctx, cfg, pool, jobs)
 
 	runHeartbeat(ctx, jobs, health, cfg.Worker.HeartbeatInterval)
 	return nil
@@ -314,6 +317,27 @@ func runHeartbeat(ctx context.Context, jobs jobRunner, health *apphealth.Service
 		case <-ticker.C:
 		}
 	}
+}
+
+// startRetention runs the deletion of projects (US-04): repository destroyed and personal data anonymized
+// with the retention role, every SSO poll interval (the anonymization deadline is 24 h, RNF-20).
+func startRetention(ctx context.Context, cfg config.Config, pool *pgxpool.Pool, jobs jobRunner) {
+	job := retention.NewJob(postgres.NewTxRunner(pool), postgres.NewRetention(pool), git.New(cfg.ReposDir), postgres.NewOutbox(pool))
+	go func() {
+		ticker := time.NewTicker(cfg.Worker.SSOPollInterval)
+		defer ticker.Stop()
+		for {
+			jobs.run(ctx, "retention", true, func(ctx context.Context) ([]slog.Attr, error) {
+				done, err := job.Run(ctx)
+				return []slog.Attr{slog.Int("anonymized_projects", done)}, err
+			})
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+			}
+		}
+	}()
 }
 
 // startSSOSync runs the SSO trail and offboarding job (interno.md section 7) when the read-only

@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -130,6 +131,9 @@ type Repository interface {
 	Overview(ctx context.Context, projectID string) (View, error)
 	// BudgetRules returns the organization currency and stop limit ceiling (nil = none).
 	BudgetRules(ctx context.Context, organizationID string) (string, *string, error)
+	// RequestDeletion records who asked the deletion and when (US-04): from then on the project leaves every
+	// list and every access; the retention job anonymizes it.
+	RequestDeletion(ctx context.Context, principal identity.Principal, projectID string) error
 }
 
 // Service implements the project use cases.
@@ -246,4 +250,35 @@ func Authorize(ctx context.Context, repo Repository, principal identity.Principa
 		return Access{}, failure.New(failure.KindForbidden, failure.CodeForbidden, nil)
 	}
 	return access, nil
+}
+
+// Delete is deleteProject (US-04): only the lead, only a completed or canceled project (CA-2: cancel first,
+// US-51), with the name typed again (CA-1). The project leaves every list and access at once; the trail of
+// the organization records who, when and the project id, without content (CA-3). The worker destroys the
+// repository and anonymizes the personal data (RN-1, RNF-20).
+func (s *Service) Delete(ctx context.Context, principal identity.Principal, projectID, confirmation string) error {
+	access, err := Authorize(ctx, s.repo, principal, projectID, identity.RoleLead)
+	if err != nil {
+		return err
+	}
+	if access.State != project.StateCompleted && access.State != project.StateCanceled {
+		return failure.New(failure.KindConflict, project.CodeProjectNotEnded, nil).With("current_state", access.State).With("available_actions", []string{"cancel"})
+	}
+	view, err := s.repo.Get(ctx, principal, projectID)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(confirmation) != view.Name {
+		return failure.New(failure.KindInvalidInput, project.CodeConfirmationRequired, nil).WithField("name_confirmation", "mismatch")
+	}
+	return s.tx.InTx(ctx, func(ctx context.Context) error {
+		if err := s.repo.RequestDeletion(ctx, principal, projectID); err != nil {
+			return err
+		}
+		_, err := s.trail.Append(ctx, domainaudit.Record{
+			OrganizationID: principal.OrganizationID, Actor: domainaudit.Actor{Type: domainaudit.ActorHuman, ID: principal.Subject},
+			Origin: domainaudit.OriginWeb, Action: "project.delete", Target: "projects/" + projectID,
+		})
+		return err
+	})
 }

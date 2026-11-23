@@ -150,6 +150,15 @@ ON CONFLICT (project_id, gate) DO UPDATE SET approval_mode = excluded.approval_m
 		if err != nil {
 			return fmt.Errorf("save gate mode: %w", classify(err))
 		}
+		// US-07 CA-5, CA-6 (PD-05): the switch to human applies at once to the open round, which then waits for
+		// a human decision; the switch to automatic only applies to rounds opened later.
+		if mode == "human" {
+			if _, err := q.Exec(WithOperation(ctx, "gate_rounds.harden_mode"), `
+UPDATE easycode.gate_rounds SET approval_mode = 'human'
+ WHERE project_id = $1 AND gate = $2 AND approval_mode = 'automatic' AND state IN ('evaluating','awaiting_human')`, internalID, gate); err != nil {
+				return fmt.Errorf("harden open gate round: %w", classify(err))
+			}
+		}
 	}
 	if change.Constraints != nil {
 		var next int

@@ -34,6 +34,7 @@ func (a *api) register(router *Router) {
 		router.Handle(fasthttp.MethodGet, APIPrefix+"/projects/{projectId}", auth(a.getProject))
 		router.Handle(fasthttp.MethodGet, APIPrefix+"/projects/{projectId}/configuration", auth(a.getProjectConfiguration))
 		router.Handle(fasthttp.MethodPatch, APIPrefix+"/projects/{projectId}/configuration", auth(a.modifyProjectConfiguration))
+		router.Handle(fasthttp.MethodPost, APIPrefix+"/projects/{projectId}/deletion", auth(a.deleteProject))
 	}
 	if a.deps.Members != nil {
 		router.Handle(fasthttp.MethodGet, APIPrefix+"/users", auth(a.searchUsers))

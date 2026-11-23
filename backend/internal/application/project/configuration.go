@@ -117,12 +117,13 @@ func (s *ConfigurationService) Get(ctx context.Context, principal identity.Princ
 	config := stored.Configuration
 	config.GateApproval = map[string]GateMode{}
 	for _, stage := range s.definition.Stages {
-		mode := stored.GateModes[stage.Gate]
-		if mode == "" {
-			mode = "human"
+		// US-07: the mode in force (project choice or workflow default, PD-05); only the gates the workflow
+		// allows (validation, implementation) offer automatic; the others are always human (CA-3, RN-1).
+		allowed := []string{workflow.ApprovalHuman}
+		if configurable(stage) {
+			allowed = append(allowed, workflow.ApprovalAutomatic)
 		}
-		// Phase 1: every gate of the basic workflow is human; automatic mode is US-07 (Phase 2).
-		config.GateApproval[stage.Gate] = GateMode{Mode: mode, Allowed: []string{"human"}, AlwaysHuman: stage.Gate == "gate.release"}
+		config.GateApproval[stage.Gate] = GateMode{Mode: stage.ApprovalMode(stored.GateModes[stage.Gate]), Allowed: allowed, AlwaysHuman: !configurable(stage)}
 	}
 	return config, nil
 }
@@ -206,11 +207,12 @@ func (s *ConfigurationService) validate(ctx context.Context, stored StoredConfig
 		}
 	}
 	for gate, mode := range change.GateApproval {
-		if !slices.ContainsFunc(s.definition.Stages, func(st workflow.Stage) bool { return st.Gate == gate }) || (mode != "human" && mode != "automatic") {
+		index := slices.IndexFunc(s.definition.Stages, func(st workflow.Stage) bool { return st.Gate == gate })
+		if index < 0 || (mode != workflow.ApprovalHuman && mode != workflow.ApprovalAutomatic) {
 			return failure.Invalid(failure.FieldError{Field: "gate_approval." + gate, Message: "enum"})
 		}
-		if mode == "automatic" {
-			return failure.New(failure.KindConflict, project.CodeApprovalNotAllowed, nil)
+		if mode == workflow.ApprovalAutomatic && !configurable(s.definition.Stages[index]) {
+			return failure.New(failure.KindConflict, project.CodeApprovalNotAllowed, nil).With("gate", gate)
 		}
 	}
 	if change.ArtifactLanguage != nil && !project.ValidLanguage(*change.ArtifactLanguage) {
@@ -259,4 +261,10 @@ func (s *ConfigurationService) record(ctx context.Context, principal identity.Pr
 		Origin: domainaudit.OriginWeb, Action: action, Target: target,
 	})
 	return err
+}
+
+// configurable reports whether the project may choose the approval mode of the stage gate (US-07 CA-3:
+// gates.yaml configurable_per_project, only gate.validation and gate.implementation in workflow-padrao).
+func configurable(stage workflow.Stage) bool {
+	return !stage.AlwaysHuman && stage.DefaultApproval == "human_or_automatic"
 }

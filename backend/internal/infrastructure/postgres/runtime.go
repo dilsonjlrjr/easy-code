@@ -167,14 +167,15 @@ func (l Ledger) Inputs(ctx context.Context, c runtime.Claimed) (runtime.Inputs, 
 	var in runtime.Inputs
 	var constraints []byte
 	err := q.QueryRow(WithOperation(ctx, "waves.inputs"), `
-SELECT pr.business_need, pr.artifact_language, coalesce(ac.instruction_version, ''), coalesce(ac.instruction_hash, ''), coalesce(w.task, ''),
+SELECT pr.business_need, pr.artifact_language, coalesce(ac.instruction_version, ''), coalesce(ac.instruction_hash, ''),
+       coalesce(ac.adjustment_instructions, ''), coalesce(w.task, ''),
        (SELECT c.items FROM easycode.project_constraints c WHERE c.project_id = pr.id AND c.defined_at <= w.created_at
          ORDER BY c.version DESC LIMIT 1),
        CASE WHEN w.purpose = 'execution' THEN coalesce((SELECT g.reason FROM easycode.gate_rounds g WHERE g.project_id = pr.id AND g.stage = w.stage
                   AND g.state = 'rejected' ORDER BY g.number DESC LIMIT 1), '') ELSE '' END
   FROM easycode.waves w JOIN easycode.projects pr ON pr.id = w.project_id
   LEFT JOIN easycode.agent_configurations ac ON ac.id = w.agent_configuration_id -- none for the orchestrator (Release)
- WHERE w.id = $1`, c.WaveID).Scan(&in.BusinessNeed, &in.Language, &in.InstructionVersion, &in.InstructionHash, &in.Task, &constraints, &in.Feedback)
+ WHERE w.id = $1`, c.WaveID).Scan(&in.BusinessNeed, &in.Language, &in.InstructionVersion, &in.InstructionHash, &in.Adjustment, &in.Task, &constraints, &in.Feedback)
 	if err != nil {
 		return in, fmt.Errorf("wave inputs: %w", classify(err))
 	}

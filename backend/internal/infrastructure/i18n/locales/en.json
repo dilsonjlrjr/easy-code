@@ -85,6 +85,8 @@
   "problem.constraint-violated.detail": "The request breaks a rule of the data. Review the values sent.",
   "problem.confirmation-required.title": "Confirmation required",
   "problem.confirmation-required.detail": "Confirm the action: it cannot be undone or it is charged.",
+  "problem.project-not-ended.title": "Cancel the project before deleting it",
+  "problem.project-not-ended.detail": "Only a completed or canceled project can be deleted. Cancel the project before deleting it.",
   "problem.budget-exhausted.title": "Budget exhausted",
   "problem.budget-exhausted.detail": "The spend reached the stop limit. Raise the stop limit above the spend before resuming.",
   "problem.blocking-finding.title": "Approval blocked by a finding",

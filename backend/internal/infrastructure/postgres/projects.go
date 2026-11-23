@@ -136,6 +136,21 @@ func (r Projects) BudgetRules(ctx context.Context, organizationID string) (strin
 	return currency, ceiling, nil
 }
 
+// RequestDeletion implements appproject.Repository (US-04): the project leaves every list and access at once
+// (every read filters deletion_requested_at IS NULL).
+func (r Projects) RequestDeletion(ctx context.Context, p identity.Principal, projectID string) error {
+	tag, err := conn(ctx, r.pool).Exec(WithOperation(ctx, "projects.request_deletion"), `
+UPDATE easycode.projects SET deletion_requested_by = `+principalUserIDSQL+`, deletion_requested_at = now()
+ WHERE public_id = $3::uuid AND deletion_requested_at IS NULL`, p.OrganizationID, p.Subject, projectID)
+	if err != nil {
+		return fmt.Errorf("request project deletion: %w", classify(err))
+	}
+	if tag.RowsAffected() == 0 {
+		return failure.New(failure.KindNotFound, failure.CodeNotFound, nil)
+	}
+	return nil
+}
+
 // updatedAtSQL is the time of the last event of the project, kept by the outbox in the event counter of the
 // project (project_counters.updated_at): no read of the partitioned events per listed project (RNF-09).
 const updatedAtSQL = `coalesce((SELECT c.updated_at FROM easycode.project_counters c WHERE c.project_id = pr.id AND c.name = 'event'), pr.created_at)`

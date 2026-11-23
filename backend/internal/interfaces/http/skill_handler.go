@@ -120,6 +120,7 @@ type pinnedSkillJSON struct {
 type agentConfigurationJSON struct {
 	Version             int               `json:"version"`
 	InstructionsVersion string            `json:"instructions_version"`
+	Adjustment          *string           `json:"adjustment_instructions,omitempty"`
 	Tools               json.RawMessage   `json:"tools"`
 	Skills              []pinnedSkillJSON `json:"skills"`
 	OutputCriteria      []string          `json:"output_criteria"`
@@ -142,6 +143,11 @@ type projectAgentJSON struct {
 func agentConfigurationOf(c appskill.Configuration) agentConfigurationJSON {
 	out := agentConfigurationJSON{Version: c.Version, InstructionsVersion: c.InstructionVersion, Tools: c.Tools, Skills: []pinnedSkillJSON{},
 		OutputCriteria: []string{}, CreatedAt: c.CreatedAt}
+	if c.Adjustment != "" {
+		adjustment := c.Adjustment
+		out.Adjustment = &adjustment
+	}
+	out.OutputCriteria = append(out.OutputCriteria, c.OutputCriteria...)
 	if out.Tools == nil {
 		out.Tools = json.RawMessage(`{}`)
 	}
@@ -254,11 +260,8 @@ func (a *api) modifyAgentConfiguration(rc *fasthttp.RequestCtx, principal identi
 	if len(body.Tools) == 0 || body.Skills == nil {
 		return failure.Invalid(failure.FieldError{Field: "tools", Message: "required"})
 	}
-	if body.AdjustmentInstructions != nil && *body.AdjustmentInstructions != "" {
-		// The adjustment of the instructions is US-25 (MARCO-8).
-		return failure.Invalid(failure.FieldError{Field: "adjustment_instructions", Message: "unsupported"})
-	}
-	change := appskill.NewConfiguration{Tools: body.Tools}
+	// US-25 CA-2: absent keeps the adjustment of the previous version; "" removes it.
+	change := appskill.NewConfiguration{Tools: body.Tools, Adjustment: body.AdjustmentInstructions}
 	for _, s := range body.Skills {
 		change.Skills = append(change.Skills, appskill.Ref{Name: s.Skill, Version: s.Version})
 	}

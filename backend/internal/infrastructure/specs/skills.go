@@ -232,7 +232,36 @@ func (AgentProfiles) Profile(agent string) (appskill.Profile, error) {
 	if err != nil {
 		return appskill.Profile{}, err
 	}
+	criteria, err := outputCriteria(profile.Stages)
+	if err != nil {
+		return appskill.Profile{}, err
+	}
 	return appskill.Profile{Agent: agent, Name: profile.Name, Role: profile.Role, Prohibitions: profile.Limits, Stages: profile.Stages,
 		Delivery: profile.Delivery, InstructionVersion: defaults.InstructionVersion, InstructionHash: defaults.InstructionHash,
-		Tools: defaults.Tools, Limits: defaults.Limits}, nil
+		Tools: defaults.Tools, Limits: defaults.Limits, OutputCriteria: criteria}, nil
+}
+
+// outputCriteria are the checks of the gates of the stages, in gates.yaml order (US-25 CA-1: the exit
+// criteria of the agent, read only in Phases 1-2).
+func outputCriteria(stages []string) ([]string, error) {
+	composition, err := Governance()
+	if err != nil {
+		return nil, err
+	}
+	out := []string{}
+	seen := map[string]bool{}
+	for _, stage := range stages {
+		for _, gate := range composition.Gates {
+			if gate.Stage != stage {
+				continue
+			}
+			for _, spec := range composition.ChecksOf(gate.ID, nil) {
+				if !seen[spec.ID] {
+					seen[spec.ID] = true
+					out = append(out, spec.ID)
+				}
+			}
+		}
+	}
+	return out, nil
 }

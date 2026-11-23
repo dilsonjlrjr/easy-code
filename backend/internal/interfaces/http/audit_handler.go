@@ -46,7 +46,7 @@ type auditPageJSON struct {
 var targetTypes = map[string]string{
 	"waves": "wave", "gates": "gate_round", "findings": "finding", "members": "member", "agents": "agent",
 	"models": "model", "prices": "price", "skills": "skill", "sessions": "session", "artifacts": "artifact", "commands": "command",
-	"local-client-sessions": "local_client_session",
+	"local-client-sessions": "local_client_session", "projects": "project",
 }
 
 // targetOf splits the stored target ("waves/REQ-01", "gates/gate.data/rounds/2", "project", "budget") into the

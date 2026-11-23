@@ -32,6 +32,10 @@ const (
 	CodeBudgetAboveCeiling = "budget-above-ceiling"
 	CodeIncompleteConfig   = "incomplete-configuration"
 	CodeApprovalNotAllowed = "approval-mode-not-allowed"
+	// CodeProjectNotEnded refuses deleting a project that is not completed or canceled (US-04 CA-2).
+	CodeProjectNotEnded = "project-not-ended"
+	// CodeConfirmationRequired refuses a deletion whose typed name differs from the project name (US-04 CA-1).
+	CodeConfirmationRequired = "confirmation-required"
 )
 
 // Actions are the project triggers of estados.yaml a person may use in a state (Project.available_actions):

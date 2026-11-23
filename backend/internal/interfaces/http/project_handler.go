@@ -18,6 +18,7 @@ type ProjectUseCases interface {
 	Get(ctx context.Context, principal identity.Principal, projectID string) (appproject.View, error)
 	List(ctx context.Context, principal identity.Principal, filter appproject.Filter) (appproject.Page, error)
 	GetAsAdministrator(ctx context.Context, projectID string) (appproject.View, error)
+	Delete(ctx context.Context, principal identity.Principal, projectID, confirmation string) error
 }
 
 // projectMetadataJSON is what the administrator sees of a project without a role in it: no
@@ -282,4 +283,28 @@ func (a *api) listProjects(rc *fasthttp.RequestCtx, principal identity.Principal
 	}
 	a.responder.JSON(rc, fasthttp.StatusOK, out)
 	return nil
+}
+
+// deleteProject asks the deletion of a completed or canceled project with its name typed again (US-04): 202,
+// the project leaves every list and access at once; the worker destroys the repository and anonymizes.
+func (a *api) deleteProject(rc *fasthttp.RequestCtx, principal identity.Principal) error {
+	projectID, err := pathUUID(rc, "projectId")
+	if err != nil {
+		return err
+	}
+	var body struct {
+		NameConfirmation string `json:"name_confirmation"`
+	}
+	if err := decodeJSON(rc, &body); err != nil {
+		return err
+	}
+	if n := len([]rune(body.NameConfirmation)); n < 1 || n > 120 {
+		return failure.New(failure.KindInvalidInput, project.CodeConfirmationRequired, nil).WithField("name_confirmation", "required")
+	}
+	return a.idempotent(rc, principal, "deleteProject", func(ctx context.Context) (created, error) {
+		if err := a.deps.Projects.Delete(ctx, principal, projectID, body.NameConfirmation); err != nil {
+			return created{}, err
+		}
+		return created{status: fasthttp.StatusAccepted, body: map[string]string{"project": projectID, "state": "deletion_requested"}}, nil
+	})
 }

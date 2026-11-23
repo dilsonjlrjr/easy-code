@@ -145,7 +145,7 @@ func (k Skills) Versions(ctx context.Context, projectID, agent string) ([]appski
 
 func (k Skills) versions(ctx context.Context, projectID, agent string, limit int) ([]appskill.Configuration, error) {
 	rows, err := conn(ctx, k.pool).Query(WithOperation(ctx, "agent_configurations.versions"), `
-SELECT ac.version, ac.instruction_version, ac.tools, ac.created_at, u.sub, u.display_name
+SELECT ac.version, ac.instruction_version, coalesce(ac.adjustment_instructions, ''), ac.tools, ac.created_at, u.sub, u.display_name
   FROM easycode.agent_configurations ac JOIN easycode.projects pr ON pr.id = ac.project_id
   LEFT JOIN easycode.users u ON u.id = ac.created_by
  WHERE pr.public_id = $1::uuid AND ac.agent = $2 ORDER BY ac.version DESC LIMIT $3`, projectID, agent, limit)
@@ -157,7 +157,7 @@ SELECT ac.version, ac.instruction_version, ac.tools, ac.created_at, u.sub, u.dis
 	for rows.Next() {
 		var c appskill.Configuration
 		var sub, name *string
-		if err := rows.Scan(&c.Version, &c.InstructionVersion, &c.Tools, &c.CreatedAt, &sub, &name); err != nil {
+		if err := rows.Scan(&c.Version, &c.InstructionVersion, &c.Adjustment, &c.Tools, &c.CreatedAt, &sub, &name); err != nil {
 			return nil, err
 		}
 		if sub != nil {
@@ -203,7 +203,8 @@ SELECT v.status FROM easycode.skills s JOIN easycode.skill_versions v ON v.skill
 // Save implements appskill.Configurations (api role): the default version 1 when the project has none,
 // the next version with the tools, and the skills of the agent (project_skills: the agent joins the row
 // of each skill asked, in the asked version; it leaves the others, and a row without agents goes away).
-func (k Skills) Save(ctx context.Context, p identity.Principal, projectID string, profile appskill.Profile, tools json.RawMessage, skills []appskill.Ref) (appskill.Configuration, error) {
+func (k Skills) Save(ctx context.Context, p identity.Principal, projectID string, profile appskill.Profile, tools json.RawMessage, skills []appskill.Ref,
+	adjustment *string) (appskill.Configuration, error) {
 	q := conn(ctx, k.pool)
 	var project int64
 	if err := q.QueryRow(WithOperation(ctx, "projects.id"), "SELECT id FROM easycode.projects WHERE public_id = $1::uuid", projectID).Scan(&project); err != nil {
@@ -218,11 +219,14 @@ SELECT $1, $2, 1, $3, $4, $5::jsonb, $6::jsonb
 	}
 	var saved appskill.Configuration
 	err := q.QueryRow(WithOperation(ctx, "agent_configurations.next"), `
-INSERT INTO easycode.agent_configurations (project_id, agent, version, instruction_version, instruction_hash, tools, limits, output_criteria, created_by)
-SELECT ac.project_id, ac.agent, ac.version + 1, ac.instruction_version, ac.instruction_hash, $3::jsonb, ac.limits, ac.output_criteria, `+principalUserIDSQL+`
+INSERT INTO easycode.agent_configurations (project_id, agent, version, instruction_version, instruction_hash, tools, limits, output_criteria,
+                                          adjustment_instructions, created_by)
+SELECT ac.project_id, ac.agent, ac.version + 1, ac.instruction_version, ac.instruction_hash, $3::jsonb, ac.limits, ac.output_criteria,
+       CASE WHEN $6::boolean THEN nullif($7::text, '') ELSE ac.adjustment_instructions END, `+principalUserIDSQL+`
   FROM easycode.agent_configurations ac WHERE ac.project_id = $4 AND ac.agent = $5 ORDER BY ac.version DESC LIMIT 1
-RETURNING version, instruction_version, tools, created_at`, p.OrganizationID, p.Subject, string(tools), project, profile.Agent).
-		Scan(&saved.Version, &saved.InstructionVersion, &saved.Tools, &saved.CreatedAt)
+RETURNING version, instruction_version, coalesce(adjustment_instructions, ''), tools, created_at`, p.OrganizationID, p.Subject, string(tools), project, profile.Agent,
+		adjustment != nil, deref(adjustment)).
+		Scan(&saved.Version, &saved.InstructionVersion, &saved.Adjustment, &saved.Tools, &saved.CreatedAt)
 	if err != nil {
 		return saved, fmt.Errorf("agent configuration: %w", classify(err))
 	}

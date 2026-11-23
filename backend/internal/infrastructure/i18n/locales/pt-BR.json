@@ -85,6 +85,8 @@
   "problem.constraint-violated.detail": "O pedido viola uma regra dos dados. Revise os valores enviados.",
   "problem.confirmation-required.title": "Confirmação necessária",
   "problem.confirmation-required.detail": "Confirme a ação: ela não pode ser desfeita ou tem custo.",
+  "problem.project-not-ended.title": "Cancele o projeto antes de excluir",
+  "problem.project-not-ended.detail": "Só projeto concluído ou cancelado pode ser excluído. Cancele o projeto antes de excluir.",
   "problem.budget-exhausted.title": "Orçamento esgotado",
   "problem.budget-exhausted.detail": "O gasto chegou ao limite de parada. Amplie o limite acima do gasto antes de retomar.",
   "problem.blocking-finding.title": "Aprovação bloqueada por achado",

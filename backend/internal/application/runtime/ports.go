@@ -64,10 +64,12 @@ type Inputs struct {
 	Language           string
 	InstructionVersion string
 	InstructionHash    string
-	Models             map[string]ModelRef
-	Feedback           string            // reason of the last rejected gate round of the stage (rework)
-	Task               string            // T of an implementation wave (PL-20)
-	Approved           map[string]string // path → author of every approved artifact (US-30 CA-2)
+	// Adjustment is the text the lead added to the default instructions in the pinned configuration (US-25).
+	Adjustment string
+	Models     map[string]ModelRef
+	Feedback   string            // reason of the last rejected gate round of the stage (rework)
+	Task       string            // T of an implementation wave (PL-20)
+	Approved   map[string]string // path → author of every approved artifact (US-30 CA-2)
 	// Opinions are the opinions recorded by the participant waves of the stage (lead of the validation).
 	Opinions []workflow.ReviewOpinion
 	Skills   string // skills of the agent in the project, by description (US-43 RN-1)

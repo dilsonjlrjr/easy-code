@@ -311,6 +311,15 @@ func (e *Executor) claimedEvents(ctx context.Context, c Claimed) error {
 	return nil
 }
 
+// WithAdjustment adds the adjustment of the project to the default instruction of the agent (US-25 CA-2): it
+// comes after the instruction and never replaces it; the instruction hash pins only the default text.
+func WithAdjustment(instruction, adjustment string) string {
+	if strings.TrimSpace(adjustment) == "" {
+		return instruction
+	}
+	return instruction + "\n\n## Project adjustment (set by the project lead)\n\n" + strings.TrimSpace(adjustment) + "\n"
+}
+
 func money(value, currency string) map[string]any {
 	if currency == "" {
 		currency = "BRL"
@@ -334,7 +343,7 @@ func (e *Executor) execute(ctx context.Context, c Claimed) error {
 	}
 	wave := WaveContext{
 		ProjectID: c.ProjectID, WaveID: c.PublicID, Code: c.Code, Stage: c.Stage, Agent: c.Agent, Attempt: c.Attempt,
-		Instruction: text, BusinessNeed: inputs.BusinessNeed, Constraints: inputs.Constraints, Language: inputs.Language,
+		Instruction: WithAdjustment(text, inputs.Adjustment), BusinessNeed: inputs.BusinessNeed, Constraints: inputs.Constraints, Language: inputs.Language,
 		WritablePaths: agent.WritablePaths, Outputs: e.outputs(c.Stage), Models: inputs.Models, Feedback: inputs.Feedback,
 		Policy: agent.Policy, Approved: inputs.Approved, Mode: agent.ModeIn(c.Stage), Task: inputs.Task, Image: e.settings.Image,
 		Opinions: inputs.Opinions, Skills: inputs.Skills, SkillFiles: inputs.SkillFiles, Purpose: c.Purpose, Finding: inputs.Finding,

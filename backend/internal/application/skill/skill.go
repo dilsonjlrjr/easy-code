@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"easycode/internal/application/audit"
@@ -128,10 +129,14 @@ func (t Tools) Within(allowed Tools) string {
 type Configuration struct {
 	Version            int
 	InstructionVersion string
-	Tools              json.RawMessage
-	Skills             []domainskill.Pinned
-	CreatedAt          time.Time
-	CreatedBy          *appproject.UserRef
+	// Adjustment is the text of the project added to the default instructions (US-25 CA-2); "" = none.
+	Adjustment string
+	// OutputCriteria are the checks of the gates of the stages of the agent (gates.yaml; read only in Phases 1-2).
+	OutputCriteria []string
+	Tools          json.RawMessage
+	Skills         []domainskill.Pinned
+	CreatedAt      time.Time
+	CreatedBy      *appproject.UserRef
 }
 
 // Agent is an agent of the project (ProjectAgent).
@@ -159,6 +164,7 @@ type Profile struct {
 	InstructionHash    string
 	Tools              json.RawMessage
 	Limits             json.RawMessage
+	OutputCriteria     []string
 }
 
 // Profiles gives the platform default of each configurable agent.
@@ -177,7 +183,12 @@ type Ref struct {
 type NewConfiguration struct {
 	Tools  json.RawMessage
 	Skills []Ref
+	// Adjustment replaces the adjustment of the instructions: nil keeps the previous one, "" removes it.
+	Adjustment *string
 }
+
+// MaxAdjustment is the size limit of the adjustment of the instructions (openapi AgentConfiguration).
+const MaxAdjustment = 20000
 
 // Configurations stores the agent configurations and the project skills.
 type Configurations interface {
@@ -189,7 +200,7 @@ type Configurations interface {
 	// VersionStatus returns the state of a version of a skill visible to the organization ("" if unknown).
 	VersionStatus(ctx context.Context, organizationID, name string, version int) (string, error)
 	// Save writes the next version (the default first when there is none) and sets the skills of the agent.
-	Save(ctx context.Context, principal identity.Principal, projectID string, profile Profile, tools json.RawMessage, skills []Ref) (Configuration, error)
+	Save(ctx context.Context, principal identity.Principal, projectID string, profile Profile, tools json.RawMessage, skills []Ref, adjustment *string) (Configuration, error)
 }
 
 // Pairs resolves the model pair of a stage of the project (project pair or the stage adjustment, PD-21).
@@ -241,6 +252,7 @@ func (a *Agents) agent(ctx context.Context, projectID, name string) (Agent, erro
 	}
 	out.Configuration = *latest
 	out.Configuration.Skills = pinned
+	out.Configuration.OutputCriteria = profile.OutputCriteria
 	return out, nil
 }
 
@@ -278,10 +290,16 @@ func (a *Agents) Versions(ctx context.Context, principal identity.Principal, pro
 		return nil, failure.New(failure.KindNotFound, failure.CodeNotFound, nil)
 	}
 	versions, err := a.configurations.Versions(ctx, projectID, name)
-	if err != nil || len(versions) > 0 {
-		return versions, err
+	if err != nil {
+		return nil, err
 	}
-	return []Configuration{{Version: 1, InstructionVersion: profile.InstructionVersion, Tools: profile.Tools}}, nil
+	if len(versions) == 0 {
+		versions = []Configuration{{Version: 1, InstructionVersion: profile.InstructionVersion, Tools: profile.Tools}}
+	}
+	for i := range versions {
+		versions[i].OutputCriteria = profile.OutputCriteria
+	}
+	return versions, nil
 }
 
 // Modify is modifyAgentConfiguration (US-43, US-25 CA-2, CA-3): the lead saves a new version with the
@@ -298,6 +316,13 @@ func (a *Agents) Modify(ctx context.Context, principal identity.Principal, proje
 	profile, err := a.profiles.Profile(name)
 	if err != nil {
 		return Agent{}, failure.New(failure.KindNotFound, failure.CodeNotFound, nil)
+	}
+	if change.Adjustment != nil {
+		trimmed := strings.TrimSpace(*change.Adjustment)
+		if len([]rune(trimmed)) > MaxAdjustment {
+			return Agent{}, failure.Invalid(failure.FieldError{Field: "adjustment_instructions", Message: "max_length"})
+		}
+		change.Adjustment = &trimmed
 	}
 	var requested, allowed Tools
 	if err := json.Unmarshal(change.Tools, &requested); err != nil {
@@ -337,13 +362,16 @@ func (a *Agents) Modify(ctx context.Context, principal identity.Principal, proje
 		if current != version {
 			return failure.New(failure.KindConflict, appproject.CodeFailedPrecondition, nil)
 		}
-		saved, err := a.configurations.Save(ctx, principal, projectID, profile, change.Tools, change.Skills)
+		saved, err := a.configurations.Save(ctx, principal, projectID, profile, change.Tools, change.Skills, change.Adjustment)
 		if err != nil {
 			return err
 		}
-		references := make([]string, 0, len(change.Skills))
+		references := make([]string, 0, len(change.Skills)+1)
 		for _, ref := range change.Skills {
 			references = append(references, ref.Name+"@"+strconv.Itoa(ref.Version))
+		}
+		if change.Adjustment != nil {
+			references = append(references, "adjustment_instructions") // the text itself stays in the configuration
 		}
 		_, err = a.trail.Append(ctx, domainaudit.Record{
 			ProjectID: projectID, Actor: domainaudit.Actor{Type: domainaudit.ActorHuman, ID: principal.Subject}, Origin: domainaudit.OriginWeb,

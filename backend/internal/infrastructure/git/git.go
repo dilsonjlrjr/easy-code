@@ -234,6 +234,18 @@ func (r Repositories) Head(ctx context.Context, projectID string) (HeadCommit, e
 	return head, nil
 }
 
+// Remove destroys the repository of a deleted project (US-04 CA-1); a missing repository is not an error.
+func (r Repositories) Remove(_ context.Context, projectID string) error {
+	dir, err := r.Path(projectID)
+	if err != nil {
+		return err
+	}
+	if err := os.RemoveAll(dir); err != nil {
+		return fmt.Errorf("remove repository: %w", err)
+	}
+	return nil
+}
+
 // Exists reports whether the project repository has a commit.
 func (r Repositories) Exists(ctx context.Context, projectID string) bool {
 	dir, err := r.Path(projectID)
