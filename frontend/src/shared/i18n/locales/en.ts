@@ -517,6 +517,7 @@ export const en: MessageSchema = {
       answer: 'Answer',
     },
     workflow: {
+      approvedInGate: 'approved in {gate}',
       title: 'Stages',
       progress: 'Approved stages: {approved} of {total}',
       position: 'Stage {n}',
@@ -802,6 +803,7 @@ export const en: MessageSchema = {
     total: 'Pending items: {count}',
     waiting: 'waiting {age}',
     questionCount: 'Questions: {count}',
+    reevaluationBy: 'Reevaluation caused by finding',
     failedChecks: 'Failed checks: {count}',
     budgetPercentage: 'Budget reached: {percentage}%',
     answer: 'Answer',
@@ -1318,7 +1320,7 @@ export const en: MessageSchema = {
       empty: 'This Artifact has no links in the chosen direction.',
       group: '{group} ({n})',
       broken: 'id not found',
-      rules: 'rules {rules}',
+      rules: 'links {rules}',
     },
     coverage: {
       title: 'Coverage matrix',
@@ -1353,6 +1355,7 @@ export const en: MessageSchema = {
       DIC: 'Data dictionary (DIC)',
       TELAS: 'Screens (TELAS)',
       CT: 'Test scenarios (CT)',
+      test: 'Tests',
       commit: 'Commits',
       ACH: 'Findings (ACH)',
       other: 'Other artifacts',

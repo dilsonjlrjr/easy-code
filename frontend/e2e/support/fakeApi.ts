@@ -1337,7 +1337,7 @@ export function finding(id: string, overrides: Json = {}): Json {
     cycles: 0,
     acceptance_expired: false,
     opened_at: '2026-11-22T09:30:00-03:00',
-    affected_artifacts: [{ artifact: 'T-03', version: 2 }],
+    affected_artifacts: [{ artifact: 'T-03', item: 'internal/auth/handler.go:42' }],
     origin_wave: 'SEG-01',
     cycle_history: [],
     escalations: [],

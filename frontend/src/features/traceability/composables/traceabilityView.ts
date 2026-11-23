@@ -1,10 +1,10 @@
 import type { CoverageMatrix, Traceability, TraceEdge, TraceNode } from '../api/traceabilityApi'
 
 /**
- * ESP-24 3.1: the links of a root grouped by type (T, ADR, DIC, TELAS, CT, commit, ACH, others),
+ * ESP-24 3.1: the links of a root grouped by type (T, ADR, DIC, TELAS, CT, tests, commits, ACH, others),
  * each node with the rules that tie it to the graph; 3.2: the coverage rows, gaps first.
  */
-export const NODE_GROUPS = ['T', 'ADR', 'DIC', 'TELAS', 'CT', 'commit', 'ACH'] as const
+export const NODE_GROUPS = ['T', 'ADR', 'DIC', 'TELAS', 'CT', 'test', 'commit', 'ACH'] as const
 
 export type NodeGroup = (typeof NODE_GROUPS)[number] | 'other'
 
@@ -20,8 +20,8 @@ export function groupNodes(graph: Traceability): Array<{ group: NodeGroup; nodes
     rules.set(id, set)
   }
   for (const edge of graph.edges) {
-    add(edge.from_state, edge)
-    add(edge.to_state, edge)
+    add(edge.from, edge)
+    add(edge.to, edge)
   }
   const groups = new Map<NodeGroup, LinkedNode[]>()
   for (const node of graph.nodes) {

@@ -131,7 +131,7 @@ function nodeRoute(node: {
   type: string
   exists: boolean
 }): RouteLocationRaw | undefined {
-  if (!node.exists || node.type === 'commit') return undefined
+  if (!node.exists || node.type === 'commit' || node.type === 'test') return undefined
   if (node.type === 'ACH')
     return { name: ROUTE_NAMES.finding, params: { projectId: projectId.value, findingId: node.id } }
   return { name: ROUTE_NAMES.artifact, params: { projectId: projectId.value, artifactId: node.id } }

@@ -145,11 +145,10 @@ export interface StageSummary {
   gate_state?: GateState | null
   /** Approved stage marked for a reevaluation wave after a reopening (US-34 CA-2). */
   reevaluation_pending?: boolean
-  /**
-   * The finding that reopened the stage (US-34, ESP-06 3, ESP-08 6). Not in openapi yet: reported
-   * as a contract gap; the `stage.reopened` event already carries it as `finding`.
-   */
+  /** The finding that reopened the stage (US-34, ESP-06 3, ESP-08 6). */
   reopened_by_finding?: string | null
+  /** Parallel activity (qa-plan, security-threats): the gate whose approval also approved it. */
+  approved_in_gate?: string | null
   active_waves?: number
   cost?: Money
 }

@@ -11,19 +11,20 @@ describe('traceability of an artifact (ESP-24 3.1, US-28 CA-1, CA-3)', () => {
         { id: 'CT-07', type: 'CT', exists: true },
         { id: 'CT-99', type: 'CT', exists: false },
         { id: 'a1b2c3d', type: 'commit', exists: true },
+        { id: 'reserve.spec.ts::reserves', type: 'test', exists: true },
         { id: 'VISAO', type: 'VISAO', exists: true },
       ],
       edges: [
-        { from_state: 'T-02', to_state: 'US-03', rule: 'RAS-08' },
-        { from_state: 'CT-07', to_state: 'US-03', rule: 'RAS-20' },
-        { from_state: 'CT-99', to_state: 'US-03', rule: 'RAS-01' },
+        { from: 'T-02', to: 'US-03', rule: 'E-20' },
+        { from: 'CT-07', to: 'US-03', rule: 'E-30' },
+        { from: 'CT-99', to: 'US-03', rule: 'E-31' },
       ],
     })
-    expect(groups.map((group) => group.group)).toEqual(['T', 'CT', 'commit', 'other'])
+    expect(groups.map((group) => group.group)).toEqual(['T', 'CT', 'test', 'commit', 'other'])
     const cts = groups.find((group) => group.group === 'CT')?.nodes ?? []
     expect(cts.map((node) => [node.id, node.exists, node.rules])).toEqual([
-      ['CT-07', true, ['RAS-20']],
-      ['CT-99', false, ['RAS-01']],
+      ['CT-07', true, ['E-30']],
+      ['CT-99', false, ['E-31']],
     ])
   })
 })

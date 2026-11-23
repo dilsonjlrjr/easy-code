@@ -146,10 +146,28 @@ function waitingDependencies(stage: StageSummary): string {
     <template v-if="activities.length > 0">
       <h2 class="text-h6 mt-6 mb-2">{{ $t('projects.workflow.activities') }}</h2>
       <ul class="pipeline">
-        <li v-for="activity in activities" :key="activity.id">
+        <li
+          v-for="activity in activities"
+          :key="activity.id"
+          :data-testid="`activity-${activity.id}`"
+        >
           <v-card variant="outlined" class="pa-4">
-            <h3 class="text-subtitle-1 font-weight-medium">{{ stageName(activity) }}</h3>
+            <h3 class="text-subtitle-1 font-weight-medium">
+              <router-link
+                :to="{
+                  name: ROUTE_NAMES.stage,
+                  params: { projectId: store.project?.id ?? '', stageId: activity.id },
+                }"
+              >
+                {{ stageName(activity) }}
+              </router-link>
+            </h3>
+            <p class="text-body-2 mb-2">{{ $t(`agents.${activity.agent}`) }}</p>
             <StateLabel machine="stage" :state="stageState(activity)" />
+            <!-- US-22 CA-1 / US-23 CA-1: the activity is approved together with a stage gate. -->
+            <p v-if="activity.approved_in_gate" class="text-body-2 mt-2">
+              {{ $t('projects.workflow.approvedInGate', { gate: activity.approved_in_gate }) }}
+            </p>
           </v-card>
         </li>
       </ul>

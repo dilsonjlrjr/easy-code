@@ -1,12 +1,5 @@
 import { apiClient } from '@/shared/api/apiClient'
-import type {
-  AgentId,
-  ArtifactState,
-  AvailableAction,
-  Page,
-  StageId,
-  UserRef,
-} from '@/shared/api/contract'
+import type { AgentId, AvailableAction, Page, StageId, UserRef } from '@/shared/api/contract'
 import type { HttpClient } from '@/shared/api/httpClient'
 import { idempotencyHeaders } from '@/shared/api/idempotencyKey'
 
@@ -54,11 +47,10 @@ export interface FindingSummary {
   opened_at?: string
 }
 
+/** `Finding.affected_artifacts[]`: the artifact and, optionally, an item id or a file path. */
 export interface FindingArtifactRef {
   artifact: string
-  version: number
-  type?: string
-  state?: ArtifactState
+  item?: string
 }
 
 export interface FindingCycle {
@@ -198,7 +190,6 @@ export function createFindingsApi(client: HttpClient = apiClient): FindingsApi {
         {
           headers: {
             ...idempotencyHeaders(headers.idempotencyKey),
-            // `discardFinding` takes no anti-CSRF token in the contract; sending it does no harm.
             ...(headers.csrfToken ? { 'X-CSRF-Token': headers.csrfToken } : {}),
           },
         },

@@ -208,17 +208,11 @@ const stages = computed(() => workflow.value?.stages ?? [])
 const destination = computed<StageSummary | undefined>(() =>
   stages.value.find((stage) => stage.id === finding.value?.destination_stage),
 )
-/**
- * US-34 / ER-20-12: the reopening this finding caused. The stage says which finding reopened it
- * (`reopened_by_finding`, a contract gap); without the field, a reopened destination counts.
- */
+/** US-34 / ER-20-12: the reopening this finding caused (`reopened_by_finding` of the stage). */
 const reopening = computed(() => {
   const stage = destination.value
   if (!finding.value || internalCycle.value || !stage) return undefined
-  const byThis =
-    stage.reopened_by_finding === finding.value.id ||
-    (!stage.reopened_by_finding && stage.state === 'reopened')
-  if (stage.state !== 'reopened' || !byThis) return undefined
+  if (stage.state !== 'reopened' || stage.reopened_by_finding !== finding.value.id) return undefined
   return {
     stage,
     // CA-20-19: the stage that issued the finding is never listed as blocked.
@@ -347,13 +341,14 @@ const scopeEscalation = computed(() =>
               :to="{
                 name: ROUTE_NAMES.artifact,
                 params: { projectId, artifactId: item.artifact },
-                query: { version: item.version },
               }"
               class="monospace"
             >
               {{ item.artifact }}
             </router-link>
-            · {{ $t('artifacts.versionNumber', { n: item.version }) }}
+            <template v-if="item.item">
+              · <span class="monospace">{{ item.item }}</span></template
+            >
           </li>
         </ul>
       </section>

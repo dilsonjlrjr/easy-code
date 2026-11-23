@@ -60,6 +60,8 @@ export interface GateRound extends GateRoundSummary {
   outputs: ArtifactVersionRef[]
   checks: CheckResult[]
   blocking_findings?: FindingSummary[]
+  /** ESP-12 6: the round went back to evaluating because a finding was opened (US-31 CA-3). */
+  reevaluation?: { cause: 'finding_opened'; finding: string; evaluation?: unknown } | null
   non_blocking_findings?: FindingSummary[]
   available_actions: AvailableAction[]
 }

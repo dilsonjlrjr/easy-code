@@ -414,6 +414,18 @@ function checkStatus(check: CheckResult): string {
           data-testid="gate-evaluating"
         >
           {{ $t('gates.evaluating') }}
+          <template v-if="round.reevaluation?.finding">
+            {{ $t('gates.reevaluationBy') }}
+            <router-link
+              :to="{
+                name: ROUTE_NAMES.finding,
+                params: { projectId, findingId: round.reevaluation.finding },
+              }"
+              class="monospace"
+              data-testid="gate-reevaluation-finding"
+              >{{ round.reevaluation.finding }}</router-link
+            >
+          </template>
         </v-alert>
         <!-- US-31 CA-2, CA-3 / ER-12-1: why approval is unavailable, by name and in text. -->
         <v-alert

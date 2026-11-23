@@ -42,6 +42,16 @@ function apiWithQuality(): FakeApi {
     state: 'running',
     active_waves: 1,
   })
+  stages.push({
+    id: 'security-threats',
+    name: 'Segurança (ameaças)',
+    short_name: 'Ameaças',
+    type: 'parallel_activity',
+    agent: 'security-agent',
+    depends_on: ['architecture'],
+    state: 'approved',
+    approved_in_gate: 'gate.validation',
+  })
   const state = api.addProject({
     project: {
       id: PROJECT_ID,
@@ -126,7 +136,7 @@ function apiWithQuality(): FakeApi {
       status: 'in_rework',
       cycles: 1,
       cycle_history: [{ number: 1, rework_wave: 'ARQ-03', result: null }],
-      affected_artifacts: [{ artifact: 'ARQ', version: 3 }],
+      affected_artifacts: [{ artifact: 'ARQ', item: 'componentes.auth' }],
     }),
   ]
   state.links['US-03'] = {
@@ -138,15 +148,17 @@ function apiWithQuality(): FakeApi {
       { id: 'CT-01', type: 'CT', title: 'Reserva feliz', state: 'approved', exists: true },
       { id: 'CT-99', type: 'CT', exists: false },
       { id: 'a1b2c3d', type: 'commit', exists: true },
+      { id: 'e2e/reserve.spec.ts', type: 'test', exists: true },
       { id: 'ACH-05', type: 'ACH', title: 'Falha na reserva', exists: true },
     ],
     edges: [
-      { from_state: 'T-02', to_state: 'US-03', rule: 'RAS-08' },
-      { from_state: 'ADR-04', to_state: 'US-03', rule: 'RAS-12' },
-      { from_state: 'CT-01', to_state: 'US-03', rule: 'RAS-20' },
-      { from_state: 'CT-99', to_state: 'US-03', rule: 'RAS-01' },
-      { from_state: 'a1b2c3d', to_state: 'T-02', rule: 'RAS-27' },
-      { from_state: 'ACH-05', to_state: 'CT-01', rule: 'RAS-04' },
+      { from: 'T-02', to: 'US-03', rule: 'E-20' },
+      { from: 'ADR-04', to: 'US-03', rule: 'E-12' },
+      { from: 'CT-01', to: 'US-03', rule: 'E-30' },
+      { from: 'CT-99', to: 'US-03', rule: 'E-30' },
+      { from: 'a1b2c3d', to: 'T-02', rule: 'E-40' },
+      { from: 'ACH-05', to: 'CT-01', rule: 'E-50' },
+      { from: 'CT-01', to: 'e2e/reserve.spec.ts', rule: 'E-41' },
     ],
   }
   state.coverage = [
@@ -181,8 +193,9 @@ test('US-28 CA-1 / CA-3 / CA-24-1: the traceability of a US shows T, ADR, CT, co
   await expect(page.getByTestId('trace-group-ADR')).toContainText('ADR-04')
   await expect(page.getByTestId('trace-group-CT')).toContainText('Cenários de teste (CT) (2)')
   await expect(page.getByTestId('trace-node-CT-99')).toContainText('id não encontrado')
-  await expect(page.getByTestId('trace-node-CT-01')).toContainText('regras RAS-04, RAS-20')
+  await expect(page.getByTestId('trace-node-CT-01')).toContainText('vínculos E-30, E-41, E-50')
   await expect(page.getByTestId('trace-group-commit')).toContainText('a1b2c3d')
+  await expect(page.getByTestId('trace-group-test')).toContainText('e2e/reserve.spec.ts')
   await expect(page.getByTestId('trace-group-ACH')).toContainText('ACH-05')
   await expectNoSeriousA11yViolations(page)
 
@@ -253,6 +266,11 @@ test('US-34 CA-1 / CA-3 / CA-20-17: a finding that changes the approved architec
   await expect(architecture).toContainText('Reaberta')
   await expect(architecture).toContainText('Reaberta pelo achado ACH-09')
   await expect(page.getByTestId('stage-implementation')).toContainText('Bloqueada')
+  // US-23 CA-1: the threat modeling activity runs in parallel and is approved with gate.validation.
+  await expect(page.getByTestId('activity-security-threats')).toContainText('Segurança (ameaças)')
+  await expect(page.getByTestId('activity-security-threats')).toContainText(
+    'aprovada no gate.validation',
+  )
   await expectNoSeriousA11yViolations(page)
 
   await page.getByRole('link', { name: 'Implementação' }).click()
@@ -266,6 +284,7 @@ test('US-34 CA-1 / CA-3 / CA-20-17: a finding that changes the approved architec
   await expect(reopening).toContainText('Implementação')
   // CA-20-19: the issuing stage (Security) is not listed as blocked.
   await expect(reopening).not.toContainText('Segurança')
+  await expect(page.getByTestId('finding-affected')).toContainText('componentes.auth')
   await expect(page.getByTestId('finding-cycle-type')).toContainText(
     'O retrabalho reabre a etapa dona (Arquitetura).',
   )

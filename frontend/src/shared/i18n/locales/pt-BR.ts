@@ -521,6 +521,7 @@ export const ptBR = {
       answer: 'Responder',
     },
     workflow: {
+      approvedInGate: 'aprovada no {gate}',
       title: 'Etapas',
       progress: 'Etapas aprovadas: {approved} de {total}',
       position: 'Etapa {n}',
@@ -808,6 +809,7 @@ export const ptBR = {
     total: 'Pendências: {count}',
     waiting: 'esperando {age}',
     questionCount: 'Perguntas: {count}',
+    reevaluationBy: 'Reavaliação causada pelo achado',
     failedChecks: 'Checagens que falharam: {count}',
     budgetPercentage: 'Orçamento atingido: {percentage}%',
     answer: 'Responder',
@@ -1321,7 +1323,7 @@ export const ptBR = {
       empty: 'Este Artefato não tem vínculos na direção escolhida.',
       group: '{group} ({n})',
       broken: 'id não encontrado',
-      rules: 'regras {rules}',
+      rules: 'vínculos {rules}',
     },
     coverage: {
       title: 'Matriz de cobertura',
@@ -1356,6 +1358,7 @@ export const ptBR = {
       DIC: 'Dicionário de dados (DIC)',
       TELAS: 'Telas (TELAS)',
       CT: 'Cenários de teste (CT)',
+      test: 'Testes',
       commit: 'Commits',
       ACH: 'Achados (ACH)',
       other: 'Outros artefatos',

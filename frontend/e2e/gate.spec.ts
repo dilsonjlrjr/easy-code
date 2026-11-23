@@ -217,6 +217,7 @@ test('US-31 CA-3 / CA-12-9: a critical or high finding opened while waiting make
     gateRound('gate.requirements', 'requirements', 1, {
       state: 'evaluating',
       available_actions: [],
+      reevaluation: { cause: 'finding_opened', finding: 'ACH-04', evaluation: null },
       blocking_findings: [
         {
           id: 'ACH-04',
@@ -236,6 +237,7 @@ test('US-31 CA-3 / CA-12-9: a critical or high finding opened while waiting make
   await page.goto(GATE_PATH)
 
   await expect(page.getByTestId('gate-evaluating')).toContainText('Avaliando checagens')
+  await expect(page.getByTestId('gate-reevaluation-finding')).toHaveText('ACH-04')
   const blocked = page.getByTestId('gate-blocked')
   await expect(blocked).toContainText('A aprovação está indisponível.')
   await expect(blocked).toContainText('Não existe aprovar mesmo assim')

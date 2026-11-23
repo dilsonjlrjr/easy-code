@@ -9,21 +9,17 @@ export const PRIORITIES: readonly Priority[] = ['must', 'should', 'could', 'wont
 
 export interface TraceNode {
   id: string
-  /** Artifact type or `commit`. */
+  /** Artifact type, `commit` or `test`. */
   type: string
   title?: string
   state?: string
   exists: boolean
 }
 
-/**
- * openapi `Traceability.edges[]`. The contract names the ends `from_state` / `to_state` (ESP-24 says
- * `de` / `para`: the node ids); kept as the contract says and reported as a naming slip.
- */
+/** openapi `Traceability.edges[]`: node ids and the E-nn edge of rastreabilidade.md section 1. */
 export interface TraceEdge {
-  from_state: string
-  to_state: string
-  /** RAS-nn rule of specs/dominio/rastreabilidade.md. */
+  from: string
+  to: string
   rule: string
 }
 
