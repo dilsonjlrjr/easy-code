@@ -1,5 +1,6 @@
 import { apiClient } from '@/shared/api/apiClient'
 import type { ModelPair, Page, UserRef } from '@/shared/api/contract'
+import type { WaveSummary } from '@/features/projects/api/projectsApi'
 import type { HttpClient } from '@/shared/api/httpClient'
 
 /** openapi `ExecutorAgent`: the seven configurable agents (the orchestrator is not one). */
@@ -64,10 +65,17 @@ export interface ProjectAgent {
 
 export type SkillVersionStatus = 'imported' | 'scanning' | 'unblocked' | 'blocked' | 'deactivated'
 
+export type SkillBlockReason = 'format' | 'size' | 'malicious_content'
+
 export interface SkillVersion {
   version: number
   published_at: string
   status: SkillVersionStatus
+  submission_origin?: 'upload' | 'git_repository'
+  block_reasons?: SkillBlockReason[]
+  unblocked_by?: UserRef
+  deactivated_by?: UserRef
+  deactivated_at?: string | null
 }
 
 /** openapi `Skill`: metadata and description only; the content is untrusted data (PROJETO 8.3). */
@@ -99,6 +107,10 @@ export interface AgentsApi {
     configuration: NewAgentConfiguration,
     ifMatch: string,
   ) => Promise<{ configuration: AgentConfiguration; etag: string }>
+  /** US-25 CA-4: the configuration versions, newest first. */
+  listConfigurationVersions: (projectId: string, agent: string) => Promise<AgentConfiguration[]>
+  /** US-25 CA-4: the agent's waves, each with the configuration version it used (one page). */
+  listAgentWaves: (projectId: string, agent: string, cursor?: string) => Promise<Page<WaveSummary>>
   listSkills: (filter?: { agent?: string; origin?: Skill['origin'] }) => Promise<Skill[]>
   getSkill: (skillId: string) => Promise<Skill>
 }
@@ -129,6 +141,16 @@ export function createAgentsApi(client: HttpClient = apiClient): AgentsApi {
       )
       return { configuration: response.data, etag: response.headers.get('ETag') ?? ifMatch }
     },
+    listConfigurationVersions: async (projectId, agent) =>
+      (
+        await client.get<{ items: AgentConfiguration[] }>(
+          `${agentPath(projectId, agent)}/configuration/versions`,
+        )
+      ).items,
+    listAgentWaves: (projectId, agent, cursor) =>
+      client.get<Page<WaveSummary>>(`/projects/${encodeURIComponent(projectId)}/waves`, {
+        query: { agent, cursor, limit: 20 },
+      }),
     listSkills: async (filter = {}) => {
       const items: Skill[] = []
       let cursor: string | undefined

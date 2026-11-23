@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { useRoute, useRouter } from 'vue-router'
+import { onBeforeRouteLeave, onBeforeRouteUpdate, useRoute, useRouter } from 'vue-router'
 import { ROUTE_NAMES } from '@/app/router/routeNames'
 import { isApiError } from '@/shared/api/problemDetails'
 import { useAnnouncer } from '@/shared/composables/useAnnouncer'
@@ -21,6 +21,8 @@ import {
   type ProjectAgent,
   type Skill,
 } from '../api/agentsApi'
+import AgentConfigurationEditor from '../components/AgentConfigurationEditor.vue'
+import AgentHistory from '../components/AgentHistory.vue'
 import SkillDetailDialog from '../components/SkillDetailDialog.vue'
 import SkillPickerDialog from '../components/SkillPickerDialog.vue'
 import {
@@ -33,8 +35,8 @@ import {
 /**
  * ESP-22 "Agentes e skills" for one project: the seven agents with their configuration, and the
  * skill association by the project lead (US-43). Members and approvers read only (CA-22-9).
- * Changing a skill saves a new configuration version at once (ER-22-1); the instructions adjustment
- * and the tools are kept as they are (their edition is US-25, not in this milestone).
+ * Changing a skill saves a new configuration version at once (ER-22-1). The lead also edits the
+ * instructions adjustment and the tools in an edit mode with a summary before saving (US-25).
  */
 const i18n = useI18n()
 const { t } = i18n
@@ -56,6 +58,10 @@ const detailSkill = ref<string>()
 const acceptOpen = ref(false)
 const acceptTarget = ref<PinnedSkill>()
 const detailHeading = ref<HTMLElement>()
+/** US-25: the edit mode, whether it has unsaved changes, and a counter that reloads the history. */
+const editing = ref(false)
+const editorDirty = ref(false)
+const historyRevision = ref(0)
 
 const loader = useLoader(async () => {
   const [loadedProject, loadedAgents] = await Promise.all([
@@ -153,6 +159,27 @@ function toolLines(tools: AgentTools | undefined): Array<{ key: string; value: s
   return lines
 }
 
+/** ESP-22 6 "Edição em curso": leaving with unsaved changes asks first. */
+function confirmLeave(): boolean {
+  if (!editing.value || !editorDirty.value) return true
+  return window.confirm(t('agentsPage.edit.leaveConfirm'))
+}
+
+onBeforeRouteLeave(() => confirmLeave())
+onBeforeRouteUpdate((to, from) => {
+  if (to.params.agent === from.params.agent) return true
+  if (!confirmLeave()) return false
+  editing.value = false
+  editorDirty.value = false
+  return true
+})
+
+async function saveEdition(next: NewAgentConfiguration): Promise<void> {
+  await save(next)
+  editing.value = false
+  editorDirty.value = false
+}
+
 async function save(next: NewAgentConfiguration): Promise<void> {
   if (!selected.value) return
   saving.value = true
@@ -171,6 +198,7 @@ async function save(next: NewAgentConfiguration): Promise<void> {
     ])
     selected.value = reloaded
     agents.value = list
+    historyRevision.value += 1
   } catch (error) {
     saveFailure.value = error
     throw error
@@ -317,6 +345,27 @@ async function reload(): Promise<void> {
                 >
               </dd>
             </dl>
+            <v-btn
+              v-if="isLead && !editing"
+              color="primary"
+              variant="tonal"
+              class="mb-6"
+              :disabled="saving"
+              data-testid="edit-agent"
+              @click="editing = true"
+            >
+              {{ $t('agentsPage.edit.action') }}
+            </v-btn>
+            <section v-if="editing" aria-labelledby="edit-heading" class="mb-6">
+              <h3 id="edit-heading" class="text-h6 mb-2">{{ $t('agentsPage.edit.title') }}</h3>
+              <AgentConfigurationEditor
+                :key="configuration.version"
+                :agent="agent"
+                :submit="saveEdition"
+                @cancel="editing = false"
+                @dirty="editorDirty = $event"
+              />
+            </section>
 
             <section aria-labelledby="skills-heading" class="mb-6">
               <div class="d-flex flex-wrap align-center ga-2 mb-2">
@@ -426,6 +475,12 @@ async function reload(): Promise<void> {
             </section>
 
             <section aria-labelledby="tools-heading" class="mb-6">
+              <template v-if="configuration.adjustment_instructions">
+                <h3 class="text-h6 mb-2">{{ $t('agentsPage.edit.instructionsTitle') }}</h3>
+                <p class="adjustment-text text-body-2 mb-4" data-testid="agent-adjustment-text">
+                  {{ configuration.adjustment_instructions }}
+                </p>
+              </template>
               <h3 id="tools-heading" class="text-h6 mb-2">{{ $t('agentsPage.tools.title') }}</h3>
               <p v-if="toolLines(configuration.tools).length === 0" class="text-body-2">
                 {{ $t('agentsPage.tools.none') }}
@@ -465,6 +520,12 @@ async function reload(): Promise<void> {
                 </li>
               </ul>
             </section>
+
+            <AgentHistory
+              :project-id="projectId"
+              :agent="agent.agent"
+              :revision="historyRevision"
+            />
           </template>
         </section>
       </div>
@@ -535,6 +596,10 @@ async function reload(): Promise<void> {
   padding: 0.5rem 0.75rem;
   text-transform: none;
   white-space: normal;
+}
+
+.adjustment-text {
+  white-space: pre-wrap;
 }
 
 .agent-button--selected {
