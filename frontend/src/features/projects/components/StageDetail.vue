@@ -62,6 +62,10 @@ const blockedByReopening = computed(
       (item) => item.state === 'reopened' && stage.value?.depends_on.includes(item.id),
     ),
 )
+/** US-07 CA-3: only the Validation and Implementation gates have a mode to choose. */
+const hasModeChoice = computed(() =>
+  ['gate.validation', 'gate.implementation'].includes(stage.value?.gate ?? `gate.${stageId.value}`),
+)
 const isApprover = computed(() => store.project?.my_roles.includes('approver') ?? false)
 /** US-40: the budget balance, to say beforehand when the estimate exceeds it. */
 const balance = computed(() =>
@@ -126,6 +130,22 @@ watch([stageId, () => store.revision], () => void loader.run(), { immediate: tru
           {{ $t('projects.stage.openGate', { round: stage.current_round }) }}
         </router-link>
       </div>
+      <!-- US-07 RN-4 / CA-8: the stage shows the gate mode in text and leads to the configuration. -->
+      <p v-if="stage.approval?.mode" class="text-body-2 mb-4" data-testid="stage-approval-mode">
+        {{
+          $t('projects.gateModes.stageMode', {
+            mode: $t(`projects.gateModes.modes.${stage.approval.mode}`),
+          })
+        }}
+        <router-link
+          v-if="hasModeChoice"
+          :to="{ name: ROUTE_NAMES.projectConfiguration, params: { projectId } }"
+          class="ml-1"
+          data-testid="stage-approval-configuration"
+        >
+          {{ $t('projects.gateModes.toConfiguration') }}
+        </router-link>
+      </p>
 
       <!-- US-34 / ESP-08 6: the finding that reopened the stage, in link. -->
       <p

@@ -3,6 +3,7 @@ import { mdiContentCopy } from '@mdi/js'
 import { computed } from 'vue'
 import { problemMessageKey } from './problemMessages'
 import { isApiError } from '@/shared/api/problemDetails'
+import { useFormat } from '@/shared/format/useFormat'
 
 const props = defineProps<{
   error: unknown
@@ -14,6 +15,25 @@ defineEmits<{ retry: [] }>()
 const problem = computed(() => (isApiError(props.error) ? props.error.problem : undefined))
 const messageKey = computed(() => problemMessageKey(props.error))
 const traceId = computed(() => problem.value?.trace_id)
+const format = useFormat()
+/** Named extensions some refusals carry (openapi `Problem`): limit, tool, skill, current version. */
+const limitBytes = computed(() =>
+  typeof problem.value?.limit_bytes === 'number' ? problem.value.limit_bytes : undefined,
+)
+const extension = (field: string) =>
+  computed(() => {
+    const value = problem.value?.[field]
+    return typeof value === 'string' || typeof value === 'number' ? String(value) : undefined
+  })
+const tool = extension('tool')
+const skill = extension('skill')
+const currentVersion = extension('current_version')
+/** US-44 CA-2: the package refusal says what is missing; that reason is the api's `detail`. */
+const packageReason = computed(() =>
+  isApiError(props.error) && props.error.slug === 'invalid-skill-package'
+    ? problem.value?.detail
+    : undefined,
+)
 const findingIds = computed(() => {
   const findings = problem.value?.findings
   return Array.isArray(findings) ? findings.filter((id) => typeof id === 'string') : []
@@ -34,6 +54,19 @@ async function copyTraceId(): Promise<void> {
         <span class="monospace">{{ item.path || '/' }}</span> · {{ item.message }}
       </li>
     </ul>
+    <p v-if="limitBytes" class="mt-1" data-testid="problem-limit">
+      {{ $t('problems.limit', { limit: format.bytes(limitBytes) }) }}
+    </p>
+    <p v-if="tool" class="mt-1" data-testid="problem-tool">
+      {{ $t('problems.tool', { tool }) }}
+    </p>
+    <p v-if="skill" class="mt-1" data-testid="problem-skill">
+      {{ $t('problems.skill', { skill }) }}
+    </p>
+    <p v-if="currentVersion" class="mt-1" data-testid="problem-current-version">
+      {{ $t('problems.currentVersion', { version: currentVersion }) }}
+    </p>
+    <p v-if="packageReason" class="mt-1" data-testid="problem-detail">{{ packageReason }}</p>
     <!-- US-08 CA-2, US-52 CA-3: the findings behind a refusal (`blocking-finding`), by id. -->
     <p v-if="findingIds.length" class="mt-1" data-testid="problem-findings">
       {{ $t('problems.findings', { findings: findingIds.join(', ') }) }}

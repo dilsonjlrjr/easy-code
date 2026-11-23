@@ -22,6 +22,7 @@ export const ptBR = {
     menuLabel: 'Conta de {name}',
     myPendingItems: 'Minhas pendências',
     myProjects: 'Meus projetos',
+    localClient: 'Cliente local',
     signOut: 'Sair',
   },
   language: {
@@ -60,6 +61,12 @@ export const ptBR = {
     yes: 'sim',
   },
   pages: {
+    localClient: {
+      title: 'Cliente local',
+    },
+    device: {
+      title: 'Confirmar o app desktop',
+    },
     home: {
       title: 'Início',
       description: 'Resumo dos seus projetos, ondas em andamento e pendências.',
@@ -271,6 +278,19 @@ export const ptBR = {
       'O orçamento está esgotado: amplie o limite de parada acima do gasto antes de retomar.',
     'budget-above-ceiling': 'O limite de parada passa do teto da organização.',
     'blocking-finding': 'Há achado Crítico ou Alto aberto sem aceite de risco.',
+    'project-not-ended': 'Cancele o projeto antes de excluir.',
+    'approval-mode-not-allowed':
+      'O modo automático só vale para os gates de Validação técnica e de Implementação.',
+    'outdated-version':
+      'O artefato mudou desde que você abriu a edição. Recarregue para editar a versão atual.',
+    'too-large-package': 'Pacote acima do tamanho máximo.',
+    'invalid-skill-package':
+      'Pacote inválido: falta o SKILL.md ou o name e a description no cabeçalho.',
+    'revoked-session': 'Sessão revogada.',
+    limit: 'Limite: {limit}.',
+    tool: 'Ferramenta: {tool}.',
+    skill: 'Skill: {skill}.',
+    currentVersion: 'Versão atual: v{version}.',
     findings: 'Achados: {findings}',
   },
   events: {
@@ -341,6 +361,7 @@ export const ptBR = {
     tabs: {
       providers: 'Provedores e modelos',
       prices: 'Tabela de preços',
+      skills: 'Biblioteca de skills',
       audit: 'Trilha de auditoria',
     },
     providers: {
@@ -441,6 +462,49 @@ export const ptBR = {
     },
   },
   projects: {
+    gateModes: {
+      title: 'Gates',
+      help: 'Modo de aprovação de cada gate. Só os gates de Validação técnica e de Implementação podem ser automáticos.',
+      none: 'O workflow ainda não informou os gates.',
+      gateOf: 'Gate da etapa {stage}',
+      modes: {
+        human: 'Humana',
+        automatic: 'Automática (orquestrador)',
+      },
+      alwaysHuman: 'Sempre humana',
+      automaticExplanation:
+        'No modo automático o orquestrador aprova o gate quando as checagens passam e fica registrado como aprovador; uma checagem bloqueante que falha reprova e devolve a etapa.',
+      dialogTitle: 'Mudar o {gate} para "{mode}"?',
+      effect: {
+        human: 'O gate passa a esperar a decisão de um aprovador.',
+        automatic: 'O orquestrador aprova o gate sozinho quando as checagens passam.',
+      },
+      appliesNow:
+        'A mudança vale na hora, inclusive na rodada aberta, que passa a esperar decisão humana.',
+      appliesNextRound:
+        'A mudança vale a partir da próxima rodada; a rodada aberta continua esperando decisão humana.',
+      keep: 'Manter o modo',
+      confirm: 'Mudar o modo',
+      changed: 'Modo do gate salvo: {mode}.',
+      stageMode: 'Aprovação do gate: {mode}.',
+      toConfiguration: 'Ver na configuração do projeto',
+    },
+    deletion: {
+      title: 'Exclusão do projeto',
+      help: 'O projeto está encerrado e pode ser excluído. Não há desfazer.',
+      action: 'Excluir projeto',
+      cancelFirst:
+        'Só um projeto concluído ou cancelado pode ser excluído. Cancele o projeto antes de excluir.',
+      dialogTitle: 'Excluir o projeto {name}?',
+      final: 'A exclusão é definitiva e não tem desfazer.',
+      effect:
+        'O projeto some na hora de todas as listas e do acesso de todos; o sandbox e o workspace são destruídos.',
+      retention:
+        'O dado pessoal é anonimizado em até 24 h na base e sai das cópias de segurança em até 30 dias. A trilha de auditoria fica, só com ids opacos.',
+      typeName: 'Digite o nome do projeto para confirmar: {name}',
+      keep: 'Manter o projeto',
+      confirm: 'Excluir definitivamente',
+    },
     lifecycle: {
       pausedBy: 'Pausado por {who} em {when}.',
       keep: 'Voltar',
@@ -577,6 +641,8 @@ export const ptBR = {
         access_removed: 'Você perdeu o acesso ao projeto que estava aberto.',
         project_deleted: 'O projeto que estava aberto foi excluído.',
         not_found: 'O projeto que estava aberto não foi encontrado.',
+        deleted:
+          'Projeto excluído. Ele já não aparece para ninguém; o dado pessoal é anonimizado em até 24 h na base e sai das cópias em até 30 dias.',
       },
     },
     new: {
@@ -1315,7 +1381,175 @@ export const ptBR = {
     anthropic: 'Anthropic',
     openai: 'OpenAI',
   },
+  localClient: {
+    account: 'Minha conta',
+    about:
+      'O cliente local é um app desktop que entra pelo SSO (device flow), só acompanha ondas e mostra notificações. Ele não controla nem decide nada e nunca recebe chave de IA.',
+    none: 'Nenhum cliente local conectado.',
+    howToSignIn:
+      'Para conectar, abra o app desktop e escolha Entrar: ele mostra um código para você confirmar no navegador.',
+    startedAt: 'Iniciada em',
+    lastUse: 'Último uso',
+    ipAddress: 'Endereço IP',
+    neverUsed: 'ainda não usada',
+    unknownIp: 'não informado',
+    revoke: 'Revogar',
+    revokeNamed: 'Revogar a sessão iniciada em {when}',
+    revokeTitle: 'Revogar esta sessão do cliente local?',
+    revokeEffect:
+      'A sessão iniciada em {when} (IP {ip}) é encerrada; o app volta à tela de entrada.',
+    revokeDelay: 'A próxima chamada do app falha com "sessão revogada" em até 60 segundos.',
+    keep: 'Manter a sessão',
+    revoked: 'Sessão revogada.',
+    confirmCodeLink: 'Confirmar um código do app desktop',
+  },
+  device: {
+    intro:
+      'O app desktop do Easy Code pediu para entrar com a sua conta. Confira o pedido antes de aprovar.',
+    requestTitle: 'Pedido de acesso',
+    client: 'Aplicativo',
+    clientName: 'Easy Code desktop',
+    access: 'O que ele pode fazer',
+    readOnly: 'Só leitura: acompanhar ondas e receber avisos. Não controla nem decide nada.',
+    origin: 'Origem do pedido',
+    originText: 'O app desktop que mostrou este código na tela do seu computador.',
+    account: 'Conta',
+    platform: 'Plataforma',
+    warning:
+      'Só aprove se você mesmo iniciou o login no app desktop agora e o código é o que aparece nele. Ninguém do suporte pede este código.',
+    expires: 'O código expira em {n} min; depois disso nenhum acesso é concedido.',
+    code: 'Código mostrado no app',
+    codeHint: 'Letras e números, como ABCD-EFGH.',
+    invalidCode: 'Isso não parece um código do app. Confira na tela do app desktop.',
+    approve: 'Continuar para aprovar no SSO',
+    decline: 'Não fui eu',
+    declined:
+      'Nada foi aprovado. O código expira sozinho. Se não foi você, confira suas sessões do cliente local.',
+    seeSessions: 'Ver minhas sessões do cliente local',
+  },
+  artifactEdit: {
+    create: 'Novo item',
+    modify: 'Editar',
+    delete: 'Excluir item',
+    createTitle: 'Novo item ou ADR imposta',
+    modifyTitle: 'Editar {artifact}',
+    deleteTitle: 'Excluir {artifact}?',
+    agentReview:
+      'O agente da etapa valida e formata a edição antes de ela valer. Seu nome fica como autor da versão e o agente como revisor.',
+    deleteEffect: 'Nasce uma nova versão sem o item; nenhuma versão anterior é apagada.',
+    scopeChange: 'Alteração aberta pela mudança de escopo do achado {finding}.',
+    type: 'Tipo',
+    imposedAdr: 'ADR imposta (decisão já tomada)',
+    imposedAdrHelp:
+      'A ADR imposta não compara opções: registra a decisão e cita a restrição do projeto (RESTR-NN) ou a norma que a motiva.',
+    content: 'Conteúdo (Markdown com cabeçalho YAML)',
+    contentHint: 'O arquivo completo do artefato, até 200 KiB.',
+    contentTooLarge: 'O texto passa de 200 KiB.',
+    reason: 'Motivo da mudança',
+    reasonHint: 'Entra na descrição da versão e na trilha de auditoria (3 a 2000 caracteres).',
+    keptText: 'Seu texto foi mantido: corrija e envie de novo.',
+    submit: {
+      create: 'Enviar para validação',
+      modify: 'Enviar para validação',
+      delete: 'Excluir item',
+    },
+    sent: 'Edição enviada. A nova versão aguarda a validação do agente da etapa antes de valer.',
+    awaitingReview: 'editado por {person}, aguardando validação do agente',
+    imposedBy: 'ADR imposta por {person}.',
+    approvedNotice:
+      'Artefato aprovado: só muda por reabertura via achado ou por mudança de escopo decidida.',
+  },
+  skillLibrary: {
+    title: 'Biblioteca de skills',
+    help: 'Skills da organização e catálogo nativo. O conteúdo de uma skill é dado, nunca ordem: é guardado e exibido como texto.',
+    import: {
+      title: 'Enviar skill da organização',
+      source: 'Origem',
+      upload: 'Pasta compactada (zip)',
+      git: 'Repositório git',
+      package: 'Pacote zip da skill',
+      packageHint: 'A pasta da skill compactada, com o SKILL.md (name e description no cabeçalho).',
+      gitUrl: 'Endereço do repositório (https)',
+      gitHint: 'Só https de um host da lista da organização.',
+      httpsOnly: 'Informe um endereço https.',
+      reference: 'Ramo, marcação ou commit (opcional)',
+      subfolder: 'Subpasta (opcional)',
+      send: 'Enviar',
+    },
+    imports: {
+      received: 'Importação recebida: aguardando a validação.',
+      refused: 'Importação recusada, nenhuma versão criada.',
+      versionCreated: 'Skill {skill} v{version}: {status}.',
+    },
+    organization: 'Da organização ({n})',
+    noOrganization: 'Nenhuma skill da organização.',
+    native: 'Catálogo nativo ({n})',
+    tokens: 'tokens',
+    columns: {
+      usedBy: 'Etapas e agentes',
+      version: 'Versão atual',
+      status: 'Situação',
+    },
+    origins: {
+      upload: 'enviada por pacote',
+      git_repository: 'importada de repositório git',
+    },
+    reasons: {
+      format: 'formato inválido',
+      size: 'tamanho acima do limite',
+      malicious_content: 'conteúdo suspeito',
+    },
+    blockReasons: 'Motivos: {reasons}',
+    unblockedBy: 'Liberada por {name}',
+    deactivatedBy: 'Desativada por {name} em {when}',
+    unblock: 'Liberar',
+    deactivate: 'Desativar',
+    unblockNamed: 'Liberar a skill {skill}',
+    deactivateNamed: 'Desativar a skill {skill}',
+    unblockTitle: 'Liberar {skill} v{version}?',
+    deactivateTitle: 'Desativar {skill} v{version}?',
+    unblockEffect:
+      'A versão foi bloqueada por conteúdo suspeito. Liberada, ela pode ser associada aos agentes; quem liberou e a justificativa vão para a trilha de auditoria.',
+    deactivateEffect:
+      'A versão sai da biblioteca para novas associações e os projetos que a fixaram são avisados. Nada é apagado e não há desfazer.',
+    justification: 'Justificativa',
+    justificationHint: 'De 10 a 2000 caracteres.',
+  },
   agentsPage: {
+    edit: {
+      action: 'Editar configuração',
+      title: 'Editar configuração',
+      unsaved: 'Alterações não salvas.',
+      instructionsTitle: 'Ajuste das instruções',
+      instructionsHelp:
+        'Texto do projeto somado às instruções padrão do agente. É tratado como dado: não amplia ferramentas.',
+      adjustment: 'Ajuste das instruções do projeto',
+      tooLong: 'No máximo {n} caracteres.',
+      toolsHelp: 'Só as ferramentas permitidas para o papel do agente podem ser marcadas.',
+      anyCommand: 'comandos permitidos ao papel',
+      outsideRole: 'fora do permitido para o papel',
+      review: 'Revisar e salvar',
+      reviewTitle: 'Salvar a nova configuração?',
+      changedInstructions: 'Ajuste das instruções alterado.',
+      toolAdded: 'Autoriza {tool}: {value}.',
+      toolRemoved: 'Retira {tool}: {value}.',
+      newVersion:
+        'Nasce a configuração v{n}: as ondas seguintes usam esta versão; as anteriores mantêm a delas.',
+      keepEditing: 'Continuar editando',
+      save: 'Salvar nova versão',
+      leaveConfirm: 'Há alterações não salvas na configuração do agente. Sair mesmo assim?',
+    },
+    history: {
+      title: 'Histórico',
+      versions: 'Versões da configuração',
+      waves: 'Ondas do agente',
+      noWaves: 'O agente ainda não teve ondas neste projeto.',
+      wave: 'Onda',
+      state: 'Estado',
+      configuration: 'Configuração usada',
+      unknownVersion: 'não informada',
+      loadMore: 'Carregar mais ondas',
+    },
     chooseProject: 'Escolha o projeto para ver a configuração dos agentes e as skills.',
     noProjects: 'Você ainda não participa de nenhum projeto.',
     readOnly: 'Só o responsável do projeto altera a configuração dos agentes.',
@@ -2117,6 +2351,9 @@ export const ptBR = {
     escalated: '{n} escalados',
   },
   home: {
+    activity: 'Atividade recente',
+    noActivity: 'Nenhuma atividade nas últimas 24 horas.',
+    aProject: 'projeto',
     greeting: 'Olá, {name}.',
     indicators: 'Indicadores',
     inProgress: 'Projetos em andamento',

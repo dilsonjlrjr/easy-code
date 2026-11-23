@@ -180,6 +180,12 @@ export class FakeApi {
     { id: 'ana', name: 'Ana Souza' },
     { id: 'bruno', name: 'Bruno Lima' },
   ]
+  /** `LocalClientSession` items of the signed-in person (US-45 CA-5). */
+  localClientSessions: Json[] = []
+  /** Skill imports by id (US-44): the answer of the next getSkillImport. */
+  skillImports: Record<string, Json> = {}
+  /** Transport limit of a skill package (413 `too-large-package`, CA-3). */
+  skillPackageLimit = 5 * 1024 * 1024
   /** Requests seen, for assertions (method, path, headers, body). */
   readonly requests: Array<{
     method: string
@@ -430,6 +436,27 @@ export class FakeApi {
         },
       }
     }
+    // US-45: the desktop app's device flow parameters and the person's own sessions.
+    if (first === 'session' && second === 'local-client') {
+      return {
+        status: 200,
+        body: {
+          issuer: 'https://sso.example.test/realms/easycode',
+          client_id: 'easycode-desktop',
+          audience: 'easycode-api',
+          scopes: ['openid', 'easycode-read'],
+          code_validity_s: 600,
+        },
+      }
+    }
+    if (first === 'me' && second === 'local-client-sessions') {
+      if (!third) return { status: 200, body: { items: this.localClientSessions } }
+      if (method !== 'DELETE') return { status: 404, body: problem('not-found', 404) }
+      const exists = this.localClientSessions.some((item) => item.id === third)
+      if (!exists) return { status: 404, body: problem('not-found', 404) }
+      this.localClientSessions = this.localClientSessions.filter((item) => item.id !== third)
+      return { status: 204 }
+    }
     if (first === 'session' && second === 'logout') {
       this.signedIn = false
       return { status: 204 }
@@ -555,6 +582,10 @@ export class FakeApi {
       }
     }
 
+    // Skill import and release (US-44).
+    if (first === 'skills' && second === 'imports') return this.skillImport(method, third, body)
+    if (first === 'skills' && second && third === 'versions' && fourth && fifth)
+      return this.skillVersionAction(second, Number(fourth), fifth, input)
     // Skill library (US-43 CA-1).
     if (first === 'skills' && !second) {
       const agent = url.searchParams.get('agent')
@@ -636,6 +667,18 @@ export class FakeApi {
             change.constraints as Json,
           )
         }
+        if (change.gate_approval) {
+          // US-07 CA-3: only a gate that allows both modes takes `automatic`.
+          const current = state.configuration.gate_approval as Record<string, Json>
+          const next: Record<string, Json> = { ...current }
+          for (const [gate, mode] of Object.entries(change.gate_approval as Json)) {
+            const entry = current[gate] ?? { mode: 'human', allowed: ['human'] }
+            if (!(entry.allowed as string[]).includes(String(mode)))
+              return { status: 409, body: problem('approval-mode-not-allowed', 409) }
+            next[gate] = { ...entry, mode }
+          }
+          change.gate_approval = next
+        }
         const changes = (change.pair_by_stage as Json | undefined) ?? {}
         const current = (state.configuration.pair_by_stage as Json | undefined) ?? {}
         const pairByStage = Object.fromEntries(
@@ -667,6 +710,14 @@ export class FakeApi {
     }
     if (third === 'gates' && fourth && fifth === 'rounds')
       return this.gateRounds(state, method, fourth, sixth, seventh, input, headers)
+    if (third === 'deletion' && method === 'POST') return this.deleteProject(state, input)
+    if (third === 'artifact-edits' && method === 'POST') return this.editArtifact(state, input)
+    if (third === 'agents' && fifth === 'configuration' && sixth === 'versions') {
+      const agent = state.agents.find((item) => item.agent === fourth)
+      if (!agent) return { status: 404, body: problem('not-found', 404) }
+      const history = (agent.history as Json[] | undefined) ?? []
+      return { status: 200, body: { items: [agent.configuration, ...history] } }
+    }
     if (third === 'agents') return this.agents(state, method, fourth, fifth, input, headers)
     if (third === 'members') return this.members(state, method, fourth, input)
     if (third === 'start') return this.startWorkflow(state)
@@ -724,8 +775,12 @@ export class FakeApi {
     if (third === 'waves' && !fourth) {
       const stage = url.searchParams.get('stage')
       const task = url.searchParams.get('task')
+      const agent = url.searchParams.get('agent')
       const items = state.waves.filter(
-        (wave) => (!stage || wave.stage === stage) && (!task || wave.task === task),
+        (wave) =>
+          (!stage || wave.stage === stage) &&
+          (!task || wave.task === task) &&
+          (!agent || wave.agent === agent),
       )
       return { status: 200, body: { items, next_cursor: null } }
     }
@@ -797,6 +852,17 @@ export class FakeApi {
           ? { status: 200, body: comparison }
           : { status: 404, body: problem('not-found', 404) }
       }
+      if (
+        fifth === 'versions' &&
+        sixth &&
+        (headers.accept as string | undefined)?.includes('text/markdown')
+      ) {
+        const version = artifact.byVersion[Number(sixth)]
+        if (!version) return { status: 404, body: problem('not-found', 404) }
+        return {
+          text: `---\nid: ${String(version.id)}\ntitulo: ${String(version.title)}\n---\n${typeof version.body === 'string' ? version.body : ''}`,
+        }
+      }
       if (fifth === 'versions' && sixth) {
         const version = artifact.byVersion[Number(sixth)]
         return version
@@ -853,6 +919,20 @@ export class FakeApi {
     if (!headers['if-match']) return { status: 428, body: problem('required-precondition', 428) }
     if (headers['if-match'] !== etag())
       return { status: 412, body: problem('failed-precondition', 412) }
+    // US-25 CA-3: a tool outside the role → 409 `tool-not-allowed` with its name. The api's rule is
+    // `role_limit` when seeded (a role narrowed after the screen loaded), else `allowed_by_role`.
+    const limit = (agent.role_limit ?? agent.allowed_by_role) as Json | undefined
+    if (limit && input.tools) {
+      const tools = input.tools as Json
+      for (const tool of ['read_file', 'write_file', 'git', 'scanners']) {
+        const outside = ((tools[tool] as string[] | undefined) ?? []).find(
+          (value) => !((limit[tool] as string[] | undefined) ?? []).includes(value),
+        )
+        if (outside) return { status: 409, body: problem('tool-not-allowed', 409, { tool }) }
+      }
+      if (tools.browser && !limit.browser)
+        return { status: 409, body: problem('tool-not-allowed', 409, { tool: 'browser' }) }
+    }
     const chosen = (input.skills as Array<{ skill: string; version: number }> | undefined) ?? []
     const pinned: Json[] = []
     for (const item of chosen) {
@@ -871,6 +951,7 @@ export class FakeApi {
       })
     }
     const previous = agent.configuration as Json
+    agent.history = [previous, ...((agent.history as Json[] | undefined) ?? [])]
     const configuration = {
       ...previous,
       version: Number(previous.version) + 1,
@@ -907,6 +988,233 @@ export class FakeApi {
     const summary = state.waves.find((item) => item.id === wave.id)
     if (summary) summary.state = 'canceled'
     const command = this.command('cancel', 'wave', String(wave.id), 'applied')
+    return { status: 202, body: { ...command, state: 'pending' } }
+  }
+
+  /**
+   * deleteProject (US-04): only the lead; only `completed` or `canceled` (CA-2, 409
+   * `project-not-ended`); the typed name must match (400 `confirmation-required`). Accepted (202),
+   * the project leaves every list at once (CA-1).
+   */
+  private deleteProject(state: ProjectState, input: Json): { status: number; body?: unknown } {
+    const roles = (state.project.my_roles as string[] | undefined) ?? []
+    if (!roles.includes('lead')) return { status: 403, body: problem('forbidden', 403) }
+    if (!['completed', 'canceled'].includes(String(state.project.state)))
+      return { status: 409, body: problem('project-not-ended', 409) }
+    if (input.name_confirmation !== state.project.name)
+      return { status: 400, body: problem('confirmation-required', 400) }
+    this.projects = Object.fromEntries(
+      Object.entries(this.projects).filter(([id]) => id !== state.project.id),
+    )
+    // CA-3: the organization trail keeps who, when and the project id, no content.
+    this.organizationAudit.push({
+      id: `00000000-0000-4000-9000-${String(this.nextId++).padStart(12, '0')}`,
+      when: '2026-11-23T10:00:00-03:00',
+      actor: { type: 'human', user: { id: this.user.id, name: this.user.name } },
+      origin: 'web',
+      action: 'project.delete',
+      target: { type: 'project', id: state.project.id },
+      project: state.project.id,
+      reason: null,
+      lost_cost: null,
+    })
+    return { status: 202 }
+  }
+
+  /**
+   * importSkill and getSkillImport (US-44). The zip file name drives the outcome: `big.zip` → 413
+   * with the limit (CA-3), `missing.zip` → 400 `invalid-skill-package` (CA-2), `suspicious.zip` →
+   * a version blocked for suspicious content (CA-4), anything else → version 1 unblocked (CA-1).
+   * Accepted as `received`; the next read finds the version in its final state.
+   */
+  private skillImport(
+    method: string,
+    importId: string | undefined,
+    body: unknown,
+  ): { status: number; body?: unknown } {
+    if (!this.user.organization_roles.includes('administrator'))
+      return { status: 403, body: problem('forbidden', 403) }
+    if (method === 'GET' && importId) {
+      const found = this.skillImports[importId] as Json | undefined
+      return found ? { status: 200, body: found } : { status: 404, body: problem('not-found', 404) }
+    }
+    const json = typeof body === 'object' && body !== null ? (body as Json) : undefined
+    const raw = typeof body === 'string' ? body : ''
+    const fileName = /filename="([^"]+)"/.exec(raw)?.[1] ?? ''
+    if (fileName === 'big.zip')
+      return {
+        status: 413,
+        body: problem('too-large-package', 413, { limit_bytes: this.skillPackageLimit }),
+      }
+    if (fileName === 'missing.zip')
+      return {
+        status: 400,
+        body: problem('invalid-skill-package', 400, {
+          detail: 'O pacote não tem SKILL.md na raiz.',
+        }),
+      }
+    const skillId = json
+      ? (String(json.git_url).split('/').pop() ?? 'skill').replace(/\.git$/, '')
+      : fileName.replace(/\.zip$/, '')
+    const suspicious = skillId === 'suspicious'
+    const id = `00000000-0000-4000-a000-${String(this.nextId++).padStart(12, '0')}`
+    const origin = json ? 'git_repository' : 'upload'
+    const status = suspicious ? 'blocked' : 'unblocked'
+    const reasons = suspicious ? ['malicious_content'] : []
+    this.skills.push({
+      id: skillId,
+      name: `Skill ${skillId}`,
+      description: 'Skill enviada pela organização.',
+      origin: 'organization',
+      stages: ['data'],
+      agents: ['dba-agent'],
+      current_version: 1,
+      estimated_tokens: 500,
+      status,
+      versions: [
+        {
+          version: 1,
+          published_at: '2026-11-23T10:00:00-03:00',
+          status,
+          submission_origin: origin,
+          block_reasons: reasons,
+        },
+      ],
+    })
+    this.skillImports[id] = {
+      id,
+      state: 'version_created',
+      origin,
+      version_status: status,
+      received_at: '2026-11-23T10:00:00-03:00',
+      skill: skillId,
+      version: 1,
+      block_reasons: reasons,
+    }
+    return {
+      status: 202,
+      body: { id, state: 'received', origin, received_at: '2026-11-23T10:00:00-03:00' },
+    }
+  }
+
+  /** unblockSkill and deactivateSkill (US-44 CA-4): administrator, justification 10 to 2000. */
+  private skillVersionAction(
+    skillId: string,
+    version: number,
+    action: string,
+    input: Json,
+  ): { status: number; body?: unknown } {
+    if (!this.user.organization_roles.includes('administrator'))
+      return { status: 403, body: problem('forbidden', 403) }
+    const skill = this.skills.find((item) => item.id === skillId)
+    const entry = ((skill?.versions as Json[] | undefined) ?? []).find(
+      (item) => item.version === version,
+    )
+    if (!skill || !entry) return { status: 404, body: problem('not-found', 404) }
+    const text = typeof input.justification === 'string' ? input.justification.trim() : ''
+    if (text.length < 10) return { status: 400, body: problem('validation', 400) }
+    const reasons = (entry.block_reasons as string[] | undefined) ?? []
+    if (action === 'unblock') {
+      if (entry.status !== 'blocked' || !reasons.includes('malicious_content'))
+        return { status: 409, body: problem('state-conflict', 409) }
+      entry.status = 'unblocked'
+      entry.unblocked_by = { id: this.user.id, name: this.user.name }
+    } else if (action === 'deactivation') {
+      if (!['blocked', 'unblocked'].includes(String(entry.status)))
+        return { status: 409, body: problem('state-conflict', 409) }
+      entry.status = 'deactivated'
+      entry.deactivated_by = { id: this.user.id, name: this.user.name }
+      entry.deactivated_at = '2026-11-23T11:00:00-03:00'
+    } else return { status: 404, body: problem('not-found', 404) }
+    if (skill.current_version === version) skill.status = entry.status
+    return { status: 200, body: skill }
+  }
+
+  /**
+   * editArtifact (US-53): any project role; VISAO, US, RNF, BACKLOG or ADR; draft or in review, or
+   * approved with the scope change finding (CA-6, CA-7); `base_version` must be the current one
+   * (409 `outdated-version`). Content with `ONDA-ATIVA` is refused by the worker (an active wave of
+   * the stage, `state-conflict`). Accepted as pending; the next getCommand finds it applied and the
+   * new version waits for the agent (`reviewed_by: null`, RN-1).
+   */
+  private editArtifact(state: ProjectState, input: Json): { status: number; body?: unknown } {
+    const roles = (state.project.my_roles as string[] | undefined) ?? []
+    if (!roles.some((role) => ['member', 'approver', 'lead'].includes(role)))
+      return { status: 403, body: problem('forbidden', 403) }
+    const reason = typeof input.reason === 'string' ? input.reason.trim() : ''
+    if (reason.length < 3) return { status: 400, body: problem('validation', 400) }
+    const author = {
+      type: 'human',
+      edited_by: { id: this.user.id, name: this.user.name },
+      reviewed_by: null,
+    }
+    const content = typeof input.content === 'string' ? input.content : ''
+    const body = content.replace(/^---[\s\S]*?---\n?/, '')
+    if (input.operation === 'create') {
+      const type = String(input.type)
+      const number =
+        Object.keys(state.artifacts).filter((id) => id.startsWith(`${type}-`)).length + 1
+      const id = `${type}-${String(number).padStart(2, '0')}`
+      const created = {
+        id,
+        type,
+        title: /titulo: (.*)/.exec(content)?.[1]?.trim() || id,
+        state: 'draft',
+        version: 1,
+        stage: type === 'ADR' ? 'architecture' : 'requirements',
+        author,
+        wave: 'REQ-01',
+        header: type === 'ADR' ? { natureza: 'imposta' } : {},
+        body,
+        commit: null,
+      }
+      state.artifacts[id] = {
+        current: created,
+        versions: [{ version: 1, data: '2026-11-23', wave: 'REQ-01', author, description: reason }],
+        byVersion: { 1: created },
+      }
+    } else {
+      const artifact = state.artifacts[String(input.artifact)]
+      if (!artifact) return { status: 404, body: problem('not-found', 404) }
+      const current = artifact.current
+      const opened = current.state === 'approved' && Boolean(input.finding)
+      if (!['draft', 'in_review'].includes(String(current.state)) && !opened)
+        return { status: 409, body: problem('state-conflict', 409) }
+      if (input.base_version !== current.version)
+        return {
+          status: 409,
+          body: problem('outdated-version', 409, { current_version: current.version }),
+        }
+      if (!content.includes('ONDA-ATIVA')) {
+        const version = Number(current.version) + 1
+        const next = {
+          ...current,
+          version,
+          state: 'draft',
+          author,
+          body: input.operation === 'delete' ? '' : body,
+        }
+        artifact.current = next
+        artifact.byVersion[version] = next
+        artifact.versions.push({
+          version,
+          data: '2026-11-23',
+          wave: current.wave,
+          author,
+          description: reason,
+        })
+      }
+    }
+    const refusal = content.includes('ONDA-ATIVA')
+      ? problem('state-conflict', 409, { current_state: 'running' })
+      : undefined
+    const command = this.command(
+      'edit_artifact',
+      'artifact',
+      String(input.artifact ?? input.type),
+      refusal ? 'refused' : 'applied',
+      refusal,
+    )
     return { status: 202, body: { ...command, state: 'pending' } }
   }
 

@@ -19,6 +19,7 @@ export const en: MessageSchema = {
     menuLabel: 'Account of {name}',
     myPendingItems: 'My pending items',
     myProjects: 'My projects',
+    localClient: 'Local client',
     signOut: 'Sign out',
   },
   language: {
@@ -57,6 +58,12 @@ export const en: MessageSchema = {
     yes: 'yes',
   },
   pages: {
+    localClient: {
+      title: 'Local client',
+    },
+    device: {
+      title: 'Confirm the desktop app',
+    },
     home: {
       title: 'Home',
       description: 'Summary of your projects, running waves and pending items.',
@@ -267,6 +274,19 @@ export const en: MessageSchema = {
       'The budget is exhausted: raise the stop limit above the spend before resuming.',
     'budget-above-ceiling': "The stop limit is above the organization's ceiling.",
     'blocking-finding': 'There is an open Critical or High finding without a risk acceptance.',
+    'project-not-ended': 'Cancel the project before deleting it.',
+    'approval-mode-not-allowed':
+      'The automatic mode only applies to the Technical validation and Implementation gates.',
+    'outdated-version':
+      'The artifact changed since you opened the edit. Reload to edit the current version.',
+    'too-large-package': 'Package above the maximum size.',
+    'invalid-skill-package':
+      'Invalid package: SKILL.md, or the name and description in its header, are missing.',
+    'revoked-session': 'Session revoked.',
+    limit: 'Limit: {limit}.',
+    tool: 'Tool: {tool}.',
+    skill: 'Skill: {skill}.',
+    currentVersion: 'Current version: v{version}.',
     findings: 'Findings: {findings}',
   },
   events: {
@@ -337,6 +357,7 @@ export const en: MessageSchema = {
     tabs: {
       providers: 'Providers and models',
       prices: 'Price table',
+      skills: 'Skill library',
       audit: 'Audit trail',
     },
     providers: {
@@ -437,6 +458,49 @@ export const en: MessageSchema = {
     },
   },
   projects: {
+    gateModes: {
+      title: 'Gates',
+      help: 'Approval mode of each gate. Only the Technical validation and Implementation gates can be automatic.',
+      none: 'The workflow has not listed its gates yet.',
+      gateOf: '{stage} stage gate',
+      modes: {
+        human: 'Human',
+        automatic: 'Automatic (orchestrator)',
+      },
+      alwaysHuman: 'Always human',
+      automaticExplanation:
+        'In automatic mode the orchestrator approves the gate when the checks pass and is recorded as the approver; a blocking check that fails rejects it and returns the stage.',
+      dialogTitle: 'Change the {gate} to "{mode}"?',
+      effect: {
+        human: 'The gate will wait for an approver decision.',
+        automatic: 'The orchestrator approves the gate by itself when the checks pass.',
+      },
+      appliesNow:
+        'The change applies at once, also to the open round, which will wait for a human decision.',
+      appliesNextRound:
+        'The change applies from the next round on; the open round keeps waiting for a human decision.',
+      keep: 'Keep the mode',
+      confirm: 'Change the mode',
+      changed: 'Gate mode saved: {mode}.',
+      stageMode: 'Gate approval: {mode}.',
+      toConfiguration: 'See it in the project configuration',
+    },
+    deletion: {
+      title: 'Project deletion',
+      help: 'The project has ended and can be deleted. There is no undo.',
+      action: 'Delete project',
+      cancelFirst:
+        'Only a completed or canceled project can be deleted. Cancel the project before deleting it.',
+      dialogTitle: 'Delete the project {name}?',
+      final: 'Deletion is final and cannot be undone.',
+      effect:
+        "The project leaves every list and everyone's access at once; the sandbox and the workspace are destroyed.",
+      retention:
+        'Personal data is anonymized within 24 h in the database and leaves the backups within 30 days. The audit trail stays, with opaque ids only.',
+      typeName: 'Type the project name to confirm: {name}',
+      keep: 'Keep the project',
+      confirm: 'Delete permanently',
+    },
     lifecycle: {
       pausedBy: 'Paused by {who} on {when}.',
       keep: 'Back',
@@ -569,6 +633,8 @@ export const en: MessageSchema = {
         access_removed: 'You lost access to the project that was open.',
         project_deleted: 'The project that was open was deleted.',
         not_found: 'The project that was open was not found.',
+        deleted:
+          'Project deleted. Nobody sees it any more; personal data is anonymized within 24 h in the database and leaves the backups within 30 days.',
       },
     },
     new: {
@@ -1305,7 +1371,175 @@ export const en: MessageSchema = {
     anthropic: 'Anthropic',
     openai: 'OpenAI',
   },
+  localClient: {
+    account: 'My account',
+    about:
+      'The local client is a desktop app that signs in through the SSO (device flow), only follows waves and shows notifications. It controls and decides nothing and never receives an AI key.',
+    none: 'No local client connected.',
+    howToSignIn:
+      'To connect, open the desktop app and choose Sign in: it shows a code for you to confirm in the browser.',
+    startedAt: 'Started at',
+    lastUse: 'Last use',
+    ipAddress: 'IP address',
+    neverUsed: 'not used yet',
+    unknownIp: 'not given',
+    revoke: 'Revoke',
+    revokeNamed: 'Revoke the session started at {when}',
+    revokeTitle: 'Revoke this local client session?',
+    revokeEffect:
+      'The session started at {when} (IP {ip}) ends; the app goes back to its sign-in screen.',
+    revokeDelay: 'The app\'s next call fails with "session revoked" within 60 seconds.',
+    keep: 'Keep the session',
+    revoked: 'Session revoked.',
+    confirmCodeLink: 'Confirm a code from the desktop app',
+  },
+  device: {
+    intro:
+      'The Easy Code desktop app asked to sign in with your account. Check the request before approving.',
+    requestTitle: 'Access request',
+    client: 'Application',
+    clientName: 'Easy Code desktop',
+    access: 'What it can do',
+    readOnly: 'Read only: follow waves and receive notices. It controls and decides nothing.',
+    origin: 'Request origin',
+    originText: 'The desktop app that showed this code on your computer screen.',
+    account: 'Account',
+    platform: 'Platform',
+    warning:
+      'Only approve if you started the sign-in in the desktop app just now and the code is the one it shows. Support never asks for this code.',
+    expires: 'The code expires in {n} min; after that no access is granted.',
+    code: 'Code shown in the app',
+    codeHint: 'Letters and digits, like ABCD-EFGH.',
+    invalidCode: "This does not look like an app code. Check the desktop app's screen.",
+    approve: 'Continue to approve in the SSO',
+    decline: 'It was not me',
+    declined:
+      'Nothing was approved. The code expires by itself. If it was not you, check your local client sessions.',
+    seeSessions: 'See my local client sessions',
+  },
+  artifactEdit: {
+    create: 'New item',
+    modify: 'Edit',
+    delete: 'Delete item',
+    createTitle: 'New item or imposed ADR',
+    modifyTitle: 'Edit {artifact}',
+    deleteTitle: 'Delete {artifact}?',
+    agentReview:
+      'The stage agent validates and formats the edit before it counts. Your name stays as the author of the version and the agent as the reviewer.',
+    deleteEffect: 'A new version without the item is created; no earlier version is deleted.',
+    scopeChange: 'Change opened by the scope change of finding {finding}.',
+    type: 'Type',
+    imposedAdr: 'Imposed ADR (decision already taken)',
+    imposedAdrHelp:
+      "An imposed ADR compares no options: it records the decision and cites the project's constraint (RESTR-NN) or the norm behind it.",
+    content: 'Content (Markdown with a YAML header)',
+    contentHint: "The artifact's whole file, up to 200 KiB.",
+    contentTooLarge: 'The text is over 200 KiB.',
+    reason: 'Reason for the change',
+    reasonHint: 'Goes into the version description and the audit trail (3 to 2000 characters).',
+    keptText: 'Your text was kept: fix it and send it again.',
+    submit: {
+      create: 'Send for validation',
+      modify: 'Send for validation',
+      delete: 'Delete item',
+    },
+    sent: 'Edit sent. The new version waits for the stage agent validation before it counts.',
+    awaitingReview: 'edited by {person}, waiting for the agent validation',
+    imposedBy: 'ADR imposed by {person}.',
+    approvedNotice:
+      'Approved artifact: it only changes through a reopening by a finding or a decided scope change.',
+  },
+  skillLibrary: {
+    title: 'Skill library',
+    help: "The organization's skills and the native catalog. A skill's content is data, never an order: it is stored and shown as text.",
+    import: {
+      title: 'Send an organization skill',
+      source: 'Source',
+      upload: 'Zipped folder',
+      git: 'Git repository',
+      package: 'Skill zip package',
+      packageHint: 'The zipped skill folder, with SKILL.md (name and description in its header).',
+      gitUrl: 'Repository address (https)',
+      gitHint: "Only https from a host in the organization's list.",
+      httpsOnly: 'Give an https address.',
+      reference: 'Branch, tag or commit (optional)',
+      subfolder: 'Subfolder (optional)',
+      send: 'Send',
+    },
+    imports: {
+      received: 'Import received: waiting for validation.',
+      refused: 'Import refused, no version created.',
+      versionCreated: 'Skill {skill} v{version}: {status}.',
+    },
+    organization: 'Organization ({n})',
+    noOrganization: 'No organization skill.',
+    native: 'Native catalog ({n})',
+    tokens: 'tokens',
+    columns: {
+      usedBy: 'Stages and agents',
+      version: 'Current version',
+      status: 'Status',
+    },
+    origins: {
+      upload: 'sent as a package',
+      git_repository: 'imported from a git repository',
+    },
+    reasons: {
+      format: 'invalid format',
+      size: 'size above the limit',
+      malicious_content: 'suspicious content',
+    },
+    blockReasons: 'Reasons: {reasons}',
+    unblockedBy: 'Released by {name}',
+    deactivatedBy: 'Deactivated by {name} on {when}',
+    unblock: 'Release',
+    deactivate: 'Deactivate',
+    unblockNamed: 'Release the skill {skill}',
+    deactivateNamed: 'Deactivate the skill {skill}',
+    unblockTitle: 'Release {skill} v{version}?',
+    deactivateTitle: 'Deactivate {skill} v{version}?',
+    unblockEffect:
+      'The version was blocked for suspicious content. Released, it can be associated with agents; who released it and the justification go to the audit trail.',
+    deactivateEffect:
+      'The version leaves the library for new associations and the projects that pinned it are warned. Nothing is deleted and there is no undo.',
+    justification: 'Justification',
+    justificationHint: 'From 10 to 2000 characters.',
+  },
   agentsPage: {
+    edit: {
+      action: 'Edit configuration',
+      title: 'Edit configuration',
+      unsaved: 'Unsaved changes.',
+      instructionsTitle: 'Instructions adjustment',
+      instructionsHelp:
+        "Project text added to the agent's default instructions. It is treated as data: it does not widen tools.",
+      adjustment: 'Project instructions adjustment',
+      tooLong: 'At most {n} characters.',
+      toolsHelp: "Only the tools allowed for the agent's role can be checked.",
+      anyCommand: 'commands allowed to the role',
+      outsideRole: 'outside what the role allows',
+      review: 'Review and save',
+      reviewTitle: 'Save the new configuration?',
+      changedInstructions: 'Instructions adjustment changed.',
+      toolAdded: 'Authorizes {tool}: {value}.',
+      toolRemoved: 'Removes {tool}: {value}.',
+      newVersion:
+        'Configuration v{n} is created: the next waves use this version; the earlier ones keep theirs.',
+      keepEditing: 'Keep editing',
+      save: 'Save new version',
+      leaveConfirm: "The agent's configuration has unsaved changes. Leave anyway?",
+    },
+    history: {
+      title: 'History',
+      versions: 'Configuration versions',
+      waves: "Agent's waves",
+      noWaves: 'The agent has had no waves in this project yet.',
+      wave: 'Wave',
+      state: 'State',
+      configuration: 'Configuration used',
+      unknownVersion: 'not given',
+      loadMore: 'Load more waves',
+    },
     chooseProject: 'Choose the project to see the agent configuration and skills.',
     noProjects: 'You are not in any project yet.',
     readOnly: 'Only the project lead changes the agent configuration.',
@@ -2109,6 +2343,9 @@ export const en: MessageSchema = {
     escalated: '{n} escalated',
   },
   home: {
+    activity: 'Recent activity',
+    noActivity: 'No activity in the last 24 hours.',
+    aProject: 'project',
     greeting: 'Hello, {name}.',
     indicators: 'Indicators',
     inProgress: 'Projects in progress',

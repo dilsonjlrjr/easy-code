@@ -133,10 +133,19 @@ export interface Budget {
 
 export const DEFAULT_ALERT_PERCENTAGES: readonly number[] = [50, 80]
 
+export type GateApprovalModeValue = 'human' | 'automatic'
+
+/** openapi `GateApprovalMode` (US-07): the current mode and the modes the gate allows. */
+export interface GateApprovalMode {
+  mode: GateApprovalModeValue
+  allowed: GateApprovalModeValue[]
+  always_human?: boolean
+}
+
 export interface ProjectConfiguration {
   model_pair: ModelPair | null
   pair_by_stage?: Partial<Record<StageId, ModelPair>>
-  gate_approval: Record<string, 'human' | 'automatic'>
+  gate_approval: Record<string, GateApprovalMode>
   budget: Budget | null
   /** The organization's ceiling for the stop limit; null = no ceiling (US-39 RN-1). */
   stop_limit_ceiling?: Money | null
@@ -151,6 +160,8 @@ export interface ProjectConfigurationModification {
   artifact_language?: string
   /** Replaces the whole list and creates a new version (US-54 CA-3). */
   constraints?: NewConstraints
+  /** US-07: only `gate.validation` and `gate.implementation` take `automatic`. */
+  gate_approval?: Record<string, GateApprovalModeValue>
 }
 
 /** Configuration plus the `ETag` that its next change must send as `If-Match` (ER-00-11). */
@@ -198,6 +209,8 @@ export interface WaveSummary {
   attempt: number
   /** The T an implementation wave runs (one wave per task, PL-20); null in other stages. */
   task?: string | null
+  /** The agent configuration version the wave used (US-25 CA-4, RNF-15). */
+  agent_configuration_version?: number
   created_at: string
   started_at?: string | null
   ended_at?: string | null
@@ -261,6 +274,12 @@ export interface ProjectsApi {
   /** US-52: `record_publication` after the Release is approved; the project becomes read-only. */
   completeProject: (projectId: string, idempotencyKey: string) => Promise<Command>
   getCosts: (projectId: string) => Promise<ProjectCosts>
+  /** US-04 CA-1: only a completed or canceled project; the typed name is the confirmation (202). */
+  deleteProject: (
+    projectId: string,
+    nameConfirmation: string,
+    idempotencyKey: string,
+  ) => Promise<void>
 }
 
 function projectPath(projectId: string): string {
@@ -335,6 +354,13 @@ export function createProjectsApi(client: HttpClient = apiClient): ProjectsApi {
         headers: idempotencyHeaders(idempotencyKey),
       }),
     getCosts: (projectId) => client.get<ProjectCosts>(`${projectPath(projectId)}/costs`),
+    deleteProject: async (projectId, nameConfirmation, idempotencyKey) => {
+      await client.post(
+        `${projectPath(projectId)}/deletion`,
+        { name_confirmation: nameConfirmation },
+        { headers: idempotencyHeaders(idempotencyKey) },
+      )
+    },
     listWaves: (projectId, cursor) =>
       client.get<Page<WaveSummary>>(`${projectPath(projectId)}/waves`, {
         query: { cursor, limit: 100 },

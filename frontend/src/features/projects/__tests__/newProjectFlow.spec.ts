@@ -22,6 +22,7 @@ function fakeApi(overrides: Partial<ProjectsApi> = {}): ProjectsApi {
     cancelProject: vi.fn(),
     completeProject: vi.fn(),
     getCosts: vi.fn(),
+    deleteProject: vi.fn(),
     ...overrides,
   }
 }

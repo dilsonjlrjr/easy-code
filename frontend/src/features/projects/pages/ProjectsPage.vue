@@ -21,7 +21,7 @@ import {
   type StateFilter,
 } from '../composables/projectSituation'
 
-const STREAM_END_NOTICES = new Set(['access_removed', 'project_deleted', 'not_found'])
+const STREAM_END_NOTICES = new Set(['access_removed', 'project_deleted', 'not_found', 'deleted'])
 
 const route = useRoute()
 const router = useRouter()

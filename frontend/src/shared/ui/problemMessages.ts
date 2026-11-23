@@ -37,6 +37,12 @@ const KNOWN_SLUGS = new Set([
   'budget-exhausted',
   'budget-above-ceiling',
   'blocking-finding',
+  'project-not-ended',
+  'approval-mode-not-allowed',
+  'outdated-version',
+  'too-large-package',
+  'invalid-skill-package',
+  'revoked-session',
 ])
 
 const STATUS_FALLBACK: Record<number, string> = {

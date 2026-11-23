@@ -13,6 +13,7 @@ import {
   constraintsPayload,
   type Budget,
   type ConstraintDraft,
+  type GateApprovalModeValue,
   type ProjectConfiguration,
   type StageSummary,
 } from '../api/projectsApi'
@@ -25,6 +26,8 @@ import {
 } from '../composables/useModelOptions'
 import { currentProjectApi, useCurrentProjectStore } from '../stores/currentProjectStore'
 import ConstraintsEditor from './ConstraintsEditor.vue'
+import ProjectDeletionSection from './ProjectDeletionSection.vue'
+import ProjectGatesSection from './ProjectGatesSection.vue'
 import ProjectBudgetSection from './ProjectBudgetSection.vue'
 import StartRefusal from './StartRefusal.vue'
 
@@ -155,6 +158,25 @@ async function saveConstraints(): Promise<void> {
   if (!constraintsAreValid(constraintsForm.value)) return
   await save('constraints', { constraints: constraintsPayload(constraintsForm.value) })
   if (!failure.value && !concurrentChange.value) editingConstraints.value = false
+}
+
+/**
+ * US-07: the gate dialog shows the refusal itself, so this one throws; a concurrent change (412)
+ * reloads the configuration so the dialog's message is read against the current mode.
+ */
+async function changeGateMode(gate: string, mode: GateApprovalModeValue): Promise<void> {
+  try {
+    const result = await currentProjectApi().modifyConfiguration(
+      projectId.value,
+      { gate_approval: { [gate]: mode } },
+      etag.value,
+    )
+    apply(result.configuration, result.etag)
+    announce(t('projects.gateModes.changed', { mode: t(`projects.gateModes.modes.${mode}`) }))
+  } catch (error) {
+    if (hasProblemSlug(error, 'failed-precondition')) await loader.run()
+    throw error
+  }
 }
 
 function cancelConstraints(): void {
@@ -344,6 +366,13 @@ function stageName(stage: StageSummary): string {
         </li>
       </ul>
 
+      <ProjectGatesSection
+        :configuration="configuration"
+        :stages="stages"
+        :can-edit="canEdit"
+        :change="changeGateMode"
+      />
+
       <ProjectBudgetSection
         :configuration="configuration"
         :can-edit="canEdit"
@@ -410,6 +439,9 @@ function stageName(stage: StageSummary): string {
           </div>
         </v-form>
       </section>
+
+      <!-- US-04 / ESP-29 3.6: deleting an ended project. -->
+      <ProjectDeletionSection v-if="store.project" :project="store.project" />
     </template>
   </section>
 </template>
