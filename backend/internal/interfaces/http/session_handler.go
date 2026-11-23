@@ -12,8 +12,9 @@ import (
 )
 
 type organizationJSON struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	Currency string `json:"currency,omitempty"` // budget currency of the organization (ISO 4217)
 }
 
 type currentUserJSON struct {
@@ -96,7 +97,7 @@ func (a *api) currentUser(rc *fasthttp.RequestCtx, principal identity.Principal)
 		ID: principal.Subject, Name: principal.Name, OrganizationRoles: roles, AccessMedium: "web",
 		SessionExpiresAt: current.Session.ExpiresAt(), AuthenticatedAt: current.Session.AuthenticatedAt,
 		CSRFToken: current.Session.CSRFToken, LeadInAnyProject: current.LeadInAnyProject,
-		Organization:         organizationJSON{ID: principal.OrganizationID, Name: principal.OrganizationName},
+		Organization:         organizationJSON{ID: principal.OrganizationID, Name: principal.OrganizationName, Currency: principal.OrganizationCurrency},
 		AttachmentLimitBytes: a.deps.AttachmentLimitBytes,
 	})
 	return nil

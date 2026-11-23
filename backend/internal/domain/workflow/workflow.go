@@ -276,6 +276,9 @@ func (d Definition) order() []string {
 	return ids
 }
 
+// StageIDs returns the ids of the stages and then of the parallel activities, in workflow order.
+func (d Definition) StageIDs() []string { return d.order() }
+
 // Stage returns the stage with id.
 func (d Definition) Stage(id string) (Stage, bool) {
 	for _, stage := range d.Stages {

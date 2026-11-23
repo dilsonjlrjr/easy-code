@@ -46,6 +46,8 @@ type Dependencies struct {
 	Findings      FindingUseCases      // US-32, US-33
 	Traceability  TraceabilityUseCases // US-28
 	Pending       PendingUseCases
+	Costs         CostUseCases  // US-38, US-40
+	Audit         AuditUseCases // US-35
 	// Repository serves getRepository and the git clone (US-42).
 	Repository RepositoryUseCases
 	// Notices serves watchNotices (/me/events) together with Events.

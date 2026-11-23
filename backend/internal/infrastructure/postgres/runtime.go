@@ -67,10 +67,33 @@ SELECT w.id, w.public_id::text, w.code, pr.public_id::text, w.stage, w.agent, w.
 	c.Owner, c.Epoch = worker, c.Epoch+1
 	seconds := lease.Seconds()
 	if c.WasQueued {
+		// The estimate is recorded before the wave runs (US-40, guard of dispatch); spend + estimate above the
+		// stop limit keeps the wave queued and the executor pauses the project (stop_by_estimate).
+		var estimate string
+		var basis pricing.EstimateBasis
+		if estimate, basis, err = waveEstimate(ctx, q, c.WaveID); err != nil {
+			return nil, err
+		}
+		var exceeds bool
+		err = q.QueryRow(WithOperation(ctx, "waves.estimate_exceeds_balance"), `
+SELECT pr.budget_stop_limit IS NOT NULL AND `+spentSQL+` + $2::numeric > pr.budget_stop_limit
+  FROM easycode.waves w JOIN easycode.projects pr ON pr.id = w.project_id WHERE w.id = $1`, c.WaveID, estimate).Scan(&exceeds)
+		if err != nil {
+			return nil, fmt.Errorf("estimate against the balance: %w", classify(err))
+		}
+		if exceeds {
+			c.EstimateExceeded, c.Estimate = true, estimate
+			return &c, nil
+		}
+		var encoded []byte
+		if encoded, err = json.Marshal(basis); err != nil {
+			return nil, err
+		}
 		_, err = q.Exec(WithOperation(ctx, "waves.dispatch"), `
-UPDATE easycode.waves SET state = 'running', started_at = coalesce(started_at, now()), cost_estimate = coalesce(cost_estimate, 0), estimate_basis = coalesce(estimate_basis, '{"method":"none"}'),
+UPDATE easycode.waves SET state = 'running', started_at = coalesce(started_at, now()), cost_estimate = coalesce(cost_estimate, $5::numeric),
+       estimate_basis = coalesce(estimate_basis, $6::jsonb),
        lease_owner = $2, lease_epoch = $3, lease_until = now() + make_interval(secs => $4), heartbeat_at = now()
- WHERE id = $1`, c.WaveID, worker, c.Epoch, seconds)
+ WHERE id = $1`, c.WaveID, worker, c.Epoch, seconds, estimate, string(encoded))
 	} else {
 		_, err = q.Exec(WithOperation(ctx, "waves.take_lease"), `
 UPDATE easycode.waves SET lease_owner = $2, lease_epoch = $3, lease_until = now() + make_interval(secs => $4), heartbeat_at = now()

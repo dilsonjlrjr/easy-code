@@ -369,8 +369,10 @@ SELECT pr.id, wc.definition, o.currency FROM easycode.projects pr JOIN easycode.
 SELECT s.stage, s.state, s.reevaluation_pending,
        coalesce((SELECT max(g.number) FROM easycode.gate_rounds g WHERE g.stage_id = s.id), 0),
        coalesce((SELECT g.state FROM easycode.gate_rounds g WHERE g.stage_id = s.id ORDER BY g.number DESC LIMIT 1), ''),
-       (SELECT count(*) FROM easycode.waves v WHERE v.stage_id = s.id AND v.state IN ('queued','running','awaiting_user','pausing','paused')),
-       (SELECT coalesce(sum(v.useful_cost + v.lost_cost), 0)::text FROM easycode.waves v WHERE v.stage_id = s.id),
+       -- by (project_id, stage): waves_project_stage_idx (the stage FK has no index of its own; RNF-09)
+       (SELECT count(*) FROM easycode.waves v WHERE v.project_id = s.project_id AND v.stage = s.stage
+                                               AND v.state IN ('queued','running','awaiting_user','pausing','paused')),
+       (SELECT coalesce(sum(v.useful_cost + v.lost_cost), 0)::text FROM easycode.waves v WHERE v.project_id = s.project_id AND v.stage = s.stage),
        coalesce((SELECT a.code FROM easycode.artifacts a WHERE a.id = s.reopened_by_finding_id), '')
   FROM easycode.stages s WHERE s.project_id = $1`, internalID)
 	if err != nil {

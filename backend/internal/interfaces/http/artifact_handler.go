@@ -18,6 +18,7 @@ type ArtifactUseCases interface {
 	List(ctx context.Context, principal identity.Principal, projectID string, filter appartifact.Filter) (appartifact.Page, error)
 	Get(ctx context.Context, principal identity.Principal, projectID, code string, version int) (appartifact.View, error)
 	Versions(ctx context.Context, principal identity.Principal, projectID, code string) ([]appartifact.VersionSummary, error)
+	Compare(ctx context.Context, principal identity.Principal, projectID, code string, from, to int) (appartifact.Comparison, error)
 }
 
 type artifactAuthorJSON struct {
@@ -161,8 +162,68 @@ func (a *api) listArtifactVersions(rc *fasthttp.RequestCtx, principal identity.P
 	items := make([]artifactVersionJSON, 0, len(versions))
 	for _, v := range versions {
 		items = append(items, artifactVersionJSON{Version: v.Version, Date: v.CreatedAt.UTC().Format(time.DateOnly), Wave: v.WaveCode,
-			Author: authorOf(v.Author), Description: v.Description, Approved: v.Approved, Commit: optional(v.Commit)})
+			Author: authorOf(v.Author), Description: v.Description, Approved: v.Approved, Commit: optional(v.Commit), Finding: optional(v.Finding)})
 	}
 	a.responder.JSON(rc, fasthttp.StatusOK, itemsJSON[artifactVersionJSON]{Items: items})
+	return nil
+}
+
+type headerChangeJSON struct {
+	Path      string `json:"path"`
+	Operation string `json:"operation"`
+	Before    any    `json:"before,omitempty"`
+	After     any    `json:"after,omitempty"`
+}
+
+type lineChangeJSON struct {
+	Operation string `json:"operation"`
+	LineFrom  *int   `json:"line_from"`
+	LineTo    *int   `json:"line_to"`
+	Text      string `json:"text"`
+}
+
+type comparisonJSON struct {
+	Artifact        string             `json:"artifact"`
+	From            int                `json:"from"`
+	To              int                `json:"to"`
+	Header          []headerChangeJSON `json:"header"`
+	Body            []lineChangeJSON   `json:"body"`
+	DrivingFindings []string           `json:"driving_findings"`
+}
+
+func lineNumber(n int) *int {
+	if n == 0 {
+		return nil
+	}
+	return &n
+}
+
+// compareArtifactVersions is the comparison of two versions (US-27 CA-1) with the findings that drove the
+// versions in between (CA-2).
+func (a *api) compareArtifactVersions(rc *fasthttp.RequestCtx, principal identity.Principal) error {
+	projectID, code, err := a.artifactPath(rc)
+	if err != nil {
+		return err
+	}
+	versionArg := func(name string) int {
+		n, err := strconv.Atoi(string(rc.QueryArgs().Peek(name)))
+		if err != nil {
+			return 0
+		}
+		return n
+	}
+	cmp, err := a.deps.Artifacts.Compare(RequestContext(rc), principal, projectID, code, versionArg("from"), versionArg("to"))
+	if err != nil {
+		return err
+	}
+	out := comparisonJSON{Artifact: cmp.Code, From: cmp.From, To: cmp.To, Header: []headerChangeJSON{}, Body: []lineChangeJSON{},
+		DrivingFindings: cmp.DrivingFindings}
+	for _, c := range cmp.Header {
+		out.Header = append(out.Header, headerChangeJSON(c))
+	}
+	for _, c := range cmp.Body {
+		out.Body = append(out.Body, lineChangeJSON{Operation: c.Operation, LineFrom: lineNumber(c.LineFrom), LineTo: lineNumber(c.LineTo), Text: c.Text})
+	}
+	a.responder.JSON(rc, fasthttp.StatusOK, out)
 	return nil
 }

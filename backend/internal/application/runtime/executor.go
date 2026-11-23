@@ -211,13 +211,25 @@ func (e *Executor) RunOnce(ctx context.Context) (bool, error) {
 	var claimed *Claimed
 	err := e.tx.InTx(ctx, func(ctx context.Context) error {
 		var err error
-		if claimed, err = e.ledger.Claim(ctx, e.settings.Worker, e.agentNames(), e.settings.Lease); err != nil || claimed == nil {
+		if claimed, err = e.ledger.Claim(ctx, e.settings.Worker, e.agentNames(), e.settings.Lease); err != nil || claimed == nil || claimed.EstimateExceeded {
 			return err
 		}
 		return e.claimedEvents(ctx, *claimed)
 	})
 	if err != nil || claimed == nil {
 		return false, err
+	}
+	if claimed.EstimateExceeded {
+		// policy.project_budget stop_by_estimate (US-40): the project is paused by the budget in its own
+		// transaction (it locks the project row) and the wave stays queued.
+		if e.budget == nil {
+			return false, nil
+		}
+		c := *claimed
+		err := e.tx.InTx(ctx, func(ctx context.Context) error {
+			return e.budget.StopByEstimate(ctx, c.ProjectID, c.Estimate, correlation(c))
+		})
+		return err == nil, err
 	}
 	return true, e.execute(ctx, *claimed)
 }

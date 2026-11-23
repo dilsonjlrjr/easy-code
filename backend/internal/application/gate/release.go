@@ -64,6 +64,9 @@ type ReleaseStore interface {
 	ProjectActiveWaves(ctx context.Context, projectID string) ([]string, error)
 	// Delivery returns the project name, the address of its repository, the accumulated cost and lost cost.
 	Delivery(ctx context.Context, projectID string) (Delivery, error)
+	// ReleaseArtifact returns the id of the RELEASE of the project and the tag of its current header
+	// (entrega.tag); "" before the orchestrator writes it.
+	ReleaseArtifact(ctx context.Context, projectID string) (string, string, error)
 }
 
 // Delivery is the project side of the RELEASE.

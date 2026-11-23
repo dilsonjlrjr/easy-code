@@ -135,117 +135,231 @@ func (r Projects) BudgetRules(ctx context.Context, organizationID string) (strin
 	return currency, ceiling, nil
 }
 
-const updatedAtSQL = `coalesce((SELECT max(e.occurred_at) FROM easycode.events e WHERE e.project_id = pr.id), pr.created_at)`
+// updatedAtSQL is the time of the last event of the project: the event of the highest sequence, read through
+// events_sequence_idx (a max(occurred_at) would scan every event of the project; RNF-09).
+const updatedAtSQL = `coalesce((SELECT e.occurred_at FROM easycode.events e WHERE e.project_id = pr.id ORDER BY e.sequence DESC LIMIT 1), pr.created_at)`
 
 // Get implements appproject.Repository.
 func (r Projects) Get(ctx context.Context, p identity.Principal, projectID string) (appproject.View, error) {
-	access, err := r.Access(ctx, p, projectID)
+	views, err := r.views(ctx, p, []string{projectID})
 	if err != nil {
 		return appproject.View{}, err
 	}
-	view := appproject.View{ID: projectID, State: access.State, MyRoles: access.Roles, Workflow: r.workflowID}
-	var pause, workflowID *string
-	var stopLimit *string
-	var currency string
-	var internalID int64
-	err = conn(ctx, r.pool).QueryRow(WithOperation(ctx, "projects.get"), `
-SELECT pr.id, pr.name, pr.pause_reason, pr.business_need, pr.provider_acknowledgment_at, ack.sub, ack.display_name,
-       pr.created_at, cr.sub, cr.display_name, `+updatedAtSQL+`, ld.sub, ld.display_name,
-       pr.budget_stop_limit::text, o.currency, wc.workflow_id,
+	if len(views) == 0 {
+		return appproject.View{}, failure.New(failure.KindNotFound, failure.CodeNotFound, nil)
+	}
+	return views[0], nil
+}
+
+// views reads the projects (in the order of ids) where the person has a role, with the dashboard summary,
+// in a fixed number of queries whatever the number of projects (listProjects pages, RNF-09). A project
+// without a role or deleted is left out (RNF-04).
+func (r Projects) views(ctx context.Context, p identity.Principal, ids []string) ([]appproject.View, error) {
+	q := conn(ctx, r.pool)
+	rows, err := q.Query(WithOperation(ctx, "projects.get"), `
+SELECT pr.id, pr.public_id::text, pr.state, roles.list, pr.name, pr.pause_reason, pr.business_need, pr.provider_acknowledgment_at,
+       ack.sub, ack.display_name, pr.created_at, cr.sub, cr.display_name, `+updatedAtSQL+`, ld.sub, ld.display_name,
+       pr.budget_stop_limit::text, o.currency, wc.workflow_id, pr.last_alert_percentage,
        coalesce((SELECT c.value FROM easycode.project_counters c WHERE c.project_id = pr.id AND c.name = 'event'), 0)
   FROM easycode.projects pr
+  JOIN LATERAL (SELECT array_agg(m.role ORDER BY m.role) AS list FROM easycode.project_members m
+                 WHERE m.project_id = pr.id AND m.user_id = `+principalUserIDSQL+`) roles ON roles.list IS NOT NULL
   JOIN easycode.organizations o ON o.id = pr.organization_id
   JOIN easycode.users ack ON ack.id = pr.provider_acknowledgment_by
   JOIN easycode.users cr ON cr.id = pr.created_by
   JOIN easycode.project_members lm ON lm.project_id = pr.id AND lm.role = 'lead'
   JOIN easycode.users ld ON ld.id = lm.user_id
   LEFT JOIN easycode.workflow_configurations wc ON wc.project_id = pr.id
- WHERE pr.public_id = $1::uuid`, projectID).Scan(&internalID, &view.Name, &pause, &view.BusinessNeed, &view.AcknowledgedAt,
-		&view.AcknowledgedBy.Subject, &view.AcknowledgedBy.Name, &view.CreatedAt, &view.CreatedBy.Subject, &view.CreatedBy.Name,
-		&view.UpdatedAt, &view.Lead.Subject, &view.Lead.Name, &stopLimit, &currency, &workflowID, &view.LastSequence)
+ WHERE pr.public_id = ANY($3::uuid[]) AND pr.deletion_requested_at IS NULL`, p.OrganizationID, p.Subject, ids)
 	if err != nil {
-		return appproject.View{}, fmt.Errorf("read project: %w", classify(err))
+		return nil, fmt.Errorf("read projects: %w", classify(err))
 	}
-	if pause != nil {
-		view.PauseReason = *pause
+	byID := map[string]*appproject.View{}
+	internal := map[int64]*appproject.View{}
+	var internalIDs, pausedIDs []int64
+	for rows.Next() {
+		view := &appproject.View{Workflow: r.workflowID}
+		var id int64
+		var roles []string
+		var pause, workflowID, stopLimit *string
+		var lastAlert *int16
+		if err := rows.Scan(&id, &view.ID, &view.State, &roles, &view.Name, &pause, &view.BusinessNeed, &view.AcknowledgedAt,
+			&view.AcknowledgedBy.Subject, &view.AcknowledgedBy.Name, &view.CreatedAt, &view.CreatedBy.Subject, &view.CreatedBy.Name,
+			&view.UpdatedAt, &view.Lead.Subject, &view.Lead.Name, &stopLimit, &view.Summary.AccumulatedCost.Currency, &workflowID, &lastAlert,
+			&view.LastSequence); err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("scan project: %w", err)
+		}
+		for _, role := range roles {
+			view.MyRoles = append(view.MyRoles, identity.Role(role))
+		}
+		if pause != nil {
+			view.PauseReason = *pause
+		}
+		if workflowID != nil {
+			view.Workflow = *workflowID
+		}
+		view.AvailableActions = project.Actions(view.State, view.MyRoles, p.Administrator)
+		currency := view.Summary.AccumulatedCost.Currency
+		view.Summary = appproject.Summary{StagesTotal: r.stagesInPhase, CurrentStages: []appproject.StageState{}, ActiveWaves: []appproject.WaveRef{},
+			AccumulatedCost: project.Money{Value: "0", Currency: currency},
+			OpenFindings:    map[string]int{"critical": 0, "high": 0, "medium": 0, "low": 0, "escalated": 0}}
+		if stopLimit != nil {
+			view.Summary.StopLimit = &project.Money{Value: project.TrimDecimal(*stopLimit), Currency: currency}
+		}
+		if lastAlert != nil {
+			n := int(*lastAlert)
+			view.Summary.LastBudgetAlert = &n
+		}
+		byID[view.ID], internal[id] = view, view
+		internalIDs = append(internalIDs, id)
+		if view.State == project.StatePaused {
+			pausedIDs = append(pausedIDs, id)
+		}
 	}
-	if workflowID != nil {
-		view.Workflow = *workflowID
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read projects: %w", classify(err))
 	}
-	view.AvailableActions = project.Actions(view.State, view.MyRoles, p.Administrator)
-	view.Summary, err = r.summary(ctx, internalID, currency, stopLimit)
-	return view, err
+	if len(internalIDs) > 0 {
+		if err := r.summaries(ctx, q, internalIDs, internal); err != nil {
+			return nil, err
+		}
+		if err := r.pauseRecords(ctx, q, pausedIDs, internal); err != nil {
+			return nil, err
+		}
+	}
+	out := make([]appproject.View, 0, len(byID))
+	for _, id := range ids {
+		if view, ok := byID[id]; ok {
+			out = append(out, *view)
+		}
+	}
+	return out, nil
 }
 
-func (r Projects) summary(ctx context.Context, projectID int64, currency string, stopLimit *string) (appproject.Summary, error) {
-	q := conn(ctx, r.pool)
-	summary := appproject.Summary{StagesTotal: r.stagesInPhase, CurrentStages: []appproject.StageState{}, ActiveWaves: []appproject.WaveRef{}}
-	if stopLimit != nil {
-		summary.StopLimit = &project.Money{Value: project.TrimDecimal(*stopLimit), Currency: currency}
-	}
+// summaries fills the dashboard indicators of the projects (ProjectSummary) with one query per indicator.
+func (r Projects) summaries(ctx context.Context, q querier, ids []int64, views map[int64]*appproject.View) error {
 	rows, err := q.Query(WithOperation(ctx, "projects.summary_stages"),
-		"SELECT stage, state FROM easycode.stages WHERE project_id = $1 AND type = 'stage' ORDER BY id", projectID)
+		"SELECT project_id, stage, state FROM easycode.stages WHERE project_id = ANY($1::bigint[]) AND type = 'stage' ORDER BY project_id, id", ids)
 	if err != nil {
-		return summary, fmt.Errorf("summary stages: %w", classify(err))
+		return fmt.Errorf("summary stages: %w", classify(err))
 	}
-	stages, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (appproject.StageState, error) {
+	counted := map[int64]int{}
+	for rows.Next() {
+		var id int64
 		var s appproject.StageState
-		return s, row.Scan(&s.Stage, &s.State)
-	})
-	if err != nil {
-		return summary, fmt.Errorf("scan summary stages: %w", err)
-	}
-	if len(stages) > 0 {
-		summary.StagesTotal = len(stages)
-	}
-	for _, stage := range stages {
-		switch stage.State {
+		if err := rows.Scan(&id, &s.Stage, &s.State); err != nil {
+			rows.Close()
+			return err
+		}
+		summary := &views[id].Summary
+		counted[id]++
+		switch s.State {
 		case "approved":
 			summary.ApprovedStages++
 		case "ready", "running", "awaiting_gate", "returned", "reopened":
-			summary.CurrentStages = append(summary.CurrentStages, stage)
+			summary.CurrentStages = append(summary.CurrentStages, s)
 		}
 	}
+	rows.Close()
+	for id, n := range counted {
+		views[id].Summary.StagesTotal = n
+	}
 	rows, err = q.Query(WithOperation(ctx, "projects.summary_waves"), `
-SELECT code, agent, state FROM easycode.waves
- WHERE project_id = $1 AND state IN ('queued','running','awaiting_user','pausing','paused') ORDER BY created_at`, projectID)
+SELECT project_id, code, agent, state FROM easycode.waves
+ WHERE project_id = ANY($1::bigint[]) AND state IN ('queued','running','awaiting_user','pausing','paused') ORDER BY created_at`, ids)
 	if err != nil {
-		return summary, fmt.Errorf("summary waves: %w", classify(err))
+		return fmt.Errorf("summary waves: %w", classify(err))
 	}
-	summary.ActiveWaves, err = pgx.CollectRows(rows, func(row pgx.CollectableRow) (appproject.WaveRef, error) {
+	for rows.Next() {
+		var id int64
 		var w appproject.WaveRef
-		return w, row.Scan(&w.Code, &w.Agent, &w.State)
-	})
-	if err != nil {
-		return summary, fmt.Errorf("scan summary waves: %w", err)
+		if err := rows.Scan(&id, &w.Code, &w.Agent, &w.State); err != nil {
+			rows.Close()
+			return err
+		}
+		views[id].Summary.ActiveWaves = append(views[id].Summary.ActiveWaves, w)
 	}
-	var cost string
-	err = q.QueryRow(WithOperation(ctx, "projects.summary_counts"), `
-SELECT (SELECT count(*) FROM easycode.gate_rounds g WHERE g.project_id = $1 AND g.state = 'awaiting_human'),
-       (SELECT count(*) FROM easycode.wave_questions wq JOIN easycode.waves w ON w.id = wq.wave_id WHERE w.project_id = $1 AND wq.answered_at IS NULL),
-       (SELECT coalesce(sum(useful_cost + lost_cost), 0)::text FROM easycode.waves WHERE project_id = $1)`, projectID).
-		Scan(&summary.GatesAwaiting, &summary.OpenQuestions, &cost)
+	rows.Close()
+	rows, err = q.Query(WithOperation(ctx, "projects.summary_counts"), `
+SELECT x.id,
+       (SELECT count(*) FROM easycode.gate_rounds g WHERE g.project_id = x.id AND g.state = 'awaiting_human'),
+       (SELECT count(*) FROM easycode.wave_questions wq JOIN easycode.waves w ON w.id = wq.wave_id WHERE w.project_id = x.id AND wq.answered_at IS NULL),
+       (SELECT coalesce(sum(w.useful_cost + w.lost_cost), 0)::text FROM easycode.waves w WHERE w.project_id = x.id)
+  FROM unnest($1::bigint[]) x(id)`, ids)
 	if err != nil {
-		return summary, fmt.Errorf("summary counts: %w", classify(err))
+		return fmt.Errorf("summary counts: %w", classify(err))
 	}
-	summary.AccumulatedCost = project.Money{Value: project.TrimDecimal(cost), Currency: currency}
-	summary.OpenFindings = map[string]int{"critical": 0, "high": 0, "medium": 0, "low": 0}
+	for rows.Next() {
+		var id int64
+		var gates, questions int
+		var cost string
+		if err := rows.Scan(&id, &gates, &questions, &cost); err != nil {
+			rows.Close()
+			return err
+		}
+		summary := &views[id].Summary
+		summary.GatesAwaiting, summary.OpenQuestions = gates, questions
+		summary.AccumulatedCost.Value = project.TrimDecimal(cost)
+	}
+	rows.Close()
+	// By severity, and apart the escalated ones (shown in text, US-48 RN-1; the severity counts include them).
 	rows, err = q.Query(WithOperation(ctx, "projects.summary_findings"), `
-SELECT severity, count(*) FROM easycode.findings
- WHERE project_id = $1 AND status IN ('open','in_rework','revalidating','escalated','awaiting_scope') GROUP BY severity`, projectID)
+SELECT project_id, severity, count(*) FROM easycode.findings
+ WHERE project_id = ANY($1::bigint[]) AND status IN ('open','in_rework','revalidating','escalated','awaiting_scope') GROUP BY project_id, severity
+UNION ALL
+SELECT project_id, 'escalated', count(*) FROM easycode.findings WHERE project_id = ANY($1::bigint[]) AND status = 'escalated' GROUP BY project_id`, ids)
 	if err != nil {
-		return summary, fmt.Errorf("summary findings: %w", classify(err))
+		return fmt.Errorf("summary findings: %w", classify(err))
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var severity string
+		var id int64
+		var key string
 		var n int
-		if err := rows.Scan(&severity, &n); err != nil {
-			return summary, err
+		if err := rows.Scan(&id, &key, &n); err != nil {
+			return err
 		}
-		summary.OpenFindings[severity] = n
+		views[id].Summary.OpenFindings[key] = n
 	}
-	return summary, rows.Err()
+	return rows.Err()
+}
+
+// pauseRecords fills who paused each paused project and when (ESP-06 section 6), from its last project.paused.
+func (r Projects) pauseRecords(ctx context.Context, q querier, ids []int64, views map[int64]*appproject.View) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	rows, err := q.Query(WithOperation(ctx, "projects.pause_records"), `
+SELECT x.id, e.occurred_at, coalesce(e.envelope->'data'->>'pause_reason', ''), coalesce(e.envelope->'data'->'actor'->>'type', ''),
+       coalesce(e.envelope->'data'->'actor'->>'id', ''), coalesce(u.display_name, ''), coalesce(e.envelope->'data'->'actor'->>'origin', ''),
+       coalesce(b.envelope->'data'->>'cause', ''), coalesce(b.envelope->'data'->'next_wave_estimate'->>'value', ''),
+       coalesce(b.envelope->'data'->'next_wave_estimate'->>'currency', '')
+  FROM unnest($1::bigint[]) x(id)
+  CROSS JOIN LATERAL (SELECT ev.occurred_at, ev.envelope, ev.organization_id FROM easycode.events ev
+                       WHERE ev.project_id = x.id AND ev.type = 'br.easycode.project.paused.v1' ORDER BY ev.sequence DESC LIMIT 1) e
+  LEFT JOIN easycode.users u ON u.organization_id = e.organization_id AND u.sub = e.envelope->'data'->'actor'->>'id'
+                             AND e.envelope->'data'->'actor'->>'type' = 'human'
+  -- a pause by the budget follows its budget_exhausted: the cause and, by estimate, the estimate that exceeded
+  LEFT JOIN LATERAL (SELECT be.envelope FROM easycode.events be
+                      WHERE be.project_id = x.id AND be.type = 'br.easycode.project.budget_exhausted.v1'
+                        AND e.envelope->'data'->>'pause_reason' = 'budget'
+                      ORDER BY be.sequence DESC LIMIT 1) b ON true`, ids)
+	if err != nil {
+		return fmt.Errorf("pause records: %w", classify(err))
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id int64
+		var record appproject.PauseRecord
+		if err := rows.Scan(&id, &record.At, &record.Reason, &record.ActorType, &record.ActorID, &record.ActorName, &record.Origin,
+			&record.Cause, &record.NextWaveEstimate.Value, &record.NextWaveEstimate.Currency); err != nil {
+			return err
+		}
+		views[id].Pause = &record
+	}
+	return rows.Err()
 }
 
 // List implements appproject.Repository (projects where the person has a role, updated_at descending).
@@ -309,20 +423,22 @@ SELECT id, updated_at FROM (
 		page.NextCursor = encodeCursor(last.at, last.id)
 		keys = keys[:filter.Limit]
 	}
-	for _, k := range keys {
-		get := r.Get
-		if filter.Organization {
-			get = func(ctx context.Context, _ identity.Principal, projectID string) (appproject.View, error) {
-				return r.Overview(ctx, projectID)
+	if filter.Organization {
+		for _, k := range keys {
+			view, err := r.Overview(ctx, k.id)
+			if err != nil {
+				return page, err
 			}
+			page.Items = append(page.Items, view)
 		}
-		view, err := get(ctx, p, k.id)
-		if err != nil {
-			return page, err
-		}
-		page.Items = append(page.Items, view)
+		return page, nil
 	}
-	return page, nil
+	ids := make([]string, 0, len(keys))
+	for _, k := range keys {
+		ids = append(ids, k.id)
+	}
+	page.Items, err = r.views(ctx, p, ids)
+	return page, err
 }
 
 func encodeCursor(at time.Time, id string) string {

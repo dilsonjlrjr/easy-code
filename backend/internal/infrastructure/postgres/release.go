@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
@@ -112,4 +113,21 @@ SELECT s.stage, coalesce((SELECT max(x.number) FROM easycode.gate_rounds x WHERE
 		out[stage] = n
 	}
 	return out, rows.Err()
+}
+
+// ReleaseArtifact implements appgate.ReleaseStore: the RELEASE of the project and the tag of its current header.
+func (g Gates) ReleaseArtifact(ctx context.Context, projectID string) (string, string, error) {
+	var code, tag string
+	err := conn(ctx, g.pool).QueryRow(WithOperation(ctx, "artifacts.release"), `
+SELECT a.code, coalesce(v.header->'entrega'->>'tag', '')
+  FROM easycode.artifacts a JOIN easycode.projects pr ON pr.id = a.project_id
+  JOIN easycode.artifact_versions v ON v.artifact_id = a.id AND v.version = a.current_version
+ WHERE pr.public_id = $1::uuid AND a.type = 'RELEASE' ORDER BY a.code LIMIT 1`, projectID).Scan(&code, &tag)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", "", nil
+	}
+	if err != nil {
+		return "", "", fmt.Errorf("release artifact: %w", classify(err))
+	}
+	return code, tag, nil
 }

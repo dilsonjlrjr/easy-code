@@ -67,6 +67,7 @@ func (a *api) getReleaseSummary(rc *fasthttp.RequestCtx, principal identity.Prin
 	useful := subtractDecimal(summary.Cost, summary.Lost)
 	a.responder.JSON(rc, fasthttp.StatusOK, map[string]any{
 		"gates": gates, "tests": tests, "open_findings": open, "accepted_risks": accepted, "blocks": blocks, "stage_state": summary.StageState,
+		"release_artifact": optional(summary.ReleaseArtifact), "mark_name": summary.MarkName,
 		"cost_total": map[string]any{"useful": moneyJSON{useful, summary.Currency}, "lost": moneyJSON{summary.Lost, summary.Currency},
 			"total": moneyJSON{summary.Cost, summary.Currency}},
 	})

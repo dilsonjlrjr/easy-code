@@ -111,24 +111,36 @@ type summaryJSON struct {
 	OpenFindings    map[string]int   `json:"open_findings"`
 	AccumulatedCost moneyJSON        `json:"accumulated_cost"`
 	StopLimit       *moneyJSON       `json:"stop_limit"`
+	LastBudgetAlert *int             `json:"last_budget_alert_percentage"`
+}
+
+type projectPauseJSON struct {
+	Reason string    `json:"reason"`
+	By     actorJSON `json:"by"`
+	At     time.Time `json:"at"`
+	Origin *string   `json:"origin"`
+	// Cause and NextWaveEstimate come with a pause by the budget (US-39, US-40).
+	Cause            *string    `json:"cause"`
+	NextWaveEstimate *moneyJSON `json:"next_wave_estimate"`
 }
 
 type projectJSON struct {
-	ID               string          `json:"id"`
-	Name             string          `json:"name"`
-	State            string          `json:"state"`
-	PauseReason      *string         `json:"pause_reason"`
-	BusinessNeed     string          `json:"business_need"`
-	Workflow         string          `json:"workflow"`
-	Acknowledgement  decisionJSON    `json:"provider_submission_acknowledgment"`
-	CreatedAt        time.Time       `json:"created_at"`
-	CreatedBy        userRefJSON     `json:"created_by"`
-	UpdatedAt        time.Time       `json:"updated_at"`
-	MyRoles          []identity.Role `json:"my_roles"`
-	Lead             userRefJSON     `json:"lead"`
-	AvailableActions []string        `json:"available_actions"`
-	Summary          summaryJSON     `json:"summary"`
-	LastSequence     int64           `json:"last_sequence"`
+	ID               string            `json:"id"`
+	Name             string            `json:"name"`
+	State            string            `json:"state"`
+	PauseReason      *string           `json:"pause_reason"`
+	BusinessNeed     string            `json:"business_need"`
+	Workflow         string            `json:"workflow"`
+	Acknowledgement  decisionJSON      `json:"provider_submission_acknowledgment"`
+	CreatedAt        time.Time         `json:"created_at"`
+	CreatedBy        userRefJSON       `json:"created_by"`
+	UpdatedAt        time.Time         `json:"updated_at"`
+	MyRoles          []identity.Role   `json:"my_roles"`
+	Lead             userRefJSON       `json:"lead"`
+	AvailableActions []string          `json:"available_actions"`
+	Summary          summaryJSON       `json:"summary"`
+	LastSequence     int64             `json:"last_sequence"`
+	Pause            *projectPauseJSON `json:"pause"`
 }
 
 type projectsPageJSON struct {
@@ -152,10 +164,21 @@ func projectOf(v appproject.View) projectJSON {
 	if v.PauseReason != "" {
 		out.PauseReason = &v.PauseReason
 	}
+	if p := v.Pause; p != nil {
+		by := actorJSON{Type: p.ActorType, ID: p.ActorID}
+		if p.ActorType == "human" {
+			by.User = &userRefJSON{ID: p.ActorID, Name: p.ActorName}
+		}
+		out.Pause = &projectPauseJSON{Reason: p.Reason, By: by, At: p.At, Origin: optional(p.Origin), Cause: optional(p.Cause)}
+		if p.NextWaveEstimate.Value != "" {
+			out.Pause.NextWaveEstimate = &moneyJSON{p.NextWaveEstimate.Value, p.NextWaveEstimate.Currency}
+		}
+	}
 	s := v.Summary
 	out.Summary = summaryJSON{
 		ApprovedStages: s.ApprovedStages, StagesTotal: s.StagesTotal, GatesAwaiting: s.GatesAwaiting, OpenQuestions: s.OpenQuestions, OpenFindings: s.OpenFindings,
 		AccumulatedCost: moneyJSON(s.AccumulatedCost), CurrentStages: []stageStateJSON{}, ActiveWaves: []activeWaveJSON{},
+		LastBudgetAlert: s.LastBudgetAlert,
 	}
 	if s.StopLimit != nil {
 		limit := moneyJSON(*s.StopLimit)

@@ -42,6 +42,10 @@ type ReleaseSummary struct {
 	Currency     string
 	Blocks       []ReleaseBlock
 	StageState   string // state of the release stage
+	// ReleaseArtifact is the RELEASE of the project ("" before the orchestrator writes it); MarkName is the tag
+	// the approval creates (entrega.tag of the RELEASE, else the default release-NN), shown before the approval.
+	ReleaseArtifact string
+	MarkName        string
 }
 
 // ReleaseQueries are the api reads of the Release (consolidation and blocks).
@@ -116,6 +120,16 @@ func (q *ReleaseQueries) Summary(ctx context.Context, principal identity.Princip
 		Blocks: q.blocks(e, facts), Tests: facts.Tests}
 	if facts.RelQA != nil {
 		summary.Report = facts.RelQA.Code
+	}
+	if q.progress.release != nil && q.progress.release.store != nil {
+		code, tag, err := q.progress.release.store.ReleaseArtifact(ctx, projectID)
+		if err != nil {
+			return ReleaseSummary{}, err
+		}
+		summary.ReleaseArtifact, summary.MarkName = code, tag
+	}
+	if summary.MarkName == "" {
+		summary.MarkName = ReleaseTag(ReleaseCode)
 	}
 	if summary.Accepted == nil {
 		summary.Accepted = []domainfinding.Finding{}

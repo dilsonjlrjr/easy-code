@@ -52,6 +52,7 @@ func (a *api) register(router *Router) {
 		router.Handle(fasthttp.MethodGet, APIPrefix+"/projects/{projectId}/artifacts/{artifactId}", auth(a.getArtifact))
 		router.Handle(fasthttp.MethodGet, APIPrefix+"/projects/{projectId}/artifacts/{artifactId}/versions", auth(a.listArtifactVersions))
 		router.Handle(fasthttp.MethodGet, APIPrefix+"/projects/{projectId}/artifacts/{artifactId}/versions/{version}", auth(a.getArtifactVersion))
+		router.Handle(fasthttp.MethodGet, APIPrefix+"/projects/{projectId}/artifacts/{artifactId}/comparison", auth(a.compareArtifactVersions))
 	}
 	if a.deps.Waves != nil {
 		p := APIPrefix + "/projects/{projectId}/waves"
@@ -107,6 +108,15 @@ func (a *api) register(router *Router) {
 		router.Handle(fasthttp.MethodGet, p+"/{agent}", auth(a.getProjectAgent))
 		router.Handle(fasthttp.MethodPut, p+"/{agent}/configuration", auth(a.modifyAgentConfiguration))
 		router.Handle(fasthttp.MethodGet, p+"/{agent}/configuration/versions", auth(a.listAgentConfigurationVersions))
+	}
+	if a.deps.Costs != nil {
+		router.Handle(fasthttp.MethodGet, APIPrefix+"/projects/{projectId}/costs", auth(a.getProjectCosts))
+		router.Handle(fasthttp.MethodGet, APIPrefix+"/projects/{projectId}/stages/{stage}/estimate", auth(a.getStageEstimate))
+		router.Handle(fasthttp.MethodGet, APIPrefix+"/me/costs", auth(a.getUserCosts))
+	}
+	if a.deps.Audit != nil {
+		router.Handle(fasthttp.MethodGet, APIPrefix+"/projects/{projectId}/audit", auth(a.listProjectAudit))
+		router.Handle(fasthttp.MethodGet, APIPrefix+"/audit", auth(a.listOrganizationAudit))
 	}
 	if a.deps.Pending != nil {
 		router.Handle(fasthttp.MethodGet, APIPrefix+"/pending-items", auth(a.listPendingItems))

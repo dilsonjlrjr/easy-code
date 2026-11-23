@@ -21,6 +21,9 @@ var ErrDispatchHeld = errors.New("project paused or budget exhausted: no new mod
 // project paused by the budget with its running waves asked to pause at their next checkpoint.
 type Budget interface {
 	CheckBudget(ctx context.Context, projectID, correlation string) error
+	// StopByEstimate pauses the project by the budget when the estimate of its next wave exceeds the balance
+	// (policy.project_budget stop_by_estimate, US-40): nothing is dispatched.
+	StopByEstimate(ctx context.Context, projectID, estimate, correlation string) error
 }
 
 // Lease identifies the execution right of one worker over a wave.
@@ -48,6 +51,10 @@ type Claimed struct {
 	RedoneCall  bool
 	ReasoningID int64
 	ExecutionID int64
+	// EstimateExceeded: the estimate of the queued wave exceeds the balance of the budget; the wave was not
+	// dispatched (stays queued) and Estimate is the value that exceeded it (US-40, stop_by_estimate).
+	EstimateExceeded bool
+	Estimate         string
 }
 
 // Inputs are the wave inputs read from the project (pinned versions, RNF-15).

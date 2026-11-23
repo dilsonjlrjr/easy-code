@@ -162,7 +162,8 @@ SELECT `+summaryColumns+`, ar.updated_at, v.header, v.body, v.git_commit
 func (a Artifacts) Versions(ctx context.Context, projectID, code string) ([]appartifact.VersionSummary, error) {
 	rows, err := conn(ctx, a.pool).Query(WithOperation(ctx, "artifacts.versions"), `
 SELECT v.version, v.created_at, v.wave_code, v.author, v.description,
-       ar.state = 'approved' AND v.version = ar.current_version, coalesce(v.git_commit, '')
+       ar.state = 'approved' AND v.version = ar.current_version, coalesce(v.git_commit, ''),
+       coalesce((SELECT f.code FROM easycode.artifacts f WHERE f.id = v.finding_id), '')
   FROM easycode.artifacts ar JOIN easycode.projects pr ON pr.id = ar.project_id
   JOIN easycode.artifact_versions v ON v.artifact_id = ar.id
  WHERE pr.public_id = $1::uuid AND ar.code = $2
@@ -172,7 +173,7 @@ SELECT v.version, v.created_at, v.wave_code, v.author, v.description,
 	}
 	versions, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (appartifact.VersionSummary, error) {
 		var s appartifact.VersionSummary
-		err := row.Scan(&s.Version, &s.CreatedAt, &s.WaveCode, &s.Author, &s.Description, &s.Approved, &s.Commit)
+		err := row.Scan(&s.Version, &s.CreatedAt, &s.WaveCode, &s.Author, &s.Description, &s.Approved, &s.Commit, &s.Finding)
 		return s, err
 	})
 	if err != nil {

@@ -51,6 +51,23 @@ type Summary struct {
 	OpenFindings    map[string]int
 	AccumulatedCost project.Money
 	StopLimit       *project.Money
+	// LastBudgetAlert is the highest alert percentage crossed and still pending (US-39), nil when none.
+	LastBudgetAlert *int
+}
+
+// PauseRecord is who paused the project and when (ESP-06 section 6): a human (web) or the orchestrator
+// (budget), read from the last project.paused event.
+type PauseRecord struct {
+	Reason    string
+	ActorType string
+	ActorID   string
+	ActorName string
+	Origin    string
+	At        time.Time
+	// Cause of a pause by the budget (budget_exhausted: spend_reached_limit or estimate_exceeds_balance), "" when
+	// manual; NextWaveEstimate is the estimate that exceeded the balance (Value "" otherwise).
+	Cause            string
+	NextWaveEstimate project.Money
 }
 
 // View is a project as the api shows it.
@@ -71,6 +88,7 @@ type View struct {
 	AvailableActions []string
 	Summary          Summary
 	LastSequence     int64
+	Pause            *PauseRecord // only while paused
 	// MetadataOnly marks the administrator view of a project without a role: id, name, state,
 	// lead and dates, no content nor summary (US-02 CA-6).
 	MetadataOnly bool

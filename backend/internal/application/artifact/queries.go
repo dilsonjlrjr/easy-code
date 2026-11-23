@@ -44,6 +44,17 @@ type VersionSummary struct {
 	Description string
 	Approved    bool
 	Commit      string
+	Finding     string // ACH that drove the version (rework), "" otherwise (US-27 CA-2)
+}
+
+// Comparison is compareArtifactVersions (US-27): the header fields and body lines added, removed and
+// changed from one version to another, and the findings that drove the versions in between.
+type Comparison struct {
+	Code            string
+	From, To        int
+	Header          []domainartifact.FieldChange
+	Body            []domainartifact.LineChange
+	DrivingFindings []string
 }
 
 // Filter narrows listArtifacts.
@@ -122,4 +133,59 @@ func (q *Queries) Versions(ctx context.Context, principal identity.Principal, pr
 		return nil, failure.New(failure.KindNotFound, failure.CodeNotFound, nil)
 	}
 	return q.reader.Versions(ctx, projectID, code)
+}
+
+// Compare is compareArtifactVersions: any two versions, not only neighbors (ER-21-6); the findings that
+// drove the versions after the older one up to the newer one come with the comparison (US-27 CA-2).
+func (q *Queries) Compare(ctx context.Context, principal identity.Principal, projectID, code string, from, to int) (Comparison, error) {
+	if _, err := appproject.Authorize(ctx, q.projects, principal, projectID); err != nil {
+		return Comparison{}, err
+	}
+	if !domainartifact.ValidCode(code) {
+		return Comparison{}, failure.New(failure.KindNotFound, failure.CodeNotFound, nil)
+	}
+	var fields []failure.FieldError
+	if from < 1 {
+		fields = append(fields, failure.FieldError{Field: "from", Message: "range"})
+	}
+	if to < 1 {
+		fields = append(fields, failure.FieldError{Field: "to", Message: "range"})
+	}
+	if len(fields) > 0 {
+		return Comparison{}, failure.Invalid(fields...)
+	}
+	versions, err := q.reader.Versions(ctx, projectID, code)
+	if err != nil {
+		return Comparison{}, err
+	}
+	low, high := min(from, to), max(from, to)
+	out := Comparison{Code: code, From: from, To: to, DrivingFindings: []string{}}
+	found := 0
+	seen := map[string]bool{}
+	for i := len(versions) - 1; i >= 0; i-- { // ascending version
+		v := versions[i]
+		if v.Version == from || v.Version == to {
+			found++
+		}
+		if v.Version > low && v.Version <= high && v.Finding != "" && !seen[v.Finding] {
+			seen[v.Finding] = true
+			out.DrivingFindings = append(out.DrivingFindings, v.Finding)
+		}
+	}
+	if found < 2 && (from != to || found != 1) {
+		return Comparison{}, failure.New(failure.KindNotFound, failure.CodeNotFound, nil)
+	}
+	before, err := q.reader.Version(ctx, projectID, code, from)
+	if err != nil {
+		return Comparison{}, err
+	}
+	after, err := q.reader.Version(ctx, projectID, code, to)
+	if err != nil {
+		return Comparison{}, err
+	}
+	if out.Header, err = domainartifact.CompareHeaders(before.Header, after.Header); err != nil {
+		return Comparison{}, err
+	}
+	out.Body = domainartifact.CompareBodies(before.Body, after.Body)
+	return out, nil
 }

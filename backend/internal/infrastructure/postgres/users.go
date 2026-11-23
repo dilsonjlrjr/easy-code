@@ -24,7 +24,7 @@ var _ session.Users = Users{}
 func NewUsers(pool *pgxpool.Pool) Users { return Users{pool: pool} }
 
 const selectPrincipal = `
-SELECT u.sub, u.display_name, o.public_id::text, o.name, u.administrator
+SELECT u.sub, u.display_name, o.public_id::text, o.name, o.currency, u.administrator
   FROM easycode.users u JOIN easycode.organizations o ON o.id = u.organization_id
  WHERE u.active AND `
 
@@ -75,7 +75,7 @@ ON CONFLICT (organization_id, sub) DO UPDATE SET display_name = excluded.display
 
 func (Users) scanPrincipal(row pgx.Row) (identity.Principal, error) {
 	var p identity.Principal
-	err := row.Scan(&p.Subject, &p.Name, &p.OrganizationID, &p.OrganizationName, &p.Administrator)
+	err := row.Scan(&p.Subject, &p.Name, &p.OrganizationID, &p.OrganizationName, &p.OrganizationCurrency, &p.Administrator)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return identity.Principal{}, failure.New(failure.KindNotFound, failure.CodeNotFound, nil)
 	}

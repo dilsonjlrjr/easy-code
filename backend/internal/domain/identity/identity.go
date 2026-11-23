@@ -27,7 +27,9 @@ type Principal struct {
 	Name             string // display name, only for screens
 	OrganizationID   string // organizations.public_id
 	OrganizationName string
-	Administrator    bool
+	// OrganizationCurrency is the budget currency of the organization (policy.project_budget currency).
+	OrganizationCurrency string
+	Administrator        bool
 }
 
 // Session is a web session (cookie ec_session), stored on the server (ADR-12).

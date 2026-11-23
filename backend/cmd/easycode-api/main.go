@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	appartifact "easycode/internal/application/artifact"
+	appcost "easycode/internal/application/cost"
 	appevent "easycode/internal/application/event"
 	appfinding "easycode/internal/application/finding"
 	appgate "easycode/internal/application/gate"
@@ -26,6 +27,7 @@ import (
 	appsession "easycode/internal/application/session"
 	appskill "easycode/internal/application/skill"
 	apptraceability "easycode/internal/application/traceability"
+	apptrail "easycode/internal/application/trail"
 	appwave "easycode/internal/application/wave"
 	appworkflow "easycode/internal/application/workflow"
 	"easycode/internal/infrastructure/config"
@@ -206,6 +208,8 @@ func productDependencies(cfg config.Config, pool *pgxpool.Pool, logger *slog.Log
 		Skills:               appskill.NewService(postgres.NewSkills(pool)),
 		Agents:               appskill.NewAgents(tx, projects, specs.AgentProfiles{}, postgres.NewSkills(pool), postgres.NewSkills(pool), trail),
 		Repository:           apprepository.NewService(projects, git.New(cfg.ReposDir), cfg.GitBaseURL, git.MainBranch),
+		Costs:                appcost.NewService(projects, postgres.NewCosts(pool, definition), definition.StageIDs()),
+		Audit:                apptrail.NewQueries(projects, postgres.NewAuditReader(pool)),
 	}
 	if cfg.Providers.SealingPublicKeyFile == "" {
 		logger.Warn("provider key routes disabled: no sealing public key", slog.String("variable", config.EnvSealingPublicKey))

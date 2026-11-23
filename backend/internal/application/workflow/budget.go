@@ -6,6 +6,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"easycode/internal/domain/pricing"
 	"easycode/internal/domain/project"
 )
 
@@ -61,6 +62,40 @@ func (o *Orchestrator) CheckBudget(ctx context.Context, projectID, correlation s
 		"alert_limit": money(percentOf(status.StopLimit, crossed), status.Currency), "stop_limit": money(status.StopLimit, status.Currency),
 		"transition": map[string]any{"machine": "project", "from_state": project.StateInProgress, "to_state": project.StateInProgress},
 	})
+}
+
+// StopByEstimate applies stop_by_estimate of policy.project_budget at the dispatch of a wave (US-40): when the
+// spend plus the estimate of the next wave exceeds the stop limit, the project is paused by the budget
+// (exhaust_budget, cause estimate_exceeds_balance) before the wave runs; it stays queued, and only a human
+// resumes the project after raising the limit (PD-02). Call it in its own transaction (it locks the project).
+func (o *Orchestrator) StopByEstimate(ctx context.Context, projectID, estimate, correlation string) error {
+	if o.lifecycle == nil {
+		return nil
+	}
+	state, err := o.store.LockProject(ctx, projectID)
+	if err != nil || state != project.StateInProgress {
+		return err
+	}
+	status, err := o.lifecycle.Status(ctx, projectID)
+	if err != nil || status.StopLimit == "" {
+		return err
+	}
+	if !pricing.ExceedsBalance(status.Spend, estimate, status.StopLimit) {
+		return nil
+	}
+	if correlation == "" {
+		correlation = newCorrelation()
+	}
+	emit := o.emitter(ctx, projectID, correlation)
+	if err := emit("br.easycode.project.budget_exhausted.v1", "project", "", map[string]any{
+		"project": projectID, "actor": orchestratorActor, "cause": "estimate_exceeds_balance",
+		"spend": money(status.Spend, status.Currency), "stop_limit": money(status.StopLimit, status.Currency),
+		"next_wave_estimate": money(estimate, status.Currency),
+		"transition":         map[string]any{"machine": "project", "from_state": project.StateInProgress, "to_state": project.StatePaused},
+	}); err != nil {
+		return err
+	}
+	return o.pause(ctx, projectID, correlation, PauseBudget, WaveCauseBudgetExhausted, orchestratorActor)
 }
 
 // CheckBudgets runs CheckBudget on every project whose spend reached a limit (reconcile of the worker: the
