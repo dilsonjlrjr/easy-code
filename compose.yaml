@@ -231,6 +231,29 @@ services:
     ports:
       - "127.0.0.1:8080:8080"
 
+  # Daily backup (RNF-11: RPO 24 h; ADR-16 v2, PERSIST.md backup): pg_dump of the database and a copy of the
+  # project repositories into the backups volume, kept 30 days. Opt-in in development: docker compose --profile
+  # backup up backup. Production points the destination outside the server and connects as easycode_backup.
+  # Restore: infra/backup/restore.sh <run folder> (tested by TestRecoveryFromBackup in the backend CI).
+  backup:
+    image: postgres:17.6-bookworm
+    profiles: [backup]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGHOST: postgres
+      PGUSER: easycode
+      PGPASSWORD: easycode # DEV ONLY
+      PGDATABASE: easycode
+      EASYCODE_REPOS_DIR: /var/lib/easycode/repos
+      EASYCODE_BACKUP_RETENTION_DAYS: "30"
+    volumes:
+      - ./infra/backup:/opt/easycode-backup:ro
+      - repos:/var/lib/easycode/repos:ro
+      - backups:/backups
+    entrypoint: ["sh", "-c", "while true; do sh /opt/easycode-backup/backup.sh /backups; sleep 86400; done"]
+
 volumes:
   postgres-data:
   gateway-socket:
@@ -239,6 +262,7 @@ volumes:
   sandbox-socket:
   repos:
   deps-cache:
+  backups:
 
 networks:
   default: {}
