@@ -1,6 +1,7 @@
 import { apiClient } from '@/shared/api/apiClient'
-import type { AgentId, ArtifactState, Page, StageId, UserRef } from '@/shared/api/contract'
+import type { AgentId, ArtifactState, Command, Page, StageId, UserRef } from '@/shared/api/contract'
 import type { HttpClient } from '@/shared/api/httpClient'
+import { idempotencyHeaders } from '@/shared/api/idempotencyKey'
 
 export interface ArtifactAuthor {
   type: 'agent' | 'orchestrator' | 'human'
@@ -73,6 +74,24 @@ export interface ArtifactComparison {
   driving_findings?: string[]
 }
 
+/**
+ * openapi `ArtifactEdit` (US-53, PD-03): the whole Markdown file as the person left it; the stage
+ * agent validates and formats it before it becomes a version. `delete` is a new version without the
+ * item (RN-2); `finding` is the scope change that opened an approved artifact (CA-7).
+ */
+export interface ArtifactEdit {
+  operation: 'create' | 'modify' | 'delete'
+  type?: string
+  artifact?: string
+  base_version?: number
+  content?: string
+  reason: string
+  finding?: string
+}
+
+/** Up to 200 KiB of text (413 above). */
+export const ARTIFACT_EDIT_LIMIT = 204800
+
 export interface ArtifactsApi {
   listArtifacts: (projectId: string, filters?: { type?: string }) => Promise<ArtifactSummary[]>
   getArtifact: (projectId: string, artifactId: string) => Promise<Artifact>
@@ -80,6 +99,8 @@ export interface ArtifactsApi {
   getVersion: (projectId: string, artifactId: string, version: number) => Promise<Artifact>
   /** The exact Markdown file of a version (`text/markdown`), for download. */
   getVersionFile: (projectId: string, artifactId: string, version: number) => Promise<string>
+  /** US-53: asynchronous command `edit_artifact` (202). */
+  editArtifact: (projectId: string, edit: ArtifactEdit, idempotencyKey: string) => Promise<Command>
   /** US-27 CA-1: any two versions, not only neighbours (ER-21-6). */
   compareVersions: (
     projectId: string,
@@ -123,6 +144,10 @@ export function createArtifactsApi(client: HttpClient = apiClient): ArtifactsApi
     getVersionFile: (projectId, artifactId, version) =>
       client.get<string>(`${artifactPath(projectId, artifactId)}/versions/${String(version)}`, {
         headers: { Accept: 'text/markdown' },
+      }),
+    editArtifact: (projectId, edit, idempotencyKey) =>
+      client.post<Command>(`/projects/${encodeURIComponent(projectId)}/artifact-edits`, edit, {
+        headers: idempotencyHeaders(idempotencyKey),
       }),
     compareVersions: (projectId, artifactId, from, to) =>
       client.get<ArtifactComparison>(`${artifactPath(projectId, artifactId)}/comparison`, {

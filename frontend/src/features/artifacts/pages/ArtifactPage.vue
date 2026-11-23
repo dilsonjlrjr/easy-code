@@ -19,6 +19,10 @@ import {
   type ArtifactVersionSummary,
 } from '../api/artifactsApi'
 import ArtifactComparisonPanel from '../components/ArtifactComparisonPanel.vue'
+import ArtifactEditDialog from '../components/ArtifactEditDialog.vue'
+import { awaitingAgentReview, canEditArtifact, isImposedAdr } from '../composables/artifactEditing'
+import type { ArtifactEdit } from '../api/artifactsApi'
+import { useAnnouncer } from '@/shared/composables/useAnnouncer'
 import ArtifactStructuredView from '../components/ArtifactStructuredView.vue'
 import QualityArtifactView from '../components/QualityArtifactView.vue'
 import {
@@ -39,6 +43,14 @@ const current = ref<Artifact>()
 const versions = ref<ArtifactVersionSummary[]>([])
 const shown = ref<Artifact>()
 const downloadFailure = ref<unknown>()
+const { message, announce } = useAnnouncer()
+/** US-53: the edit dialog, the file it starts from, and the notice after sending. */
+const editOperation = ref<ArtifactEdit['operation']>('modify')
+const editOpen = ref(false)
+const editContent = ref('')
+const editPreparing = ref(false)
+const editFailure = ref<unknown>()
+const editNotice = ref<string>()
 
 const requestedVersion = computed(() => {
   const value = Number(route.query.version)
@@ -81,6 +93,17 @@ const isOlderVersion = computed(
 const shownVersionInfo = computed(() =>
   versions.value.find((item) => item.version === shown.value?.version),
 )
+/** CA-7: an approved artifact reopened by a scope change decision arrives with its finding. */
+const scopeFinding = computed(() =>
+  typeof route.query.finding === 'string' && route.query.finding ? route.query.finding : undefined,
+)
+const editable = computed(
+  () =>
+    !!current.value &&
+    !!project.value &&
+    !isOlderVersion.value &&
+    canEditArtifact(current.value, project.value, scopeFinding.value),
+)
 const notFound = computed(() => isApiError(loader.error.value) && loader.error.value.status === 404)
 /** US-20, US-21: DIC, PERSIST, TELAS and VALIDACAO show their structured content (ESP-09, ESP-10, ESP-13). */
 const structured = computed(() =>
@@ -118,6 +141,9 @@ function chooseVersion(version: number): void {
 
 function authorText(author: ArtifactAuthor | undefined): string {
   if (!author) return ''
+  if (author.type === 'human' && awaitingAgentReview(author)) {
+    return t('artifactEdit.awaitingReview', { person: author.edited_by?.name ?? '' })
+  }
   if (author.type === 'human') {
     return t('artifacts.editedBy', {
       person: author.edited_by?.name ?? '',
@@ -138,6 +164,35 @@ function headerValue(value: unknown): string {
 
 function isScalar(value: unknown): boolean {
   return value === null || ['string', 'number', 'boolean', 'undefined'].includes(typeof value)
+}
+
+/** US-53 CA-1: a change starts from the current Markdown file; a removal needs no text. */
+async function startEdit(operation: 'modify' | 'delete'): Promise<void> {
+  if (!current.value) return
+  editFailure.value = undefined
+  editOperation.value = operation
+  if (operation === 'modify') {
+    editPreparing.value = true
+    try {
+      editContent.value = await artifactsApi.getVersionFile(
+        projectId,
+        artifactId,
+        current.value.version,
+      )
+    } catch (error) {
+      editFailure.value = error
+      return
+    } finally {
+      editPreparing.value = false
+    }
+  }
+  editOpen.value = true
+}
+
+function editSubmitted(): void {
+  editNotice.value = t('artifactEdit.sent')
+  announce(editNotice.value)
+  void loader.run()
 }
 
 async function downloadVersion(): Promise<void> {
@@ -208,6 +263,66 @@ async function downloadVersion(): Promise<void> {
       <p v-if="current.state === 'draft'" class="text-body-2 mb-2">
         {{ $t('artifacts.draftNotice') }}
       </p>
+      <!-- ESP-08 3: an imposed ADR says who imposed it. -->
+      <p
+        v-if="isImposedAdr(current.header) && current.author.type === 'human'"
+        class="text-body-2 mb-2"
+        data-testid="imposed-adr"
+      >
+        {{ $t('artifactEdit.imposedBy', { person: current.author.edited_by?.name ?? '' }) }}
+      </p>
+      <div role="status" class="sr-only">{{ message }}</div>
+      <v-alert
+        v-if="editNotice"
+        type="info"
+        variant="tonal"
+        class="mb-4"
+        closable
+        data-testid="artifact-edit-notice"
+        @click:close="editNotice = undefined"
+      >
+        {{ editNotice }}
+      </v-alert>
+      <!-- US-53: edit or remove the item; the stage agent validates before it counts. -->
+      <div v-if="editable" class="d-flex flex-wrap ga-2 mb-4" data-testid="artifact-edit-actions">
+        <v-btn
+          color="primary"
+          variant="tonal"
+          :loading="editPreparing"
+          data-testid="edit-artifact"
+          @click="startEdit('modify')"
+        >
+          {{ $t('artifactEdit.modify') }}
+        </v-btn>
+        <v-btn
+          color="error"
+          variant="outlined"
+          data-testid="delete-artifact"
+          @click="startEdit('delete')"
+        >
+          {{ $t('artifactEdit.delete') }}
+        </v-btn>
+      </div>
+      <!-- CA-6: an approved artifact only changes through a finding or a scope change. -->
+      <p
+        v-else-if="current.state === 'approved' && !isOlderVersion"
+        class="text-body-2 mb-4"
+        data-testid="artifact-approved-notice"
+      >
+        {{ $t('artifactEdit.approvedNotice') }}
+      </p>
+      <ProblemAlert v-if="editFailure" :error="editFailure" class="mb-4" />
+      <ArtifactEditDialog
+        v-if="editable"
+        v-model="editOpen"
+        :project-id="projectId"
+        :operation="editOperation"
+        :artifact-id="current.id"
+        :base-version="current.version"
+        :initial-content="editContent"
+        :finding="scopeFinding"
+        @submitted="editSubmitted"
+      />
 
       <div class="artifact-layout">
         <div>
