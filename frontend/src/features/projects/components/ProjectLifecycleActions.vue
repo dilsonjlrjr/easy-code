@@ -86,14 +86,22 @@ function submit(action: LifecycleAction): (idempotencyKey: string) => Promise<vo
   }
 }
 
-/** US-52 CA-2, CA-3: why the conclusion was refused, by the condition that failed. */
+/**
+ * US-52 CA-2, CA-3: why the conclusion was refused. The api says it in `reason`
+ * (`release_not_approved`, `active_wave` with `waves`); without it the page reads the workflow.
+ */
 function completionReason(failure: unknown): string | undefined {
   if (!hasProblemSlug(failure, 'state-conflict')) return undefined
-  if (!releaseApproved.value) return t('projects.lifecycle.complete.releaseNotApproved')
-  if (activeWaves.value.length > 0)
-    return t('projects.lifecycle.complete.activeWaves', {
-      waves: activeWaves.value.map((wave) => wave.wave).join(', '),
-    })
+  const problem = failure.problem
+  const waves = Array.isArray(problem?.waves)
+    ? problem.waves.filter((wave): wave is string => typeof wave === 'string')
+    : activeWaves.value.map((wave) => wave.wave)
+  const reason =
+    problem?.reason ??
+    (!releaseApproved.value ? 'release_not_approved' : waves.length ? 'active_wave' : undefined)
+  if (reason === 'release_not_approved') return t('projects.lifecycle.complete.releaseNotApproved')
+  if (reason === 'active_wave')
+    return t('projects.lifecycle.complete.activeWaves', { waves: waves.join(', ') })
   return undefined
 }
 

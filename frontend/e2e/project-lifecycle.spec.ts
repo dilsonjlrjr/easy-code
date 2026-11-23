@@ -267,3 +267,18 @@ test('US-39 CA-1: a budget alert arrives live and the project state does not cha
   await expect(page.locator('.state-label').first()).toContainText('Em andamento')
   await expectNoSeriousA11yViolations(page)
 })
+
+test('US-52 CA-3: an active wave refuses the conclusion and is named as the reason', async ({
+  page,
+}) => {
+  const api = signedIn()
+  const state = seed(api, { available_actions: ['pause', 'cancel', 'record_publication'] })
+  state.waves = [waveSummary('REL-02', 'running')]
+  await api.install(page)
+  await openProject(page)
+
+  await actions(page).getByRole('button', { name: 'Concluir projeto' }).click()
+  const dialog = page.getByRole('dialog', { name: `Concluir o projeto ${NAME}?` })
+  await dialog.getByRole('button', { name: 'Concluir o projeto' }).click()
+  await expect(dialog.getByTestId('completion-reason')).toContainText('Há onda ativa: REL-02.')
+})

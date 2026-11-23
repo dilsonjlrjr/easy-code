@@ -1,5 +1,5 @@
 import { apiClient } from '@/shared/api/apiClient'
-import type { DetailedCost, GateState } from '@/shared/api/contract'
+import type { DetailedCost, GateState, StageState } from '@/shared/api/contract'
 import type { HttpClient } from '@/shared/api/httpClient'
 import type { Acceptance, FindingSummary } from '@/features/findings/api/findingsApi'
 import type { GateDecision } from '@/features/gates/api/gatesApi'
@@ -22,7 +22,14 @@ export interface ReleaseBlock {
  * stage still blocked too, as a partial consolidation (PD-14).
  */
 export interface ReleaseSummary {
-  gates: Array<{ gate: string; state: GateState | null; decision?: GateDecision | null }>
+  /** State of the `release` stage (partial consolidation while `blocked`, PD-14). */
+  stage_state?: StageState | null
+  gates: Array<{
+    gate: string
+    round?: number | null
+    state: GateState | null
+    decision?: GateDecision | null
+  }>
   tests?: { ct_total?: number; passed?: number; failed?: number; report?: string }
   open_findings: FindingSummary[]
   accepted_risks: Array<{ finding: FindingSummary; acceptance: Acceptance }>

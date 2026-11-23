@@ -19,14 +19,14 @@ function releaseRound(overrides: Record<string, unknown> = {}) {
     outputs: [{ artifact: 'RELEASE-01', version: 1, type: 'RELEASE', state: 'in_review' }],
     checks: [
       {
-        check: 'achado.sem_bloqueante_aberto',
+        check: 'finding.no_blocking_open',
         name: 'Nenhum achado bloqueante aberto',
         type: 'automatic',
         failure_severity: 'blocks',
         status: 'passed',
       },
       {
-        check: 'release.entrega_conferida',
+        check: 'release.delivery_checked',
         name: 'Entrega conferida',
         type: 'human',
         failure_severity: 'blocks',
@@ -175,11 +175,11 @@ test('US-08 CA-1, CA-3: the approver approves; the repository gets the version m
   await expect(page.getByTestId('release-status')).toContainText('Release aprovada')
   await expect(page.getByTestId('release-status')).toContainText('Dev')
   const approval = api.requests.find((request) => request.path.endsWith('/approval'))
-  expect(approval?.body).toEqual({ confirmed_human_checks: ['release.entrega_conferida'] })
+  expect(approval?.body).toEqual({ confirmed_human_checks: ['release.delivery_checked'] })
   expect(approval?.headers['x-csrf-token']).toBe('csrf-dev')
 
   await page.getByRole('tab', { name: 'Entrega' }).click()
-  await expect(page.getByTestId('release-marks')).toContainText('v1.0.0')
+  await expect(page.getByTestId('release-marks')).toContainText('release-01')
   await expect(page.getByTestId('release-delivery')).toContainText('docs/release/')
   // CA-17-17: nothing is published from here in Phase 2.
   await expect(page.getByRole('button', { name: /Publicar/ })).toHaveCount(0)

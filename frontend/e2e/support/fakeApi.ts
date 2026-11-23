@@ -969,7 +969,14 @@ export class FakeApi {
       if (current !== 'in_progress') return conflict
       const stages = (state.workflow.stages as Json[] | undefined) ?? []
       const release = stages.find((stage) => stage.id === 'release')
-      if (release?.state !== 'approved') return conflict
+      if (release?.state !== 'approved')
+        return {
+          status: 409,
+          body: problem('state-conflict', 409, {
+            current_state: current,
+            reason: 'release_not_approved',
+          }),
+        }
       const blocking = state.findings.filter(
         (item) =>
           ['critical', 'high'].includes(String(item.severity)) &&
@@ -980,7 +987,15 @@ export class FakeApi {
           status: 409,
           body: problem('blocking-finding', 409, { findings: blocking.map((item) => item.id) }),
         }
-      if (activeWaves.length > 0) return conflict
+      if (activeWaves.length > 0)
+        return {
+          status: 409,
+          body: problem('state-conflict', 409, {
+            current_state: current,
+            reason: 'active_wave',
+            waves: activeWaves.map((wave) => wave.id),
+          }),
+        }
       project.state = 'completed'
       project.available_actions = []
     }
@@ -1043,7 +1058,16 @@ export class FakeApi {
       const attempts = (wave.attempts as Json[] | undefined) ?? []
       wave.attempts = [
         ...attempts,
-        { number: wave.attempt, final_state: 'failed', failure_cause: wave.failure_cause },
+        {
+          number: wave.attempt,
+          final_state: 'failed',
+          failure_cause: wave.failure_cause,
+          start: '2026-11-22T09:00:00-03:00',
+          end: '2026-11-22T09:30:00-03:00',
+          cost: wave.cost,
+          initial_sequence: 1,
+          final_sequence: 9,
+        },
       ]
       wave.attempt = Number(wave.attempt) + 1
       if (summary) summary.attempt = wave.attempt
@@ -1153,7 +1177,7 @@ export class FakeApi {
     state.repository = {
       ...repository,
       status: 'available',
-      marks: [{ name: 'v1.0.0', commit, when: '2026-11-22T10:10:00-03:00' }],
+      marks: [{ name: 'release-01', commit, when: '2026-11-22T10:10:00-03:00' }],
     }
     const actions = (state.project.available_actions as string[] | undefined) ?? []
     const roles = (state.project.my_roles as string[] | undefined) ?? []
@@ -1212,7 +1236,9 @@ export class FakeApi {
         )
         .map((wave) => ({ type: 'active_wave', reference: wave.id })),
     ]
+    const releaseStage = stages.find((stage) => stage.id === 'release')
     return {
+      stage_state: releaseStage?.state ?? null,
       gates,
       tests: { ct_total: 12, passed: 12, failed: 0, report: 'REL-QA-01' },
       open_findings: open.map(summaryOf),

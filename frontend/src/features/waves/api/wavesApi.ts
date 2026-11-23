@@ -48,7 +48,17 @@ export interface Wave extends WaveSummary {
     version?: number | null
     status: 'pending' | 'writing' | 'written'
   }>
-  attempts: Array<{ number: number; final_state: string; failure_cause?: string | null }>
+  /** US-13 CA-1: every attempt with its interval, cost and the event sequences it spans. */
+  attempts: Array<{
+    number: number
+    final_state: string
+    failure_cause?: string | null
+    start?: string
+    end?: string | null
+    cost?: DetailedCost
+    initial_sequence?: number
+    final_sequence?: number | null
+  }>
   available_actions: AvailableAction[]
 }
 

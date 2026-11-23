@@ -155,7 +155,9 @@ const separationOfDuties = computed(() => {
     ? `gates.separation.${reason}`
     : 'gates.separation.generic'
 })
-const releaseApproved = computed(() => stage.value?.state === 'approved')
+const releaseApproved = computed(
+  () => (stage.value?.state ?? summary.value?.stage_state) === 'approved',
+)
 const releaseArtifact = computed(() =>
   stage.value?.artifacts.find((artifact) => artifact.type === 'RELEASE'),
 )
@@ -371,6 +373,19 @@ const completeLines = computed(() => [
     }),
   ),
 ])
+
+/** US-52 CA-2, CA-3: the refusal by its `reason` (`release_not_approved`, `active_wave`). */
+function completionReason(failure: unknown): string | undefined {
+  if (!hasProblemSlug(failure, 'state-conflict')) return undefined
+  const problem = failure.problem
+  const reason = problem?.reason ?? (!releaseApproved.value ? 'release_not_approved' : undefined)
+  if (reason === 'release_not_approved') return t('projects.lifecycle.complete.releaseNotApproved')
+  if (reason === 'active_wave') {
+    const waves = Array.isArray(problem?.waves) ? problem.waves.join(', ') : ''
+    return t('projects.lifecycle.complete.activeWaves', { waves })
+  }
+  return undefined
+}
 
 async function submitComplete(key: string): Promise<void> {
   const api = currentProjectApi()
@@ -743,11 +758,11 @@ async function submitComplete(key: string): Promise<void> {
     >
       <template #default="{ failure }">
         <p
-          v-if="hasProblemSlug(failure, 'state-conflict') && !releaseApproved"
+          v-if="completionReason(failure)"
           class="mt-2 font-weight-medium"
           data-testid="completion-reason"
         >
-          {{ $t('projects.lifecycle.complete.releaseNotApproved') }}
+          {{ completionReason(failure) }}
         </p>
       </template>
     </ConfirmActionDialog>
