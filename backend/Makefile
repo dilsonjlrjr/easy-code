@@ -51,31 +51,41 @@ sandbox-image:
 	docker build -q -t $(SANDBOX_TEST_IMAGE) ../infra/sandbox/go >/dev/null
 
 # The binaries embed copies of domain specs (workflow, artifact schemas, permissions) and agent
-# instructions, so builds are reproducible from project/backend alone. check-specs fails when a copy
-# drifts from its source in the repository; sync-specs refreshes the copies.
-SPECS_DIR := internal/infrastructure/specs/data
+# instructions, so builds are reproducible from this repository alone. The sources live in a separate
+# specification workspace (specs/ and agentes/), found at SPECS_SOURCE. check-specs fails when a copy
+# drifts from its source and is skipped when the workspace is absent; sync-specs refreshes the copies.
+SPECS_DIR    := internal/infrastructure/specs/data
+SPECS_SOURCE ?= ../..
+HAS_SPECS    := $(shell test -d "$(SPECS_SOURCE)/specs/dominio" && test -d "$(SPECS_SOURCE)/agentes/instrucoes" && echo yes)
 
 check-specs:
-	@cmp -s ../../specs/dominio/workflow/workflow-basico.yaml $(SPECS_DIR)/workflow/workflow-basico.yaml || { echo "drift: workflow-basico.yaml (make sync-specs)"; exit 1; }
-	@cmp -s ../../specs/dominio/workflow/workflow-padrao.yaml $(SPECS_DIR)/workflow/workflow-padrao.yaml || { echo "drift: workflow-padrao.yaml (make sync-specs)"; exit 1; }
-	@cmp -s ../../specs/dominio/governanca/permissoes.yaml $(SPECS_DIR)/governanca/permissoes.yaml || { echo "drift: permissoes.yaml (make sync-specs)"; exit 1; }
-	@cmp -s ../../specs/dominio/governanca/gates.yaml $(SPECS_DIR)/governanca/gates.yaml || { echo "drift: gates.yaml (make sync-specs)"; exit 1; }
-	@cmp -s ../../specs/dominio/governanca/checagens.yaml $(SPECS_DIR)/governanca/checagens.yaml || { echo "drift: checagens.yaml (make sync-specs)"; exit 1; }
-	@diff -rq ../../specs/dominio/artefatos $(SPECS_DIR)/artefatos --exclude=README.md
-	@diff -rq ../../agentes/instrucoes $(SPECS_DIR)/agentes --exclude=README.md
-	@diff -rq ../../agentes/skills $(SPECS_DIR)/skills --exclude=README.md
-	@cmp -s ../../agentes/referencia/reserva-de-salas.md $(SPECS_DIR)/referencia/reserva-de-salas.md || { echo "drift: reserva-de-salas.md (make sync-specs)"; exit 1; }
+ifeq ($(HAS_SPECS),)
+	@echo "specification workspace not found at $(SPECS_SOURCE): skipping check-specs"
+else
+	@cmp -s $(SPECS_SOURCE)/specs/dominio/workflow/workflow-basico.yaml $(SPECS_DIR)/workflow/workflow-basico.yaml || { echo "drift: workflow-basico.yaml (make sync-specs)"; exit 1; }
+	@cmp -s $(SPECS_SOURCE)/specs/dominio/workflow/workflow-padrao.yaml $(SPECS_DIR)/workflow/workflow-padrao.yaml || { echo "drift: workflow-padrao.yaml (make sync-specs)"; exit 1; }
+	@cmp -s $(SPECS_SOURCE)/specs/dominio/governanca/permissoes.yaml $(SPECS_DIR)/governanca/permissoes.yaml || { echo "drift: permissoes.yaml (make sync-specs)"; exit 1; }
+	@cmp -s $(SPECS_SOURCE)/specs/dominio/governanca/gates.yaml $(SPECS_DIR)/governanca/gates.yaml || { echo "drift: gates.yaml (make sync-specs)"; exit 1; }
+	@cmp -s $(SPECS_SOURCE)/specs/dominio/governanca/checagens.yaml $(SPECS_DIR)/governanca/checagens.yaml || { echo "drift: checagens.yaml (make sync-specs)"; exit 1; }
+	@diff -rq $(SPECS_SOURCE)/specs/dominio/artefatos $(SPECS_DIR)/artefatos --exclude=README.md
+	@diff -rq $(SPECS_SOURCE)/agentes/instrucoes $(SPECS_DIR)/agentes --exclude=README.md
+	@diff -rq $(SPECS_SOURCE)/agentes/skills $(SPECS_DIR)/skills --exclude=README.md
+	@cmp -s $(SPECS_SOURCE)/agentes/referencia/reserva-de-salas.md $(SPECS_DIR)/referencia/reserva-de-salas.md || { echo "drift: reserva-de-salas.md (make sync-specs)"; exit 1; }
 	@echo "embedded specs in sync"
+endif
 
 sync-specs:
-	cp ../../specs/dominio/workflow/workflow-basico.yaml ../../specs/dominio/workflow/workflow-padrao.yaml $(SPECS_DIR)/workflow/
-	cp ../../specs/dominio/governanca/permissoes.yaml ../../specs/dominio/governanca/gates.yaml ../../specs/dominio/governanca/checagens.yaml $(SPECS_DIR)/governanca/
-	cp ../../specs/dominio/artefatos/*.schema.json $(SPECS_DIR)/artefatos/
-	cp ../../agentes/referencia/reserva-de-salas.md $(SPECS_DIR)/referencia/
-	rm -rf $(SPECS_DIR)/skills && cp -r ../../agentes/skills $(SPECS_DIR)/skills && rm $(SPECS_DIR)/skills/README.md
-	for f in ../../agentes/instrucoes/*.md; do case "$$f" in */README.md) ;; *) cp "$$f" $(SPECS_DIR)/agentes/ ;; esac; done
+ifeq ($(HAS_SPECS),)
+	$(error specification workspace not found at $(SPECS_SOURCE); set SPECS_SOURCE)
+endif
+	cp $(SPECS_SOURCE)/specs/dominio/workflow/workflow-basico.yaml $(SPECS_SOURCE)/specs/dominio/workflow/workflow-padrao.yaml $(SPECS_DIR)/workflow/
+	cp $(SPECS_SOURCE)/specs/dominio/governanca/permissoes.yaml $(SPECS_SOURCE)/specs/dominio/governanca/gates.yaml $(SPECS_SOURCE)/specs/dominio/governanca/checagens.yaml $(SPECS_DIR)/governanca/
+	cp $(SPECS_SOURCE)/specs/dominio/artefatos/*.schema.json $(SPECS_DIR)/artefatos/
+	cp $(SPECS_SOURCE)/agentes/referencia/reserva-de-salas.md $(SPECS_DIR)/referencia/
+	rm -rf $(SPECS_DIR)/skills && cp -r $(SPECS_SOURCE)/agentes/skills $(SPECS_DIR)/skills && rm $(SPECS_DIR)/skills/README.md
+	for f in $(SPECS_SOURCE)/agentes/instrucoes/*.md; do case "$$f" in */README.md) ;; *) cp "$$f" $(SPECS_DIR)/agentes/ ;; esac; done
 
-# What CI runs; needs only Docker. From the repo root: make -C project/backend ci
+# What CI runs; needs only Docker. From the repository root: make -C backend ci
 ci: check-specs lint test-integration build
 
 lint: cache

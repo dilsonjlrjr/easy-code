@@ -1,4 +1,4 @@
-# Single CI entry point for the platform (docs/entrega/DoD.md). Any runner calls `make -C project ci`.
+# Single CI entry point for the platform. Any runner calls `make ci` from the repository root.
 # Every step runs inside pinned containers, so the host needs only Docker and make (RNF-17).
 # Paths may contain spaces: always keep them inside double quotes.
 
@@ -9,7 +9,9 @@ PY_DEPS          ?= jsonschema==4.10.3 attrs==26.1.0 pyrsistent==0.20.0 pyyaml==
 
 UID_GID   := $(shell id -u):$(shell id -g)
 FRONTEND  := $(CURDIR)/frontend
-REPO_ROOT := $(shell cd .. && pwd)
+# The specification workspace (specs/, docs/, agentes/) sits next to this repository when present.
+SPECS_SOURCE ?= $(shell cd .. && pwd)
+HAS_SPECS    := $(shell test -f "$(SPECS_SOURCE)/specs/dominio/ferramentas/validar_tudo.py" && echo yes)
 
 DOCKER_NODE := docker run --rm -u $(UID_GID) -e HOME=/tmp -e CI=1 \
                -e npm_config_cache=/cache/npm -v easycode-npm-cache:/cache \
@@ -51,14 +53,19 @@ frontend-e2e: frontend-deps
 	docker run --rm --init --ipc=host -u $(UID_GID) -e HOME=/tmp -e CI=1 \
 		-v "$(FRONTEND)":/work -w /work $(PLAYWRIGHT_IMAGE) npx playwright test
 
-# Domain, requirements, architecture and data validators; the repository is mounted read-only.
+# Domain, requirements, architecture and data validators of the specification workspace, mounted read-only.
+# Skipped when the workspace is absent (a clone of this repository alone).
 # jsonschema stays on 4.10.x: the validators use RefResolver, which newer releases no longer resolve the same way.
 specs:
+ifeq ($(HAS_SPECS),)
+	@echo "specification workspace not found at $(SPECS_SOURCE): skipping specs"
+else
 	docker run --rm -e PIP_ROOT_USER_ACTION=ignore -e PIP_DISABLE_PIP_VERSION_CHECK=1 \
-		-v "$(REPO_ROOT)":/repo:ro -w /repo $(PYTHON_IMAGE) \
+		-v "$(SPECS_SOURCE)":/repo:ro -w /repo $(PYTHON_IMAGE) \
 		sh -c 'pip install -q --no-cache-dir $(PY_DEPS) && python3 specs/dominio/ferramentas/validar_tudo.py'
+endif
 
-# easycode-desktop (ADR-20): Go and UI tests plus the Linux binary, in containers. Not part of `ci`: the first
+# easycode-desktop: Go and UI tests plus the Linux binary, in containers. Not part of `ci`: the first
 # run builds an image with GTK 4 and WebKitGTK 6 and compiles them through cgo, which takes minutes.
 .PHONY: desktop-ci
 desktop-ci:
