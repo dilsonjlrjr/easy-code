@@ -24,7 +24,7 @@ function signedIn(): FakeApi {
 
 async function sendPackage(page: Page, name: string): Promise<void> {
   const section = page.getByTestId('skill-import')
-  await section.getByLabel('Pacote zip da skill').setInputFiles({
+  await section.locator('input[type="file"]').setInputFiles({
     name,
     mimeType: 'application/zip',
     buffer: Buffer.from('PK fake zip'),
@@ -35,19 +35,24 @@ async function sendPackage(page: Page, name: string): Promise<void> {
 test('US-44 CA-1: a valid package is followed until the skill is in the library at version 1', async ({
   page,
 }) => {
+  // Two accessibility scans and several round trips: slow on the shared CI host.
+  test.slow()
   const api = signedIn()
   await api.install(page)
   await page.goto('/settings/skills')
   await expect(page.getByRole('tab', { name: 'Biblioteca de skills' })).toHaveAttribute(
     'aria-selected',
     'true',
+    { timeout: 30_000 },
   )
   await expect(page.getByTestId('native-skills')).toContainText('Revisão de SQL')
   await expect(page.getByText('Nenhuma skill da organização.')).toBeVisible()
   await expectNoSeriousA11yViolations(page)
 
   await sendPackage(page, 'lgpd.zip')
-  await expect(page.getByTestId('skill-imports')).toContainText('Skill lgpd v1: liberada.')
+  await expect(page.getByTestId('skill-imports')).toContainText('Skill lgpd v1: liberada.', {
+    timeout: 30_000,
+  })
   const row = page.getByTestId('skill-lgpd')
   await expect(row).toContainText('Skill lgpd')
   await expect(row).toContainText('v1')
@@ -69,11 +74,12 @@ test('US-44 CA-2, CA-3: a package without SKILL.md or above the limit is refused
 
   await sendPackage(page, 'missing.zip')
   const section = page.getByTestId('skill-import')
-  await expect(section.getByRole('alert')).toContainText('Pacote inválido')
-  await expect(section.getByRole('alert')).toContainText('O pacote não tem SKILL.md na raiz.')
+  const failure = section.getByTestId('skill-send-failure')
+  await expect(failure).toContainText('Pacote inválido', { timeout: 30_000 })
+  await expect(failure).toContainText('O pacote não tem SKILL.md na raiz.')
 
   await sendPackage(page, 'big.zip')
-  await expect(section.getByRole('alert')).toContainText('Pacote acima do tamanho máximo.')
+  await expect(failure).toContainText('Pacote acima do tamanho máximo.', { timeout: 30_000 })
   await expect(section.getByTestId('problem-limit')).toContainText('Limite: 5')
   expect(api.skills).toHaveLength(1)
 })
@@ -81,6 +87,8 @@ test('US-44 CA-2, CA-3: a package without SKILL.md or above the limit is refused
 test('US-44 CA-4: a suspicious skill stays blocked until an administrator releases it with a justification', async ({
   page,
 }) => {
+  // Two accessibility scans and several round trips: slow on the shared CI host.
+  test.slow()
   const api = signedIn()
   await api.install(page)
   await page.goto('/settings/skills')

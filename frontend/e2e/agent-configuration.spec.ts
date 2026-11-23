@@ -69,12 +69,16 @@ function seed(
 test('US-25 CA-1, CA-2, CA-4: the lead adjusts instructions and tools; a new version is born', async ({
   page,
 }) => {
+  // Two accessibility scans and several round trips: slow on the shared CI host.
+  test.slow()
   const { api } = seed()
   await api.install(page)
   await page.goto(`/projects/${PROJECT_ID}/agents/dba-agent`)
 
   // CA-1: instructions version, tools, skills and output criteria.
-  await expect(page.getByTestId('agent-header')).toContainText('Instruções v1.0')
+  await expect(page.getByTestId('agent-header')).toContainText('Instruções v1.0', {
+    timeout: 30_000,
+  })
   await expect(page.getByTestId('agent-tools')).toContainText('docs/dados/**')
   await expect(page.getByText('dic.ddl_executes')).toBeVisible()
   // CA-4: each wave with the configuration version it used.
@@ -96,7 +100,9 @@ test('US-25 CA-1, CA-2, CA-4: the lead adjusts instructions and tools; a new ver
   await expectNoSeriousA11yViolations(page)
   await review.getByRole('button', { name: 'Salvar nova versão' }).click()
 
-  await expect(page.getByTestId('agent-header')).toContainText('Configuração v2')
+  await expect(page.getByTestId('agent-header')).toContainText('Configuração v2', {
+    timeout: 30_000,
+  })
   await expect(page.getByTestId('agent-adjustment-text')).toHaveText('Nomes de tabela no singular.')
   await expect(page.getByTestId('agent-versions')).toContainText('Configuração v2')
   await expect(page.getByTestId('agent-versions')).toContainText('Configuração v1')
@@ -131,7 +137,9 @@ test('US-25 CA-3: a tool outside the role is refused with its name and the versi
   const review = page.getByTestId('agent-review-dialog')
   await review.getByRole('button', { name: 'Salvar nova versão' }).click()
   const alert = review.getByRole('alert')
-  await expect(alert).toContainText('Ferramenta fora do permitido para o papel do agente.')
+  await expect(alert).toContainText('Ferramenta fora do permitido para o papel do agente.', {
+    timeout: 30_000,
+  })
   await expect(alert).toContainText('Ferramenta: browser.')
   await review.getByRole('button', { name: 'Continuar editando' }).click()
   await expect(page.getByTestId('agent-header')).toContainText('Configuração v1')
@@ -143,7 +151,9 @@ test('US-25 / CA-22-9: a member reads the configuration without the edit action'
   const { api } = seed(['member'])
   await api.install(page)
   await page.goto(`/projects/${PROJECT_ID}/agents/dba-agent`)
-  await expect(page.getByTestId('agent-header')).toContainText('Configuração v1')
+  await expect(page.getByTestId('agent-header')).toContainText('Configuração v1', {
+    timeout: 30_000,
+  })
   await expect(page.getByTestId('agent-history')).toBeVisible()
   await expect(page.getByTestId('edit-agent')).toHaveCount(0)
 })

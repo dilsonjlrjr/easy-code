@@ -23,6 +23,21 @@ describe('createHttpClient', () => {
     expect(new Headers(init?.headers).get('Accept-Language')).toBe('en')
   })
 
+  it('reads an accepted answer without body as no content (deleteProject 202)', async () => {
+    const fetchImplementation = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(
+        new Response('', { status: 202, headers: { 'Content-Type': 'application/json' } }),
+      )
+    const client = createHttpClient({
+      baseUrl: '/api',
+      currentLanguage: () => 'en',
+      fetchImplementation,
+    })
+
+    await expect(client.post('/projects/p1/deletion', {})).resolves.toBeUndefined()
+  })
+
   it('follows a language change between requests', async () => {
     let language = 'pt-BR'
     const fetchImplementation = vi

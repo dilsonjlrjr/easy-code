@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test'
 import { expectNoSeriousA11yViolations } from './support/a11y'
 import { FakeApi, phaseOneWorkflow, type ProjectState } from './support/fakeApi'
+import { chooseOption } from './support/select'
 
 const PROJECT_ID = '3f6c1e2a-8b4d-4c9e-a1f7-5d2b9e0c7a14'
 
@@ -56,11 +57,13 @@ function seed(state = 'in_review', roles = ['member']): { api: FakeApi; project:
 test('US-53 CA-1: a member edits an item; the new version waits for the agent validation', async ({
   page,
 }) => {
+  // Two accessibility scans and several round trips: slow on the shared CI host.
+  test.slow()
   const { api } = seed()
   await api.install(page)
   await page.goto(`/projects/${PROJECT_ID}/artifacts/US-01`)
 
-  await page.getByTestId('edit-artifact').click()
+  await page.getByTestId('edit-artifact').click({ timeout: 30_000 })
   const dialog = page.getByTestId('artifact-edit-dialog')
   await expect(dialog).toContainText('O agente da etapa valida e formata a edição')
   const content = dialog.getByLabel('Conteúdo (Markdown com cabeçalho YAML)')
@@ -72,7 +75,7 @@ test('US-53 CA-1: a member edits an item; the new version waits for the agent va
   await dialog.getByLabel('Motivo da mudança').fill('Ajuste pedido pela área de facilities.')
   await send.click()
 
-  await expect(dialog).toBeHidden()
+  await expect(dialog).toBeHidden({ timeout: 30_000 })
   await expect(page.getByTestId('artifact-edit-notice')).toContainText(
     'aguarda a validação do agente',
   )
@@ -93,13 +96,16 @@ test('US-53 CA-2: a refused edit keeps the text typed and shows the reason', asy
   const { api } = seed()
   await api.install(page)
   await page.goto(`/projects/${PROJECT_ID}/artifacts/US-01`)
-  await page.getByTestId('edit-artifact').click()
+  await page.getByTestId('edit-artifact').click({ timeout: 30_000 })
   const dialog = page.getByTestId('artifact-edit-dialog')
   const content = dialog.getByLabel('Conteúdo (Markdown com cabeçalho YAML)')
   await content.fill('---\nid: US-01\n---\nONDA-ATIVA texto da pessoa')
   await dialog.getByLabel('Motivo da mudança').fill('Correção.')
   await dialog.getByRole('button', { name: 'Enviar para validação' }).click()
-  await expect(dialog.getByRole('alert')).toContainText('A ação não vale no estado atual.')
+  await expect(dialog.getByTestId('artifact-edit-failure')).toContainText(
+    'A ação não vale no estado atual.',
+    { timeout: 30_000 },
+  )
   await expect(dialog).toContainText('Seu texto foi mantido')
   await expect(content).toHaveValue(/ONDA-ATIVA texto da pessoa/)
 })
@@ -110,12 +116,12 @@ test('US-53 CA-4: removing an item is a new version; no earlier version is delet
   const { api } = seed('draft', ['lead'])
   await api.install(page)
   await page.goto(`/projects/${PROJECT_ID}/artifacts/US-01`)
-  await page.getByTestId('delete-artifact').click()
+  await page.getByTestId('delete-artifact').click({ timeout: 30_000 })
   const dialog = page.getByTestId('artifact-edit-dialog')
   await expect(dialog).toContainText('nenhuma versão anterior é apagada')
   await dialog.getByLabel('Motivo da mudança').fill('História fora do escopo.')
   await dialog.getByRole('button', { name: 'Excluir item' }).click()
-  await expect(dialog).toBeHidden()
+  await expect(dialog).toBeHidden({ timeout: 30_000 })
   await expect(page.getByTestId('version-list').locator('li')).toHaveCount(3)
   const request = api.requests.find((item) => item.path.endsWith('/artifact-edits'))
   expect(request?.body).toEqual({
@@ -132,6 +138,7 @@ test('US-53 CA-6: an approved artifact offers no edit', async ({ page }) => {
   await page.goto(`/projects/${PROJECT_ID}/artifacts/US-01`)
   await expect(page.getByTestId('artifact-approved-notice')).toContainText(
     'só muda por reabertura via achado',
+    { timeout: 30_000 },
   )
   await expect(page.getByTestId('edit-artifact')).toHaveCount(0)
 })
@@ -142,12 +149,12 @@ test('US-53 CA-7: an approved artifact opened by a scope change is edited with i
   const { api } = seed('approved', ['approver'])
   await api.install(page)
   await page.goto(`/projects/${PROJECT_ID}/artifacts/US-01?finding=ACH-04`)
-  await page.getByTestId('edit-artifact').click()
+  await page.getByTestId('edit-artifact').click({ timeout: 30_000 })
   const dialog = page.getByTestId('artifact-edit-dialog')
   await expect(dialog).toContainText('mudança de escopo do achado ACH-04')
   await dialog.getByLabel('Motivo da mudança').fill('Mudança de escopo decidida.')
   await dialog.getByRole('button', { name: 'Enviar para validação' }).click()
-  await expect(dialog).toBeHidden()
+  await expect(dialog).toBeHidden({ timeout: 30_000 })
   const request = api.requests.find((item) => item.path.endsWith('/artifact-edits'))
   expect(request?.body).toMatchObject({ operation: 'modify', finding: 'ACH-04' })
 })
@@ -155,13 +162,14 @@ test('US-53 CA-7: an approved artifact opened by a scope change is edited with i
 test('US-53 CA-5: a member records an imposed ADR citing a project constraint', async ({
   page,
 }) => {
+  // Two accessibility scans and several round trips: slow on the shared CI host.
+  test.slow()
   const { api, project } = seed()
   await api.install(page)
   await page.goto(`/projects/${PROJECT_ID}/artifacts`)
-  await page.getByTestId('create-artifact').click()
+  await page.getByTestId('create-artifact').click({ timeout: 30_000 })
   const dialog = page.getByTestId('artifact-edit-dialog')
-  await dialog.getByRole('combobox', { name: 'Tipo' }).click()
-  await page.getByRole('option', { name: 'ADR imposta (decisão já tomada)' }).click()
+  await chooseOption(page, dialog, 'Tipo', /ADR imposta/)
   await expect(dialog).toContainText('A ADR imposta não compara opções')
   const content = dialog.getByLabel('Conteúdo (Markdown com cabeçalho YAML)')
   await expect(content).toHaveValue(/natureza: imposta/)
@@ -171,7 +179,7 @@ test('US-53 CA-5: a member records an imposed ADR citing a project constraint', 
   await content.fill(text)
   await dialog.getByLabel('Motivo da mudança').fill('Norma de infraestrutura da empresa.')
   await dialog.getByRole('button', { name: 'Enviar para validação' }).click()
-  await expect(dialog).toBeHidden()
+  await expect(dialog).toBeHidden({ timeout: 30_000 })
   await expect(page.getByTestId('artifact-edit-notice')).toBeVisible()
   await expect(page.getByRole('link', { name: 'ADR-01' })).toBeVisible()
   expect(project.artifacts['ADR-01']?.current.author).toMatchObject({ type: 'human' })

@@ -181,7 +181,12 @@ async function submit(): Promise<void> {
             rows="2"
             auto-grow
           />
-          <ProblemAlert v-if="failure" :error="failure" class="mt-3" />
+          <ProblemAlert
+            v-if="failure"
+            :error="failure"
+            class="mt-3"
+            data-testid="artifact-edit-failure"
+          />
           <p v-if="failure" class="text-body-2 mt-2">{{ $t('artifactEdit.keptText') }}</p>
         </v-card-text>
         <v-card-actions>

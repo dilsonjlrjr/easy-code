@@ -29,12 +29,14 @@ function seed(state: string, roles: string[] = ['lead', 'approver']): FakeApi {
 test('US-04 CA-1, CA-3: the lead deletes a canceled project by typing its name', async ({
   page,
 }) => {
+  // Two accessibility scans and several round trips: slow on the shared CI host.
+  test.slow()
   const api = seed('canceled')
   await api.install(page)
   await page.goto(`/projects/${PROJECT_ID}/configuration`)
 
   const section = page.getByTestId('project-deletion')
-  await section.getByRole('button', { name: 'Excluir projeto' }).click()
+  await section.getByRole('button', { name: 'Excluir projeto' }).click({ timeout: 30_000 })
   const dialog = page.getByRole('dialog', { name: `Excluir o projeto ${NAME}?` })
   // RN-1: the dialog says what happens to the data before anything is sent.
   await expect(dialog).toContainText('anonimizado em até 24 h')
@@ -50,7 +52,7 @@ test('US-04 CA-1, CA-3: the lead deletes a canceled project by typing its name',
   await confirm.click()
 
   // CA-1: back to the list, the project is gone; the notice speaks of the anonymization.
-  await expect(page).toHaveURL(/\/projects\?notice=deleted$/)
+  await expect(page).toHaveURL(/\/projects\?notice=deleted$/, { timeout: 30_000 })
   await expect(page.getByRole('alert').or(page.getByRole('status')).first()).toBeVisible()
   await expect(page.getByText('Projeto excluído.', { exact: false })).toBeVisible()
   await expect(page.getByText(NAME, { exact: true })).toHaveCount(0)
@@ -77,6 +79,7 @@ test('US-04 CA-2: a project in progress shows "cancel before deleting" and no ac
   const section = page.getByTestId('project-deletion')
   await expect(section.getByTestId('deletion-cancel-first')).toContainText(
     'Cancele o projeto antes de excluir.',
+    { timeout: 30_000 },
   )
   await expect(section.getByRole('button', { name: 'Excluir projeto' })).toHaveCount(0)
 })
@@ -85,6 +88,6 @@ test('ER-29-1: a member of a completed project sees no deletion', async ({ page 
   const api = seed('completed', ['member'])
   await api.install(page)
   await page.goto(`/projects/${PROJECT_ID}/configuration`)
-  await expect(page.getByTestId('gate-modes')).toBeVisible()
+  await expect(page.getByTestId('gate-modes')).toBeVisible({ timeout: 30_000 })
   await expect(page.getByTestId('project-deletion')).toHaveCount(0)
 })

@@ -133,8 +133,10 @@ export function withQuery(url: string, query: RequestOptions['query']): string {
 
 async function readBody(response: Response): Promise<unknown> {
   const contentType = response.headers.get('Content-Type') ?? ''
-  if (contentType.includes('json')) return response.json()
-  return response.text()
+  const text = await response.text()
+  // An accepted operation may answer 202 with no body (deleteProject): that is no content, not an error.
+  if (contentType.includes('json')) return text ? (JSON.parse(text) as unknown) : undefined
+  return text
 }
 
 async function readProblemDetails(response: Response): Promise<ProblemDetails | undefined> {

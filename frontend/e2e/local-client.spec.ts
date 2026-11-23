@@ -12,6 +12,8 @@ function signedIn(): FakeApi {
 test('US-45 CA-5, CA-2: Minha conta › Cliente local lists my sessions and revokes one', async ({
   page,
 }) => {
+  // Two accessibility scans and several round trips: slow on the shared CI host.
+  test.slow()
   const api = signedIn()
   api.localClientSessions = [
     {
@@ -30,7 +32,7 @@ test('US-45 CA-5, CA-2: Minha conta › Cliente local lists my sessions and revo
   await page.goto('/')
 
   // RN-3: open to every signed-in person, from the account menu.
-  await page.getByTestId('account-menu').click()
+  await page.getByTestId('account-menu').click({ timeout: 30_000 })
   await page.getByTestId('account-local-client').click()
   await expect(page.getByRole('heading', { level: 1, name: 'Cliente local' })).toBeVisible()
   const table = page.getByTestId('local-sessions')
@@ -77,6 +79,8 @@ test('ESP-23 6: without sessions the page says how to connect the desktop app', 
 test('US-45 CA-1 (S-19): the code page shows client, access and origin, then goes to the SSO', async ({
   page,
 }) => {
+  // Two accessibility scans and several round trips: slow on the shared CI host.
+  test.slow()
   const api = signedIn()
   await api.install(page)
   await page.route('https://sso.example.test/**', (route) =>
@@ -85,7 +89,7 @@ test('US-45 CA-1 (S-19): the code page shows client, access and origin, then goe
   await page.goto('/device?user_code=wdjb-mjht')
 
   const request = page.getByTestId('device-request')
-  await expect(request).toContainText('Easy Code desktop')
+  await expect(request).toContainText('Easy Code desktop', { timeout: 30_000 })
   await expect(request).toContainText('easycode-desktop')
   await expect(request).toContainText('Só leitura')
   await expect(request).toContainText('O app desktop que mostrou este código')

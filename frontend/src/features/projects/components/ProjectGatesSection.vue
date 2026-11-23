@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import ConfirmActionDialog from '@/shared/ui/ConfirmActionDialog.vue'
 import type { GateApprovalModeValue, ProjectConfiguration, StageSummary } from '../api/projectsApi'
@@ -23,6 +23,14 @@ const { t } = i18n
 const rows = computed(() => gateModeRows(props.configuration.gate_approval, props.stages))
 const pending = ref<{ row: GateModeRow; mode: GateApprovalModeValue }>()
 const dialogOpen = ref(false)
+/**
+ * The radio shows the saved mode only: a choice kept back in the dialog redraws the group, since
+ * Vuetify keeps the clicked radio checked otherwise.
+ */
+const redraw = ref(0)
+watch(dialogOpen, (open) => {
+  if (!open) redraw.value += 1
+})
 
 function gateName(row: GateModeRow): string {
   if (!row.stage) return row.gate
@@ -70,6 +78,7 @@ async function submit(): Promise<void> {
       <li v-for="row in rows" :key="row.gate" :data-testid="`gate-mode-${row.gate}`">
         <v-radio-group
           v-if="canEdit && row.configurable"
+          :key="`${row.gate}-${row.mode}-${redraw}`"
           :model-value="row.mode"
           :label="gateName(row)"
           density="compact"

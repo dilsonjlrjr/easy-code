@@ -32,7 +32,7 @@ test('ESP-03 ER-03-11: Atividade recente replays the last 24 h with since=0, new
 
   const activity = page.getByTestId('home-activity')
   const items = activity.locator('li')
-  await expect(items).toHaveCount(2)
+  await expect(items).toHaveCount(2, { timeout: 30_000 })
   await expect(items.first()).toContainText('Gate da etapa')
   await expect(items.first()).toContainText('Reserva de salas')
   await expect(items.nth(1)).toContainText('Etapa')

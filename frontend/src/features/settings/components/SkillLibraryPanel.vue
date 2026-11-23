@@ -208,7 +208,12 @@ async function submitAction(key: string): Promise<void> {
             autocomplete="off"
           />
         </template>
-        <ProblemAlert v-if="sendFailure" :error="sendFailure" class="my-2" />
+        <ProblemAlert
+          v-if="sendFailure"
+          :error="sendFailure"
+          class="my-2"
+          data-testid="skill-send-failure"
+        />
         <v-btn
           type="submit"
           color="primary"
