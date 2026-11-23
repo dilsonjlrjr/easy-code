@@ -79,8 +79,9 @@ A URL da API vem de `config.js`, gerado na subida do container a partir de `API_
 
 ## Pendências conhecidas
 
-- O compose de desenvolvimento conecta como superusuário. Os papéis por processo (ADR-18), o Keycloak, o proxy TLS e
-  o CORS entre a web e a api ficam para as tarefas da E7.
+- O compose de desenvolvimento conecta como superusuário e não tem proxy TLS nem proxy de saída. Os papéis por
+  processo (ADR-18) valem em produção. Instalação e uso estão no [README da raiz](../README.md); as pendências
+  atuais estão na tabela "Andamento" de [docs/entrega/PLANO.md](../docs/entrega/PLANO.md).
 - Os diagramas de `docs/dados/er.md` passaram por conversão textual para inglês e ainda não mostram as PKs `id` novas
   nem as relações por `stage_id`. Precisam ser regenerados a partir do catálogo.
 - Os nomes de variáveis e funções dos validadores Python em `specs/dominio/ferramentas/` continuam em português. As
