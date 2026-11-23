@@ -16,7 +16,9 @@ import StateLabel from '@/shared/ui/StateLabel.vue'
 import { projectsApi } from '@/features/projects/api/projectsApi'
 import type { CallRecord, Question, SandboxExecution } from '../api/wavesApi'
 import SandboxEvidence from '../components/SandboxEvidence.vue'
-import WaveCancelDialog from '../components/WaveCancelDialog.vue'
+import ConfirmActionDialog from '@/shared/ui/ConfirmActionDialog.vue'
+import type { AvailableAction, Command } from '@/shared/api/contract'
+import { newIdempotencyKey } from '@/shared/api/idempotencyKey'
 import WaveQuestions from '../components/WaveQuestions.vue'
 import { refusedToolCalls } from '../composables/sandboxEvidence'
 import { currentWavesApi, useWaveLive } from '../composables/useWaveLive'
@@ -31,7 +33,13 @@ const live = useWaveLive(projectId, waveId)
 const openedWaiting = ref(false)
 const answerNotice = ref<string>()
 const cancelDialogOpen = ref(false)
-const cancelNotice = ref<string>()
+const pauseNowDialogOpen = ref(false)
+const restartDialogOpen = ref(false)
+/** The pending / applied notice of the last control action (ESP-18 section 6, "comando pendente"). */
+const controlNotice = ref<string>()
+/** Failure of an action sent without a dialog (pause, resume); a 409 shows the real state. */
+const controlFailure = ref<unknown>()
+const sendingAction = ref<AvailableAction>()
 
 const wave = computed(() => live.wave.value)
 const ENDED_STATES = new Set(['completed', 'failed', 'canceled'])
@@ -46,8 +54,40 @@ const CONTROL_ROLES = new Set(['member', 'approver', 'lead'])
 const canControl = computed(
   () => live.project.value?.my_roles.some((role) => CONTROL_ROLES.has(role)) ?? false,
 )
-const canCancel = computed(
-  () => canControl.value && (wave.value?.available_actions.includes('cancel') ?? false),
+/** ER-18-1: the controls are exactly `available_actions`; the page derives none by itself. */
+function offers(action: AvailableAction): boolean {
+  return canControl.value && (wave.value?.available_actions.includes(action) ?? false)
+}
+const canCancel = computed(() => offers('cancel'))
+const canPause = computed(() => offers('pause'))
+const canPauseNow = computed(() => offers('pause_now'))
+const canResume = computed(() => offers('resume'))
+const canRestart = computed(() => offers('restart'))
+const hasControls = computed(
+  () =>
+    canPause.value || canPauseNow.value || canResume.value || canRestart.value || canCancel.value,
+)
+/**
+ * ER-18-8 / CA-18-15: a wave paused by a policy shows the cause; with the project paused (by the
+ * budget or by hand) "resume" is not offered, and the page says why and what to do.
+ */
+const resumeBlockedByProject = computed(
+  () =>
+    wave.value?.state === 'paused' && !canResume.value && live.project.value?.state === 'paused',
+)
+const pauseCause = computed(() => {
+  const cause = wave.value?.pause?.cause
+  if (!cause) return undefined
+  const key = `waves.control.pauseCauses.${cause}`
+  return i18n.te(key) ? t(key) : cause
+})
+/** US-12 CA-4 / ER-18-9: pausing for longer than the limit suggests "pause now"; nothing aborts. */
+const pausingTooLong = computed(
+  () => wave.value?.state === 'pausing' && wave.value.pause?.pausing_limit_exceeded === true,
+)
+/** US-13 CA-1: the earlier attempts stay readable, with their final state and failure cause. */
+const previousAttempts = computed(() =>
+  (wave.value?.attempts ?? []).filter((attempt) => attempt.number < (wave.value?.attempt ?? 1)),
 )
 const recentHistory = computed(() => [...live.history.value].reverse())
 const refusedCalls = computed(() => refusedToolCalls(live.calls.value))
@@ -108,25 +148,77 @@ async function submitAnswer(
 }
 
 /**
- * US-14 CA-1, CA-2, CA-4: cancel is a command; the wave goes to "canceled" (live by the stream, and
- * re-read here so the screen never depends on the stream alone). A refusal (409 `state-conflict`)
- * re-reads the wave so the real state and its actions show.
+ * Every control is a command followed until applied or refused (ER-06-7 pattern). The wave changes
+ * live by the stream and is re-read here, so the screen never depends on the stream alone. A
+ * refusal (409 `state-conflict`, `budget-exhausted`) re-reads the wave so the real state and its
+ * actions show (ESP-18 section 6).
  */
-async function submitCancel(key: string): Promise<void> {
-  cancelNotice.value = t('waves.cancel.pending')
+async function runControl(
+  send: () => Promise<Command>,
+  texts: { pending: string; applied: string },
+): Promise<void> {
+  controlNotice.value = texts.pending
   try {
-    const accepted = await currentWavesApi().cancelWave(projectId, waveId, key)
+    const accepted = await send()
     const finished = await waitForCommand(accepted, (id) => projectsApi.getCommand(projectId, id))
     if (finished.state === 'refused') {
       throw new ApiError(finished.refusal?.status ?? 409, finished.refusal)
     }
-    cancelNotice.value = t('waves.cancel.applied')
+    controlNotice.value = texts.applied
   } catch (error) {
-    cancelNotice.value = undefined
+    controlNotice.value = undefined
     await live.refreshLists().catch(() => undefined)
     throw error
   }
   await live.refreshLists()
+}
+
+/** US-14 CA-1, CA-2, CA-4: cancel, after the strong confirmation. */
+function submitCancel(key: string): Promise<void> {
+  return runControl(() => currentWavesApi().cancelWave(projectId, waveId, key), {
+    pending: t('waves.cancel.pending'),
+    applied: t('waves.cancel.applied'),
+  })
+}
+
+/** US-12 CA-2: pause now, after the dialog that says the call in progress is lost and charged. */
+function submitPauseNow(key: string): Promise<void> {
+  return runControl(() => currentWavesApi().pauseWave(projectId, waveId, 'immediate', key), {
+    pending: t('waves.control.pauseNowPending'),
+    applied: t('waves.control.pauseNowApplied'),
+  })
+}
+
+/** US-13 CA-1: restart a failed wave, after its own dialog (PC-27). */
+function submitRestart(key: string): Promise<void> {
+  return runControl(() => currentWavesApi().restartWave(projectId, waveId, key), {
+    pending: t('waves.control.restartPending'),
+    applied: t('waves.control.restartApplied'),
+  })
+}
+
+/** US-12 CA-1 (cooperative pause) and CA-3 (resume): no confirmation, nothing is lost. */
+async function sendWithoutDialog(action: 'pause' | 'resume'): Promise<void> {
+  const api = currentWavesApi()
+  const key = newIdempotencyKey()
+  sendingAction.value = action
+  controlFailure.value = undefined
+  try {
+    await runControl(
+      () =>
+        action === 'pause'
+          ? api.pauseWave(projectId, waveId, 'cooperative', key)
+          : api.resumeWave(projectId, waveId, key),
+      {
+        pending: t(`waves.control.${action}Pending`),
+        applied: t(`waves.control.${action}Applied`),
+      },
+    )
+  } catch (error) {
+    controlFailure.value = error
+  } finally {
+    sendingAction.value = undefined
+  }
 }
 
 function describe(event: CloudEvent): string {
@@ -181,19 +273,156 @@ function callTitle(call: CallRecord): string {
         <h1 class="text-h4">
           {{ $t('waves.heading') }} <span class="monospace">{{ wave.id }}</span>
         </h1>
-        <StateLabel machine="wave" :state="wave.state" />
+        <StateLabel
+          machine="wave"
+          :state="wave.state"
+          :detail="
+            wave.state === 'queued' && wave.attempt > 1 ? $t('waves.control.restarted') : undefined
+          "
+        />
         <v-spacer />
         <LiveConnectionStatus :status="live.status.value" />
       </div>
-      <div v-if="canCancel" class="d-flex flex-wrap ga-2 mb-3" data-testid="wave-actions">
-        <v-btn color="error" variant="outlined" @click="cancelDialogOpen = true">
+      <!-- ESP-18 section 4: lifecycle controls, only from the web (US-12 RN-1). -->
+      <div v-if="hasControls" class="d-flex flex-wrap ga-2 mb-3" data-testid="wave-actions">
+        <v-btn
+          v-if="canPause"
+          variant="outlined"
+          :loading="sendingAction === 'pause'"
+          :disabled="sendingAction !== undefined"
+          @click="sendWithoutDialog('pause')"
+        >
+          {{ $t('waves.control.pause') }}
+        </v-btn>
+        <v-btn
+          v-if="canPauseNow"
+          color="warning"
+          variant="outlined"
+          :disabled="sendingAction !== undefined"
+          @click="pauseNowDialogOpen = true"
+        >
+          {{ $t('waves.control.pauseNow') }}
+        </v-btn>
+        <v-btn
+          v-if="canResume"
+          color="primary"
+          variant="flat"
+          :loading="sendingAction === 'resume'"
+          :disabled="sendingAction !== undefined"
+          @click="sendWithoutDialog('resume')"
+        >
+          {{ $t('waves.control.resume') }}
+        </v-btn>
+        <v-btn
+          v-if="canRestart"
+          color="primary"
+          variant="flat"
+          :disabled="sendingAction !== undefined"
+          @click="restartDialogOpen = true"
+        >
+          {{ $t('waves.control.restart') }}
+        </v-btn>
+        <v-btn
+          v-if="canCancel"
+          color="error"
+          variant="outlined"
+          :disabled="sendingAction !== undefined"
+          @click="cancelDialogOpen = true"
+        >
           {{ $t('waves.cancel.action') }}
         </v-btn>
       </div>
-      <WaveCancelDialog v-model="cancelDialogOpen" :wave-id="wave.id" :submit="submitCancel" />
-      <div v-if="cancelNotice" role="status" class="text-body-2 mb-2" data-testid="cancel-notice">
-        {{ cancelNotice }}
+      <ConfirmActionDialog
+        v-model="cancelDialogOpen"
+        :title="$t('waves.cancel.title', { wave: wave.id })"
+        :lines="[$t('waves.cancel.final'), $t('waves.cancel.lostCall')]"
+        :keep-label="$t('waves.cancel.keep')"
+        :confirm-label="$t('waves.cancel.confirm')"
+        test-id="cancel-wave-dialog"
+        :submit="submitCancel"
+      />
+      <ConfirmActionDialog
+        v-model="pauseNowDialogOpen"
+        :title="$t('waves.control.pauseNowTitle', { wave: wave.id })"
+        :lines="[$t('waves.control.pauseNowLost'), $t('waves.control.pauseNowResume')]"
+        :keep-label="$t('waves.control.back')"
+        :confirm-label="$t('waves.control.pauseNowConfirm')"
+        confirm-color="warning"
+        test-id="pause-now-dialog"
+        :submit="submitPauseNow"
+      />
+      <ConfirmActionDialog
+        v-model="restartDialogOpen"
+        :title="$t('waves.control.restartTitle', { wave: wave.id })"
+        :lines="[$t('waves.control.restartEffect'), $t('waves.control.restartHistory')]"
+        :keep-label="$t('waves.control.back')"
+        :confirm-label="$t('waves.control.restartConfirm')"
+        confirm-color="primary"
+        test-id="restart-dialog"
+        :submit="submitRestart"
+      />
+      <div v-if="controlNotice" role="status" class="text-body-2 mb-2" data-testid="control-notice">
+        {{ controlNotice }}
       </div>
+      <ProblemAlert
+        v-if="controlFailure"
+        :error="controlFailure"
+        class="mb-3"
+        data-testid="control-failure"
+      />
+      <v-alert
+        v-if="pausingTooLong"
+        type="warning"
+        variant="tonal"
+        role="alert"
+        class="mb-4"
+        data-testid="pausing-too-long"
+      >
+        {{ $t('waves.control.pausingTooLong') }}
+      </v-alert>
+      <v-alert
+        v-if="wave.state === 'paused' || wave.state === 'pausing'"
+        type="info"
+        variant="tonal"
+        class="mb-4"
+        data-testid="pause-details"
+      >
+        <p>
+          {{
+            wave.state === 'pausing'
+              ? $t('waves.control.pausingNotice')
+              : $t('waves.control.pausedNotice')
+          }}
+          <template v-if="pauseCause">
+            {{ $t('waves.control.pauseCause', { cause: pauseCause }) }}
+          </template>
+        </p>
+        <p v-if="wave.pause?.mode === 'immediate' && Number(wave.cost.lost.value) > 0">
+          {{ $t('waves.lostCost', { cost: format.money(wave.cost.lost) }) }}
+        </p>
+        <p v-if="resumeBlockedByProject" data-testid="resume-blocked">
+          {{
+            live.project.value?.pause_reason === 'budget'
+              ? $t('waves.control.resumeBlockedBudget')
+              : $t('waves.control.resumeBlockedProject')
+          }}
+          <router-link
+            :to="{
+              name:
+                live.project.value?.pause_reason === 'budget'
+                  ? ROUTE_NAMES.projectConfiguration
+                  : ROUTE_NAMES.project,
+              params: { projectId },
+            }"
+          >
+            {{
+              live.project.value?.pause_reason === 'budget'
+                ? $t('waves.control.goBudget')
+                : $t('waves.control.goProject')
+            }}
+          </router-link>
+        </p>
+      </v-alert>
       <p class="text-body-1 mb-4">
         {{ $t(`stages.${wave.stage}`) }} · {{ $t(`agents.${wave.agent}`) }} ·
         {{ $t(`waves.purpose.${wave.purpose}`) }}
@@ -464,6 +693,23 @@ function callTitle(call: CallRecord): string {
             </li>
           </ol>
         </div>
+      </section>
+
+      <section v-if="previousAttempts.length" aria-labelledby="attempts-heading" class="mb-8">
+        <h2 id="attempts-heading" class="text-h6 mb-2">{{ $t('waves.control.attempts') }}</h2>
+        <ul class="plain-list" data-testid="wave-attempts">
+          <li v-for="attempt in previousAttempts" :key="attempt.number" class="text-body-2 mb-1">
+            {{ $t('waves.attempt', { n: attempt.number }) }} ·
+            {{
+              $te(`states.wave.${attempt.final_state}`)
+                ? $t(`states.wave.${attempt.final_state}`)
+                : attempt.final_state
+            }}
+            <template v-if="attempt.failure_cause">
+              · {{ $t('waves.failureCause', { cause: failureCauseText(attempt.failure_cause) }) }}
+            </template>
+          </li>
+        </ul>
       </section>
 
       <section aria-labelledby="history-heading" class="mb-8">

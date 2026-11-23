@@ -87,7 +87,7 @@ test('US-14 CA-1: cancel a running wave after the strong confirmation; it goes t
   expect(api.requests.some((request) => request.path.endsWith('/cancellation'))).toBe(false)
 
   await cancelAndConfirm(page)
-  await expect(page.getByTestId('cancel-notice')).toContainText('Onda cancelada.')
+  await expect(page.getByTestId('control-notice')).toContainText('Onda cancelada.')
   await expect(page.locator('.state-label').first()).toContainText('Cancelada')
   await expect(page.getByTestId('canceled-notice')).toContainText('0,01')
   await expect(page.getByRole('button', { name: 'Cancelar onda' })).toHaveCount(0)

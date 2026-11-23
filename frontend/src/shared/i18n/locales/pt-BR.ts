@@ -262,6 +262,11 @@ export const ptBR = {
     'invalid-csrf': 'A sessão desta aba ficou desatualizada. Recarregue a página e tente de novo.',
     'blocked-skill': 'Skill bloqueada: só uma versão liberada pode ser associada.',
     'tool-not-allowed': 'Ferramenta fora do permitido para o papel do agente.',
+    'budget-exhausted':
+      'O orçamento está esgotado: amplie o limite de parada acima do gasto antes de retomar.',
+    'budget-above-ceiling': 'O limite de parada passa do teto da organização.',
+    'blocking-finding': 'Há achado Crítico ou Alto aberto sem aceite de risco.',
+    findings: 'Achados: {findings}',
   },
   events: {
     generic: 'Evento {type}',
@@ -662,6 +667,50 @@ export const ptBR = {
       applied: 'Onda cancelada.',
       canceledNotice:
         'Onda cancelada. Custo perdido: {cost}. Os artefatos parciais ficam em rascunho.',
+    },
+    control: {
+      pause: 'Pausar',
+      pauseNow: 'Pausar agora',
+      resume: 'Retomar',
+      restart: 'Reiniciar',
+      back: 'Voltar',
+      pausePending: 'Pausa pedida; a onda para no próximo checkpoint.',
+      pauseApplied: 'Pausa registrada: a onda para no próximo checkpoint, sem custo perdido.',
+      pauseNowTitle: 'Pausar a onda {wave} agora?',
+      pauseNowLost:
+        'A chamada de modelo em curso é abortada: os tokens dela são perdidos e cobrados.',
+      pauseNowResume: 'Depois, a onda pode ser retomada a partir do último checkpoint.',
+      pauseNowConfirm: 'Pausar agora',
+      pauseNowPending: 'Pausa imediata enviada; aguardando a plataforma.',
+      pauseNowApplied: 'Onda pausada.',
+      resumePending: 'Retomada enviada; aguardando a plataforma.',
+      resumeApplied: 'Onda retomada a partir do último checkpoint.',
+      restartTitle: 'Reiniciar a onda {wave}?',
+      restartEffect: 'A onda volta para a fila e roda de novo, numa nova tentativa.',
+      restartHistory:
+        'A tentativa anterior continua consultável, com os eventos, o custo e o motivo da falha.',
+      restartConfirm: 'Reiniciar a onda',
+      restartPending: 'Reinício enviado; aguardando a plataforma.',
+      restartApplied: 'Onda reiniciada: está na fila.',
+      restarted: 'reiniciada',
+      pausingNotice: 'Pausando: a onda para no próximo checkpoint, sem abortar a chamada em curso.',
+      pausedNotice: 'Onda pausada.',
+      pauseCause: 'Motivo: {cause}.',
+      pauseCauses: {
+        user_request: 'pedido de uma pessoa',
+        project_paused: 'projeto pausado',
+        budget_exhausted: 'orçamento esgotado',
+        dependency_reopened: 'etapa de que depende foi reaberta',
+      },
+      pausingTooLong:
+        'A onda está pausando há mais tempo que o limite configurado. Você pode usar "Pausar agora"; a plataforma não aborta sozinha.',
+      resumeBlockedBudget:
+        'Retomar está indisponível: o projeto está pausado porque o orçamento esgotou. Amplie o limite de parada e retome o projeto.',
+      resumeBlockedProject:
+        'Retomar está indisponível: o projeto está pausado. Retome o projeto primeiro.',
+      goBudget: 'Ir ao orçamento',
+      goProject: 'Ir ao projeto',
+      attempts: 'Tentativas anteriores',
     },
     failureCause: 'Causa da falha: {cause}',
     failureCauses: {

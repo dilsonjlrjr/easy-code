@@ -14,6 +14,10 @@ defineEmits<{ retry: [] }>()
 const problem = computed(() => (isApiError(props.error) ? props.error.problem : undefined))
 const messageKey = computed(() => problemMessageKey(props.error))
 const traceId = computed(() => problem.value?.trace_id)
+const findingIds = computed(() => {
+  const findings = problem.value?.findings
+  return Array.isArray(findings) ? findings.filter((id) => typeof id === 'string') : []
+})
 
 async function copyTraceId(): Promise<void> {
   if (traceId.value) await navigator.clipboard.writeText(traceId.value)
@@ -30,6 +34,10 @@ async function copyTraceId(): Promise<void> {
         <span class="monospace">{{ item.path || '/' }}</span> · {{ item.message }}
       </li>
     </ul>
+    <!-- US-08 CA-2, US-52 CA-3: the findings behind a refusal (`blocking-finding`), by id. -->
+    <p v-if="findingIds.length" class="mt-1" data-testid="problem-findings">
+      {{ $t('problems.findings', { findings: findingIds.join(', ') }) }}
+    </p>
     <p v-if="traceId" class="text-body-2 mt-2">
       {{ $t('problems.traceId') }}
       <code class="monospace">{{ traceId }}</code>

@@ -661,6 +661,8 @@ export class FakeApi {
           : { text: output }
       }
       if (fifth === 'cancellation' && method === 'POST') return this.cancelWave(state, wave, input)
+      if (fifth && ['pause', 'resume', 'restart'].includes(fifth) && method === 'POST')
+        return this.controlWave(state, wave, fifth, input)
       if (fifth === 'checkpoints') {
         return { status: 200, body: { items: state.checkpoints[fourth] ?? [], next_cursor: null } }
       }
@@ -814,6 +816,73 @@ export class FakeApi {
     const summary = state.waves.find((item) => item.id === wave.id)
     if (summary) summary.state = 'canceled'
     const command = this.command('cancel', 'wave', String(wave.id), 'applied')
+    return { status: 202, body: { ...command, state: 'pending' } }
+  }
+
+  /**
+   * pauseWave, resumeWave and restartWave (US-12, US-13) with the guards of the wave machine: the
+   * action must be in `available_actions`; `immediate` needs `confirm_lost_cost`; resume needs the
+   * project in progress (409 `budget-exhausted` when it is paused by the budget).
+   */
+  private controlWave(
+    state: ProjectState,
+    wave: Json,
+    action: string,
+    input: Json,
+  ): { status: number; body: unknown } {
+    const roles = (state.project.my_roles as string[] | undefined) ?? []
+    if (!roles.some((role) => ['member', 'approver', 'lead'].includes(role)))
+      return { status: 403, body: problem('forbidden', 403) }
+    const actions = (wave.available_actions as string[] | undefined) ?? []
+    const wanted = action === 'pause' && input.mode === 'immediate' ? 'pause_now' : action
+    if (wanted === 'pause_now' && input.confirm_lost_cost !== true)
+      return { status: 400, body: problem('confirmation-required', 400) }
+    if (action === 'restart' && input.confirm !== true)
+      return { status: 400, body: problem('validation', 400) }
+    if (!actions.includes(wanted))
+      return { status: 409, body: problem('state-conflict', 409, { current_state: wave.state }) }
+    if (action === 'resume' && state.project.state === 'paused') {
+      const slug = state.project.pause_reason === 'budget' ? 'budget-exhausted' : 'state-conflict'
+      return { status: 409, body: problem(slug, 409) }
+    }
+    const summary = state.waves.find((item) => item.id === wave.id)
+    const setState = (next: string, available: string[]) => {
+      wave.state = next
+      wave.available_actions = available
+      if (summary) summary.state = next
+    }
+    if (wanted === 'pause') {
+      setState('pausing', ['pause_now', 'cancel'])
+      wave.pause = {
+        mode: 'cooperative',
+        cause: 'user_request',
+        requested_at: '2026-11-22T10:06:00-03:00',
+      }
+    } else if (wanted === 'pause_now') {
+      setState('paused', ['resume', 'cancel'])
+      wave.pause = {
+        mode: 'immediate',
+        cause: 'user_request',
+        requested_at: '2026-11-22T10:06:00-03:00',
+      }
+      const cost = wave.cost as Json
+      cost.lost = { value: '0.0040', currency: 'BRL' }
+    } else if (wanted === 'resume') {
+      setState('running', ['pause', 'pause_now', 'cancel'])
+      wave.pause = null
+    } else {
+      const attempts = (wave.attempts as Json[] | undefined) ?? []
+      wave.attempts = [
+        ...attempts,
+        { number: wave.attempt, final_state: 'failed', failure_cause: wave.failure_cause },
+      ]
+      wave.attempt = Number(wave.attempt) + 1
+      if (summary) summary.attempt = wave.attempt
+      wave.failure_cause = null
+      wave.result = null
+      setState('queued', ['cancel'])
+    }
+    const command = this.command(wanted, 'wave', String(wave.id), 'applied')
     return { status: 202, body: { ...command, state: 'pending' } }
   }
 

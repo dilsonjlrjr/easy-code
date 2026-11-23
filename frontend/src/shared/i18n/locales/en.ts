@@ -258,6 +258,11 @@ export const en: MessageSchema = {
     'invalid-csrf': 'The session of this tab is out of date. Reload the page and try again.',
     'blocked-skill': 'Blocked skill: only an unblocked version can be associated.',
     'tool-not-allowed': 'Tool outside what the agent role allows.',
+    'budget-exhausted':
+      'The budget is exhausted: raise the stop limit above the spend before resuming.',
+    'budget-above-ceiling': "The stop limit is above the organization's ceiling.",
+    'blocking-finding': 'There is an open Critical or High finding without a risk acceptance.',
+    findings: 'Findings: {findings}',
   },
   events: {
     generic: 'Event {type}',
@@ -656,6 +661,50 @@ export const en: MessageSchema = {
       pending: 'Cancellation sent; waiting for the platform.',
       applied: 'Wave canceled.',
       canceledNotice: 'Wave canceled. Lost cost: {cost}. Partial artifacts stay as drafts.',
+    },
+    control: {
+      pause: 'Pause',
+      pauseNow: 'Pause now',
+      resume: 'Resume',
+      restart: 'Restart',
+      back: 'Back',
+      pausePending: 'Pause requested; the wave stops at the next checkpoint.',
+      pauseApplied: 'Pause recorded: the wave stops at the next checkpoint, with no lost cost.',
+      pauseNowTitle: 'Pause wave {wave} now?',
+      pauseNowLost: 'The model call in progress is aborted: its tokens are lost and charged.',
+      pauseNowResume: 'The wave can then be resumed from its last checkpoint.',
+      pauseNowConfirm: 'Pause now',
+      pauseNowPending: 'Immediate pause sent; waiting for the platform.',
+      pauseNowApplied: 'Wave paused.',
+      resumePending: 'Resume sent; waiting for the platform.',
+      resumeApplied: 'Wave resumed from its last checkpoint.',
+      restartTitle: 'Restart wave {wave}?',
+      restartEffect: 'The wave goes back to the queue and runs again, as a new attempt.',
+      restartHistory:
+        'The previous attempt stays readable, with its events, cost and failure cause.',
+      restartConfirm: 'Restart the wave',
+      restartPending: 'Restart sent; waiting for the platform.',
+      restartApplied: 'Wave restarted: it is queued.',
+      restarted: 'restarted',
+      pausingNotice:
+        'Pausing: the wave stops at the next checkpoint, without aborting the call in progress.',
+      pausedNotice: 'Wave paused.',
+      pauseCause: 'Reason: {cause}.',
+      pauseCauses: {
+        user_request: 'requested by a person',
+        project_paused: 'project paused',
+        budget_exhausted: 'budget exhausted',
+        dependency_reopened: 'a stage it depends on was reopened',
+      },
+      pausingTooLong:
+        'The wave has been pausing for longer than the configured limit. You can use "Pause now"; the platform never aborts by itself.',
+      resumeBlockedBudget:
+        'Resume is unavailable: the project is paused because the budget ran out. Raise the stop limit and resume the project.',
+      resumeBlockedProject:
+        'Resume is unavailable: the project is paused. Resume the project first.',
+      goBudget: 'Go to the budget',
+      goProject: 'Go to the project',
+      attempts: 'Previous attempts',
     },
     failureCause: 'Failure cause: {cause}',
     failureCauses: {

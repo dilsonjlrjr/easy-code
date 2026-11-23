@@ -32,7 +32,14 @@ export interface Wave extends WaveSummary {
   git_commit?: string | null
   /** US-29: schema errors per artifact (JSON pointer in the header and message). */
   artifact_errors?: Array<{ artifact: string; path: string; message: string }>
-  pause?: { mode?: 'cooperative' | 'immediate'; cause?: string; requested_at?: string } | null
+  pause?: {
+    mode?: 'cooperative' | 'immediate'
+    /** `user_request`, `project_paused`, `budget_exhausted`, `dependency_reopened` (event payload). */
+    cause?: string
+    requested_at?: string
+    /** US-12 CA-4: pausing for longer than the configured limit (`limit_pausing`). */
+    pausing_limit_exceeded?: boolean
+  } | null
   last_checkpoint?: number | null
   question_open?: string | null
   expected_outputs?: Array<{
@@ -171,6 +178,20 @@ export interface WavesApi {
   listEvents: (projectId: string, waveId: string) => Promise<EventsPage>
   /** US-14: `cancel` (confirmed); aborts the call in progress and records the lost cost. */
   cancelWave: (projectId: string, waveId: string, idempotencyKey: string) => Promise<Command>
+  /**
+   * US-12: `cooperative` stops at the next checkpoint with no lost cost (CA-1); `immediate` aborts
+   * the call in progress, whose tokens are lost and charged, so it carries the confirmation (CA-2).
+   */
+  pauseWave: (
+    projectId: string,
+    waveId: string,
+    mode: 'cooperative' | 'immediate',
+    idempotencyKey: string,
+  ) => Promise<Command>
+  /** US-12 CA-3: back to running from the last checkpoint. */
+  resumeWave: (projectId: string, waveId: string, idempotencyKey: string) => Promise<Command>
+  /** US-13 CA-1: a failed wave goes back to the queue; the previous attempt stays readable. */
+  restartWave: (projectId: string, waveId: string, idempotencyKey: string) => Promise<Command>
   listSandboxExecutions: (projectId: string, waveId: string) => Promise<SandboxExecution[]>
   /** The full combined output of a command, as text (never rendered as HTML; RNF-05). */
   downloadExecutionOutput: (
@@ -226,6 +247,22 @@ export function createWavesApi(client: HttpClient = apiClient): WavesApi {
     cancelWave: (projectId, waveId, idempotencyKey) =>
       client.post<Command>(
         `${wavePath(projectId, waveId)}/cancellation`,
+        { confirm: true },
+        { headers: idempotencyHeaders(idempotencyKey) },
+      ),
+    pauseWave: (projectId, waveId, mode, idempotencyKey) =>
+      client.post<Command>(
+        `${wavePath(projectId, waveId)}/pause`,
+        mode === 'immediate' ? { mode, confirm_lost_cost: true } : { mode },
+        { headers: idempotencyHeaders(idempotencyKey) },
+      ),
+    resumeWave: (projectId, waveId, idempotencyKey) =>
+      client.post<Command>(`${wavePath(projectId, waveId)}/resume`, undefined, {
+        headers: idempotencyHeaders(idempotencyKey),
+      }),
+    restartWave: (projectId, waveId, idempotencyKey) =>
+      client.post<Command>(
+        `${wavePath(projectId, waveId)}/restart`,
         { confirm: true },
         { headers: idempotencyHeaders(idempotencyKey) },
       ),
