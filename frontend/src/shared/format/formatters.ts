@@ -22,6 +22,22 @@ export function formatDecimalAmount(locale: string, value: string, currency: str
   return formatMoney(locale, { value, currency })
 }
 
+/** A percentage given in points (`80` → "80%"), at most one decimal. */
+export function formatPercent(locale: string, points: number | null | undefined): string {
+  if (points === null || points === undefined || !Number.isFinite(points)) return ''
+  return new Intl.NumberFormat(locale, { style: 'percent', maximumFractionDigits: 1 }).format(
+    points / 100,
+  )
+}
+
+/** Share of `part` in `whole`, in points; undefined when the whole is not a positive amount. */
+export function moneyShare(part: Money | null | undefined, whole: Money | null | undefined) {
+  const total = Number(whole?.value)
+  const value = Number(part?.value)
+  if (!Number.isFinite(total) || total <= 0 || !Number.isFinite(value)) return undefined
+  return (value / total) * 100
+}
+
 export function formatInteger(locale: string, value: number | null | undefined): string {
   if (value === null || value === undefined) return ''
   return new Intl.NumberFormat(locale, { maximumFractionDigits: 0 }).format(value)

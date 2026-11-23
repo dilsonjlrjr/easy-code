@@ -4,6 +4,7 @@ import { ApiError } from '@/shared/api/problemDetails'
 import { waitForCommand, type WaitForCommandOptions } from '@/shared/commands/waitForCommand'
 import {
   constraintsPayload,
+  type Budget,
   type ConstraintDraft,
   type Project,
   type ProjectsApi,
@@ -17,6 +18,8 @@ export interface NewProjectDraft {
   artifactLanguage: string
   /** Optional technical constraints, saved as version 1 with the project (US-54 CA-1). */
   constraints?: ConstraintDraft[]
+  /** US-39 CA-4: the stop limit and alerts, sent with the project (ESP-05 ER-05-8). */
+  budget?: Budget
 }
 
 export type FlowStep = 'create' | 'attachments' | 'configuration' | 'start'
@@ -71,6 +74,7 @@ export class NewProjectFlow {
           name: draft.name.trim(),
           business_need: draft.businessNeed,
           provider_submission_acknowledgment: true,
+          ...(draft.budget ? { budget: draft.budget } : {}),
           ...(draft.constraints?.length
             ? { constraints: constraintsPayload(draft.constraints) }
             : {}),

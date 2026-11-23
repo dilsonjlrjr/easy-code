@@ -15,7 +15,9 @@ const lightTheme: ThemeDefinition = {
     secondary: '#4f5b75',
     background: '#f7f8fc',
     surface: '#ffffff',
-    error: '#b3261e',
+    // Darker than the usual #b3261e: a focused field in error tints its background with this
+    // color, and the floating label must keep 4.5:1 over it (RNF-18).
+    error: '#98201a',
     info: '#1d5fa8',
     success: '#2e6b30',
     warning: '#8a5300',

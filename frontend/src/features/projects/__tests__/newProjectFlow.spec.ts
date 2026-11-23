@@ -17,6 +17,11 @@ function fakeApi(overrides: Partial<ProjectsApi> = {}): ProjectsApi {
     getWorkflow: vi.fn(),
     getStage: vi.fn(),
     listWaves: vi.fn(),
+    pauseProject: vi.fn(),
+    resumeProject: vi.fn(),
+    cancelProject: vi.fn(),
+    completeProject: vi.fn(),
+    getCosts: vi.fn(),
     ...overrides,
   }
 }

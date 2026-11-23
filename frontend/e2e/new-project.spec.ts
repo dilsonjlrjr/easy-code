@@ -44,8 +44,14 @@ test('US-03 CA-1/CA-3, US-05 CA-1/CA-5, US-54 CA-1: create the project, acknowle
   // US-54 CA-1: optional technical constraints go with the project as version 1.
   await page.getByRole('button', { name: 'Adicionar restrição' }).click()
   await page.getByLabel('Descrição').fill('Banco PostgreSQL da empresa')
+  // US-39 CA-4, CA-05-8: the stop limit is required; leaving it empty points the field out.
+  await page.getByRole('button', { name: 'Continuar' }).click()
+  await expect(page.getByText('O limite de parada é obrigatório.')).toBeVisible()
+  await expect(page.getByLabel('Limite de parada (BRL)')).toBeFocused()
+  await page.getByLabel('Limite de parada (BRL)').fill('150,00')
   await expectNoSeriousA11yViolations(page)
   await page.getByRole('button', { name: 'Continuar' }).click()
+  await expect(page.getByTestId('review-stop-limit')).toContainText('150,00')
 
   // CA-5: phase 1 shows only Requirements, Architecture and Implementation.
   const stages = page.locator('ol li', { hasText: /^(Requisitos|Arquitetura|Implementação)$/ })
@@ -70,6 +76,11 @@ test('US-03 CA-1/CA-3, US-05 CA-1/CA-5, US-54 CA-1: create the project, acknowle
   expect(created?.body).toMatchObject({
     provider_submission_acknowledgment: true,
     constraints: { items: [{ category: 'other', description: 'Banco PostgreSQL da empresa' }] },
+    // CA-05-9: alerts stay at 50% and 80% when untouched.
+    budget: {
+      stop_limit: { value: '150.00', currency: 'BRL' },
+      percentage_alert_limits: [50, 80],
+    },
   })
   const patch = api.requests.find((request) => request.method === 'PATCH')
   expect(patch?.headers['if-match']).toBe('"1"')
@@ -113,6 +124,7 @@ test('US-05 CA-2: without a valid key the start is refused and the project page 
   await page.getByLabel('Necessidade de negócio').fill('Algo a fazer.')
   await page.getByRole('button', { name: 'Continuar' }).click()
   await expect(page.getByText('Não há modelo disponível')).toBeVisible()
+  await page.getByLabel(/Limite de parada/).fill('100')
   await page.getByRole('button', { name: 'Continuar' }).click()
   await page.getByLabel(/Estou ciente/).check()
   await page.getByRole('button', { name: 'Criar e iniciar o workflow' }).click()
@@ -121,6 +133,30 @@ test('US-05 CA-2: without a valid key the start is refused and the project page 
   const refusal = page.getByTestId('start-refusal')
   await expect(refusal).toContainText('chave válida de provedor de IA')
   await expect(refusal).toContainText('par de modelos do projeto')
+  // Without any model price the currency is unknown, the budget is not sent and the start lists it.
+  await expect(refusal).toContainText('orçamento do projeto')
   await expect(page.getByTestId('stage-requirements')).toContainText('Não iniciada')
   await expectNoSeriousA11yViolations(page)
+})
+
+test('US-39 RN-1, RN-2, CA-05-8: a limit above zero and alerts from 1 to 99 without repeats', async ({
+  page,
+}) => {
+  const api = configuredApi()
+  await api.install(page)
+  await page.goto('/projects/new')
+
+  await page.getByLabel('Nome do projeto').fill('Reserva de salas')
+  await page.getByLabel('Necessidade de negócio').fill('Reservar salas.')
+  await page.getByRole('button', { name: 'Continuar' }).click()
+  await chooseOption(page, page, 'Modelo de execução', /Modelo de execução Y/)
+  await page.getByLabel('Limite de parada (BRL)').fill('0')
+  await page.getByLabel('Alerta 2 (%)').fill('50')
+  await page.getByRole('button', { name: 'Continuar' }).click()
+  await expect(page.getByText('Informe um valor maior que zero')).toBeVisible()
+  await expect(page.getByText('Os alertas não podem se repetir.')).toBeVisible()
+  await page.getByRole('button', { name: 'remover alerta de 50%' }).last().click()
+  await page.getByLabel('Limite de parada (BRL)').fill('80')
+  await page.getByRole('button', { name: 'Continuar' }).click()
+  await expect(page.getByTestId('review-stop-limit')).toContainText('80,00')
 })

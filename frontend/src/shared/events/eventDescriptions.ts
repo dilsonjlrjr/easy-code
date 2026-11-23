@@ -15,6 +15,8 @@ export const DESCRIBED_EVENTS = new Set([
   'project.resumed',
   'project.completed',
   'project.canceled',
+  'project.budget_alerted',
+  'project.budget_exhausted',
   'stage.unblocked',
   'stage.started',
   'stage.submitted_to_gate',

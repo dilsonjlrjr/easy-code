@@ -11,6 +11,7 @@ import { useFormat } from '@/shared/format/useFormat'
 import {
   constraintsAreValid,
   constraintsPayload,
+  type Budget,
   type ConstraintDraft,
   type ProjectConfiguration,
   type StageSummary,
@@ -24,6 +25,7 @@ import {
 } from '../composables/useModelOptions'
 import { currentProjectApi, useCurrentProjectStore } from '../stores/currentProjectStore'
 import ConstraintsEditor from './ConstraintsEditor.vue'
+import ProjectBudgetSection from './ProjectBudgetSection.vue'
 import StartRefusal from './StartRefusal.vue'
 
 const { t } = useI18n()
@@ -136,6 +138,17 @@ async function save(
   } finally {
     saving.value = undefined
   }
+}
+
+/** US-39: the budget section saves through the same `If-Match` flow as the other sections. */
+async function saveBudget(budget: Budget): Promise<boolean> {
+  await save('budget', { budget })
+  // ER-29-21: a lower limit may pause the project; the header and the state follow at once.
+  if (!failure.value && !concurrentChange.value) {
+    await store.load(projectId.value).catch(() => undefined)
+    return true
+  }
+  return false
 }
 
 async function saveConstraints(): Promise<void> {
@@ -330,6 +343,14 @@ function stageName(stage: StageSummary): string {
           </v-card>
         </li>
       </ul>
+
+      <ProjectBudgetSection
+        :configuration="configuration"
+        :can-edit="canEdit"
+        :saving="saving === 'budget'"
+        :failure="failure?.scope === 'budget' ? failure.error : undefined"
+        :save="saveBudget"
+      />
 
       <!-- US-54 / ESP-29: technical constraints, input of the Architecture stage. -->
       <section aria-labelledby="constraints-heading" class="mt-8" data-testid="constraints">

@@ -17,6 +17,10 @@ import LiveConnectionStatus from '@/shared/ui/LiveConnectionStatus.vue'
 import LoadingState from '@/shared/ui/LoadingState.vue'
 import ProblemAlert from '@/shared/ui/ProblemAlert.vue'
 import StateLabel from '@/shared/ui/StateLabel.vue'
+import { useFormat } from '@/shared/format/useFormat'
+import { moneyShare } from '@/shared/format/formatters'
+import type { Money } from '@/shared/api/contract'
+import ProjectLifecycleActions from '../components/ProjectLifecycleActions.vue'
 import StartRefusal from '../components/StartRefusal.vue'
 import { currentProjectApi, useCurrentProjectStore } from '../stores/currentProjectStore'
 import { useProjectNoticesStore } from '../stores/projectNotices'
@@ -31,6 +35,9 @@ const notices = useProjectNoticesStore()
 const { message, announce } = useAnnouncer()
 const live = useProjectEventStream()
 const session = useSessionStore()
+const format = useFormat()
+/** US-39 CA-1: the last budget alert received live; the project state does not change. */
+const budgetAlert = ref<{ spend: Money; stopLimit: Money; percentage?: number }>()
 
 const projectId = computed(() => String(route.params.projectId))
 const startFailure = ref<unknown>()
@@ -60,6 +67,24 @@ const viewedAsAdministrator = computed(
 const openQuestionWave = computed(() =>
   project.value?.summary?.active_waves?.find((wave) => wave.state === 'awaiting_user'),
 )
+
+/** ER-06-11: a concluded or canceled project is read-only, with its history kept. */
+const readOnly = computed(
+  () => project.value?.state === 'completed' || project.value?.state === 'canceled',
+)
+const pausedByBudget = computed(
+  () => project.value?.state === 'paused' && project.value.pause_reason === 'budget',
+)
+/** ESP-06 3.6: budget use = spend ÷ stop limit, in the organization's currency. */
+const budgetUse = computed(() => {
+  const summary = project.value?.summary
+  if (!summary?.stop_limit) return undefined
+  return {
+    spend: summary.accumulated_cost,
+    limit: summary.stop_limit,
+    percentage: moneyShare(summary.accumulated_cost, summary.stop_limit),
+  }
+})
 
 /** ESP-30 2: the findings tab carries the count of open findings (`summary.open_findings`, PL-72). */
 const findingsTabLabel = computed(() => {
@@ -97,6 +122,14 @@ function handleEvent(event: CloudEvent, eventClass: EventClass): void {
   const type = event.type.replace(/^br\.easycode\./, '')
   if (!REFRESHING_GROUPS.some((group) => type.startsWith(group))) return
   if (!type.startsWith('wave.checkpoint_written')) announce(describeEvent(t, event))
+  if (type.startsWith('project.budget_alerted')) {
+    const spend = event.data.spend as Money | undefined
+    const stopLimit = event.data.stop_limit as Money | undefined
+    const alertLimit = event.data.alert_limit as Money | undefined
+    if (spend && stopLimit)
+      budgetAlert.value = { spend, stopLimit, percentage: moneyShare(alertLimit, stopLimit) }
+  }
+  if (type.startsWith('project.budget_exhausted')) budgetAlert.value = undefined
   scheduleRefresh()
 }
 
@@ -166,9 +199,24 @@ onBeforeUnmount(() => {
         <v-spacer />
         <LiveConnectionStatus :status="live.status.value" />
       </div>
-      <p v-if="project.lead" class="text-body-2 mb-4">
+      <p v-if="project.lead" class="text-body-2 mb-1">
         {{ $t('projects.list.lead', { name: project.lead.name }) }}
       </p>
+      <p v-if="budgetUse" class="text-body-2 mb-4" data-testid="budget-use">
+        {{
+          $t('projects.budget.use', {
+            spend: format.money(budgetUse.spend),
+            limit: format.money(budgetUse.limit),
+            percentage: format.percent(budgetUse.percentage),
+          })
+        }}
+      </p>
+      <div v-else class="mb-3" />
+      <ProjectLifecycleActions
+        :project="project"
+        :workflow="store.workflow"
+        @changed="store.load(projectId).catch(() => undefined)"
+      />
       <div role="status" class="sr-only">{{ message }}</div>
       <v-alert
         v-if="viewedAsAdministrator"
@@ -180,6 +228,61 @@ onBeforeUnmount(() => {
         {{ $t('pages.project.asAdministrator') }}
       </v-alert>
 
+      <!-- ER-06-11, US-52 CA-4: concluded or canceled is read-only, with history kept. -->
+      <v-alert
+        v-if="readOnly"
+        type="info"
+        variant="tonal"
+        class="mb-4"
+        data-testid="read-only-notice"
+      >
+        {{
+          project.state === 'completed'
+            ? $t('projects.lifecycle.completedReadOnly')
+            : $t('projects.lifecycle.canceledReadOnly')
+        }}
+      </v-alert>
+      <!-- ESP-06 3.2: paused by the budget comes first; it says what to do to resume (ER-06-8). -->
+      <v-alert
+        v-if="pausedByBudget"
+        type="error"
+        variant="tonal"
+        role="alert"
+        class="mb-4"
+        data-testid="budget-paused"
+      >
+        <p>
+          {{
+            budgetUse
+              ? $t('projects.budget.pausedWithValues', {
+                  spend: format.money(budgetUse.spend),
+                  limit: format.money(budgetUse.limit),
+                })
+              : $t('projects.budget.paused')
+          }}
+        </p>
+        <p class="mt-1">{{ $t('projects.budget.howToResume') }}</p>
+        <router-link
+          :to="{ name: ROUTE_NAMES.projectConfiguration, params: { projectId: project.id } }"
+        >
+          {{ $t('projects.budget.raiseLimit') }}
+        </router-link>
+      </v-alert>
+      <v-alert
+        v-else-if="budgetAlert"
+        type="warning"
+        variant="tonal"
+        class="mb-4"
+        data-testid="budget-alert"
+      >
+        {{
+          $t('projects.budget.alerted', {
+            percentage: format.percent(budgetAlert.percentage),
+            spend: format.money(budgetAlert.spend),
+            limit: format.money(budgetAlert.stopLimit),
+          })
+        }}
+      </v-alert>
       <!-- ESP-06 3.2: contextual notice, one per situation. -->
       <v-alert
         v-if="openQuestionWave"
@@ -220,7 +323,11 @@ onBeforeUnmount(() => {
       <nav :aria-label="$t('projects.view.sections')" class="mb-6">
         <v-tabs
           color="primary"
-          :model-value="route.name === ROUTE_NAMES.stage ? ROUTE_NAMES.project : route.name"
+          :model-value="
+            route.name === ROUTE_NAMES.stage || route.name === ROUTE_NAMES.release
+              ? ROUTE_NAMES.project
+              : route.name
+          "
           show-arrows
         >
           <v-tab

@@ -95,6 +95,7 @@ export interface NewProject {
   name: string
   business_need: string
   provider_submission_acknowledgment: true
+  budget?: Budget
   constraints?: NewConstraints
 }
 
@@ -108,17 +109,29 @@ export interface Attachment {
   submitted_by: UserRef
 }
 
+/** openapi `Budget` (politica.orcamento_projeto): the stop is always on; the limit is required. */
+export interface Budget {
+  stop_limit: Money
+  /** Percentages of the stop limit, 1 to 99, no repeats; default 50 and 80 (US-39 RN-2). */
+  percentage_alert_limits?: number[]
+}
+
+export const DEFAULT_ALERT_PERCENTAGES: readonly number[] = [50, 80]
+
 export interface ProjectConfiguration {
   model_pair: ModelPair | null
   pair_by_stage?: Partial<Record<StageId, ModelPair>>
   gate_approval: Record<string, 'human' | 'automatic'>
-  budget: unknown
+  budget: Budget | null
+  /** The organization's ceiling for the stop limit; null = no ceiling (US-39 RN-1). */
+  stop_limit_ceiling?: Money | null
   artifact_language?: string
   constraints?: Constraints | null
 }
 
 export interface ProjectConfigurationModification {
   model_pair?: ModelPair
+  budget?: Budget
   pair_by_stage?: Partial<Record<StageId, ModelPair | null>>
   artifact_language?: string
   /** Replaces the whole list and creates a new version (US-54 CA-3). */
@@ -189,6 +202,16 @@ export interface Stage extends StageSummary {
   approval?: { mode?: 'human' | 'automatic'; required_role?: 'approver' }
 }
 
+/** openapi `ProjectCosts` (US-38, US-39): totals, groups and the budget with its balance. */
+export interface ProjectCosts {
+  grouped_by: 'stage' | 'agent' | 'model' | 'provider'
+  total: DetailedCost
+  tokens: Tokens
+  time: TimeSpent
+  budget?: { stop_limit?: Money; balance?: Money; used_percentage?: number } | null
+  groups: Array<{ key: string; cost: DetailedCost; tokens: Tokens; time: TimeSpent; waves: number }>
+}
+
 export interface ProjectsApi {
   listProjects: (query: {
     state?: ProjectState[]
@@ -210,6 +233,19 @@ export interface ProjectsApi {
   getWorkflow: (projectId: string) => Promise<Workflow>
   getStage: (projectId: string, stage: string) => Promise<Stage>
   listWaves: (projectId: string, cursor?: string) => Promise<Page<WaveSummary>>
+  /** US-51 CA-1: `in_progress` → `paused` (manual). */
+  pauseProject: (projectId: string, idempotencyKey: string) => Promise<Command>
+  /** US-51 CA-2, CA-3: back to `in_progress`; paused by budget only with the limit raised. */
+  resumeProject: (projectId: string, idempotencyKey: string) => Promise<Command>
+  /** US-51 CA-4, RN-1: final; the typed project name is the confirmation. */
+  cancelProject: (
+    projectId: string,
+    nameConfirmation: string,
+    idempotencyKey: string,
+  ) => Promise<Command>
+  /** US-52: `record_publication` after the Release is approved; the project becomes read-only. */
+  completeProject: (projectId: string, idempotencyKey: string) => Promise<Command>
+  getCosts: (projectId: string) => Promise<ProjectCosts>
 }
 
 function projectPath(projectId: string): string {
@@ -265,6 +301,25 @@ export function createProjectsApi(client: HttpClient = apiClient): ProjectsApi {
     getWorkflow: (projectId) => client.get<Workflow>(`${projectPath(projectId)}/workflow`),
     getStage: (projectId, stage) =>
       client.get<Stage>(`${projectPath(projectId)}/stages/${encodeURIComponent(stage)}`),
+    pauseProject: (projectId, idempotencyKey) =>
+      client.post<Command>(`${projectPath(projectId)}/pause`, undefined, {
+        headers: idempotencyHeaders(idempotencyKey),
+      }),
+    resumeProject: (projectId, idempotencyKey) =>
+      client.post<Command>(`${projectPath(projectId)}/resume`, undefined, {
+        headers: idempotencyHeaders(idempotencyKey),
+      }),
+    cancelProject: (projectId, nameConfirmation, idempotencyKey) =>
+      client.post<Command>(
+        `${projectPath(projectId)}/cancellation`,
+        { name_confirmation: nameConfirmation },
+        { headers: idempotencyHeaders(idempotencyKey) },
+      ),
+    completeProject: (projectId, idempotencyKey) =>
+      client.post<Command>(`${projectPath(projectId)}/completion`, undefined, {
+        headers: idempotencyHeaders(idempotencyKey),
+      }),
+    getCosts: (projectId) => client.get<ProjectCosts>(`${projectPath(projectId)}/costs`),
     listWaves: (projectId, cursor) =>
       client.get<Page<WaveSummary>>(`${projectPath(projectId)}/waves`, {
         query: { cursor, limit: 100 },

@@ -61,6 +61,7 @@ test('US-48 CA-1 / CA-19-10 / CA-19-13: items show type, project, stage and age,
     'Gates (1)',
     'Perguntas (1)',
     'Achados escalados (0)',
+    'Orçamento (0)',
   ])
   await expect(filters.first()).toHaveAttribute('aria-pressed', 'true')
 
@@ -125,4 +126,30 @@ test('US-48 CA-2 / CA-19-3: a gate decided elsewhere leaves the list without rel
   await expect(items.first()).toContainText('Pergunta de agente')
   await expect(page.getByRole('button', { name: 'Gates (0)' })).toBeVisible()
   await expect(page.getByRole('status').filter({ hasText: '1 saíram' })).toBeAttached()
+})
+
+test('US-39 CA-1, RN-5: a budget alert waits in Pending items and opens the budget', async ({
+  page,
+}) => {
+  const api = apiWithItems([
+    {
+      type: 'budget',
+      project: { id: PROJECT_ID, name: 'Reserva de salas' },
+      target: { type: 'project', id: PROJECT_ID },
+      opened_at: '2026-11-22T09:00:00-03:00',
+      summary: { budget_percentage: 80 },
+    },
+  ])
+  await api.install(page)
+  await page.goto('/pending?type=budget')
+
+  const items = page.getByTestId('pending-list').locator(':scope > li')
+  await expect(items).toHaveCount(1)
+  await expect(items.first()).toContainText('Orçamento atingido: 80%')
+  await expectNoSeriousA11yViolations(page)
+  await items
+    .first()
+    .getByRole('link', { name: /^Ver orçamento/ })
+    .click()
+  await expect(page).toHaveURL(new RegExp(`/projects/${PROJECT_ID}/configuration$`))
 })

@@ -75,6 +75,8 @@ export interface ProjectState {
   links: Partial<Record<string, Json>>
   /** `CoverageMatrix` items of every priority (US-28 CA-2); the query filters them. */
   coverage: Json[]
+  /** Parts of `getReleaseSummary` that replace the consolidation built from the state. */
+  releaseOverrides?: Json
 }
 
 export function problem(slug: string, status: number, extra: Json = {}): Json {
@@ -578,6 +580,10 @@ export class FakeApi {
         if (['completed', 'canceled'].includes(String(state.project.state))) {
           return { status: 409, body: problem('state-conflict', 409) }
         }
+        if ('budget' in change) {
+          const refusal = this.budgetRefusal(state, change.budget as Json | null | undefined)
+          if (refusal) return refusal
+        }
         if (change.constraints) {
           change.constraints = this.versionConstraints(
             state.configuration.constraints as Json | null | undefined,
@@ -591,6 +597,7 @@ export class FakeApi {
         )
         state.configuration = { ...state.configuration, ...change, pair_by_stage: pairByStage }
         state.etag += 1
+        if (change.budget) this.applyBudget(state)
       }
       return {
         status: 200,
@@ -617,6 +624,17 @@ export class FakeApi {
     if (third === 'agents') return this.agents(state, method, fourth, fifth, input, headers)
     if (third === 'members') return this.members(state, method, fourth, input)
     if (third === 'start') return this.startWorkflow(state)
+    if (
+      method === 'POST' &&
+      !fourth &&
+      (third === 'pause' ||
+        third === 'resume' ||
+        third === 'cancellation' ||
+        third === 'completion')
+    )
+      return this.projectLifecycle(state, third, input)
+    if (third === 'costs') return { status: 200, body: this.costs(state) }
+    if (third === 'release' && !fourth) return { status: 200, body: this.releaseSummary(state) }
     if (third === 'commands' && fourth) return { status: 200, body: this.commands[fourth] }
     if (third === 'workflow') return { status: 200, body: state.workflow }
     if (third === 'stages' && fourth) return this.stage(state, fourth)
@@ -819,6 +837,157 @@ export class FakeApi {
     return { status: 202, body: { ...command, state: 'pending' } }
   }
 
+  /** Accumulated cost of the project (`ProjectSummary.accumulated_cost`), zero when not seeded. */
+  private spend(state: ProjectState): Json {
+    const summary = (state.project.summary as Json | undefined) ?? {}
+    return (summary.accumulated_cost as Json | undefined) ?? { value: '0', currency: 'BRL' }
+  }
+
+  /** ESP-29 ER-29-9: the stop limit is required and never above the organization's ceiling. */
+  private budgetRefusal(
+    state: ProjectState,
+    budget: Json | null | undefined,
+  ): { status: number; body: unknown } | undefined {
+    const limit = budget?.stop_limit as Json | undefined
+    if (!limit || !/^[0-9]+(\.[0-9]{1,10})?$/.test(String(limit.value)))
+      return {
+        status: 400,
+        body: problem('validation', 400, {
+          errors: [{ field: 'budget.stop_limit', message: 'required' }],
+        }),
+      }
+    const alerts = (budget?.percentage_alert_limits as number[] | undefined) ?? []
+    if (alerts.some((value) => value < 1 || value > 99) || new Set(alerts).size !== alerts.length)
+      return {
+        status: 400,
+        body: problem('validation', 400, {
+          errors: [{ field: 'budget.percentage_alert_limits', message: 'invalid' }],
+        }),
+      }
+    const ceiling = state.configuration.stop_limit_ceiling as Json | null | undefined
+    if (ceiling && Number(limit.value) > Number(ceiling.value))
+      return { status: 409, body: problem('budget-above-ceiling', 409) }
+    return undefined
+  }
+
+  /** US-39 CA-5 / ER-29-21: a stop limit at or below the spend pauses the project by budget. */
+  private applyBudget(state: ProjectState): void {
+    const budget = state.configuration.budget as Json | null
+    const limit = budget?.stop_limit as Json | undefined
+    const summary = (state.project.summary as Json | undefined) ?? {}
+    state.project.summary = { ...summary, stop_limit: limit ?? null }
+    if (!limit || state.project.state !== 'in_progress') return
+    if (Number(this.spend(state).value) >= Number(limit.value)) {
+      state.project.state = 'paused'
+      state.project.pause_reason = 'budget'
+      state.project.available_actions = ['resume', 'cancel']
+    }
+  }
+
+  /** getProjectCosts (US-38, US-39): the total and the budget with its balance. */
+  private costs(state: ProjectState): Json {
+    const spend = this.spend(state)
+    const limit = (state.configuration.budget as Json | null)?.stop_limit as Json | undefined
+    const zero = { value: '0', currency: spend.currency }
+    return {
+      grouped_by: 'stage',
+      total: { useful: spend, lost: zero, total: spend },
+      tokens: { input: 0, output: 0, read_cache: 0, write_cache: 0 },
+      time: { execution_ms: 0, cycle_ms: 0 },
+      budget: limit
+        ? {
+            stop_limit: limit,
+            balance: {
+              value: String(Math.max(0, Number(limit.value) - Number(spend.value))),
+              currency: limit.currency,
+            },
+            used_percentage: (Number(spend.value) / Number(limit.value)) * 100,
+          }
+        : null,
+      groups: [],
+    }
+  }
+
+  /**
+   * pauseProject, resumeProject, cancelProject and completeProject (US-51, US-52) with the guards of
+   * the project machine: lead or administrator (lead or approver to complete), the state, the typed
+   * name, the budget and the Release.
+   */
+  private projectLifecycle(
+    state: ProjectState,
+    action: string,
+    input: Json,
+  ): { status: number; body: unknown } {
+    const project = state.project
+    const roles = (project.my_roles as string[] | undefined) ?? []
+    const administrator = this.user.organization_roles.includes('administrator')
+    const allowed =
+      action === 'completion'
+        ? roles.includes('lead') || roles.includes('approver')
+        : roles.includes('lead') || administrator
+    if (!allowed) return { status: 403, body: problem('forbidden', 403) }
+    const current = String(project.state)
+    const conflict = {
+      status: 409,
+      body: problem('state-conflict', 409, { current_state: current }),
+    }
+    const activeWaves = state.waves.filter((wave) =>
+      ['queued', 'running', 'awaiting_user', 'pausing', 'paused'].includes(String(wave.state)),
+    )
+    let type = action
+    if (action === 'pause') {
+      if (current !== 'in_progress') return conflict
+      project.state = 'paused'
+      project.pause_reason = 'manual'
+      project.available_actions = ['resume', 'cancel']
+    } else if (action === 'resume') {
+      if (current !== 'paused') return conflict
+      const limit = (state.configuration.budget as Json | null)?.stop_limit as Json | undefined
+      if (
+        project.pause_reason === 'budget' &&
+        (!limit || Number(this.spend(state).value) >= Number(limit.value))
+      )
+        return { status: 409, body: problem('budget-exhausted', 409) }
+      project.state = 'in_progress'
+      project.pause_reason = null
+      project.available_actions = ['pause', 'cancel']
+    } else if (action === 'cancellation') {
+      type = 'cancel'
+      if (!['created', 'in_progress', 'paused'].includes(current)) return conflict
+      if (input.name_confirmation !== project.name)
+        return { status: 400, body: problem('confirmation-required', 400) }
+      project.state = 'canceled'
+      project.pause_reason = null
+      project.available_actions = []
+      for (const wave of activeWaves) {
+        wave.state = 'canceled'
+        const detail = state.waveDetails[String(wave.id)]
+        if (detail) Object.assign(detail, { state: 'canceled', available_actions: [] })
+      }
+    } else {
+      type = 'record_publication'
+      if (current !== 'in_progress') return conflict
+      const stages = (state.workflow.stages as Json[] | undefined) ?? []
+      const release = stages.find((stage) => stage.id === 'release')
+      if (release?.state !== 'approved') return conflict
+      const blocking = state.findings.filter(
+        (item) =>
+          ['critical', 'high'].includes(String(item.severity)) &&
+          !['accepted', 'closed', 'discarded'].includes(String(item.status)),
+      )
+      if (blocking.length > 0)
+        return {
+          status: 409,
+          body: problem('blocking-finding', 409, { findings: blocking.map((item) => item.id) }),
+        }
+      if (activeWaves.length > 0) return conflict
+      project.state = 'completed'
+      project.available_actions = []
+    }
+    const command = this.command(type, 'project', String(project.id), 'applied')
+    return { status: 202, body: { ...command, state: 'pending' } }
+  }
+
   /**
    * pauseWave, resumeWave and restartWave (US-12, US-13) with the guards of the wave machine: the
    * action must be in `available_actions`; `immediate` needs `confirm_lost_cost`; resume needs the
@@ -942,6 +1111,13 @@ export class FakeApi {
       const confirmed = (input.confirmed_human_checks as string[] | undefined) ?? []
       const missing = human.filter((check) => !confirmed.includes(check))
       if (missing.length > 0) return { status: 400, body: problem('pending-human-check', 400) }
+      // ER-17-10: below the minimum of distinct approvers the approval stays partial.
+      const partial = (round.partial_approvals as Json[] | undefined) ?? []
+      if (partial.length + 1 < Number(round.min_approvals ?? 1)) {
+        round.partial_approvals = [...partial, record]
+        return { status: 200, body: round }
+      }
+      if (gateId === 'gate.release') this.markRelease(state)
       round.state = 'approved'
       round.decision = { result: 'approved', record, comment: input.comment }
       for (const check of checks) if (check.type === 'human') check.status = 'passed'
@@ -964,6 +1140,90 @@ export class FakeApi {
       (item) => (item.target as Json).id !== `${gateId}/${String(round.round)}`,
     )
     return { status: 200, body: round }
+  }
+
+  /** US-08 CA-3: the approved Release marks the version in the repository; the lead may conclude. */
+  private markRelease(state: ProjectState): void {
+    const commit = 'a'.repeat(40)
+    const repository = state.repository ?? {
+      status: 'available',
+      clone_url: `https://easycode.empresa.local/git/${String(state.project.id)}.git`,
+      main_branch: 'main',
+    }
+    state.repository = {
+      ...repository,
+      status: 'available',
+      marks: [{ name: 'v1.0.0', commit, when: '2026-11-22T10:10:00-03:00' }],
+    }
+    const actions = (state.project.available_actions as string[] | undefined) ?? []
+    const roles = (state.project.my_roles as string[] | undefined) ?? []
+    if (roles.includes('lead') || roles.includes('approver'))
+      state.project.available_actions = [...new Set([...actions, 'record_publication'])]
+  }
+
+  /**
+   * getReleaseSummary (US-08, US-33 CA-4): built from the seeded gates, findings and waves, as the
+   * api consolidates them; `releaseOverrides` replaces any part of it.
+   */
+  private releaseSummary(state: ProjectState): Json {
+    const stages = (state.workflow.stages as Json[] | undefined) ?? []
+    const gates = stages
+      .filter((stage) => stage.id !== 'release')
+      .map((stage) => {
+        const gate = `gate.${String(stage.id)}`
+        const rounds = state.gates[gate] ?? []
+        const last = rounds.at(-1)
+        return {
+          gate,
+          state: last ? last.state : stage.state === 'approved' ? 'approved' : null,
+          decision: last?.decision ?? null,
+        }
+      })
+    const SUMMARY = [
+      'id',
+      'title',
+      'severity',
+      'category',
+      'status',
+      'destination_stage',
+      'author',
+      'blocking',
+      'acceptance_expired',
+    ]
+    const summaryOf = (item: Json) => Object.fromEntries(SUMMARY.map((key) => [key, item[key]]))
+    const open = state.findings.filter(
+      (item) => !['accepted', 'closed', 'discarded'].includes(String(item.status)),
+    )
+    const accepted = state.findings.filter((item) => item.status === 'accepted' && item.acceptance)
+    const blocks: Json[] = [
+      ...open
+        .filter((item) => ['critical', 'high'].includes(String(item.severity)))
+        .map((item) => ({ type: 'blocking_finding_no_acceptance', reference: item.id })),
+      ...accepted
+        .filter((item) => item.acceptance_expired === true)
+        .map((item) => ({
+          type: 'acceptance_expired',
+          reference: item.id,
+          valid_until: (item.acceptance as Json).valid_until ?? null,
+        })),
+      ...state.waves
+        .filter((wave) =>
+          ['queued', 'running', 'awaiting_user', 'pausing', 'paused'].includes(String(wave.state)),
+        )
+        .map((wave) => ({ type: 'active_wave', reference: wave.id })),
+    ]
+    return {
+      gates,
+      tests: { ct_total: 12, passed: 12, failed: 0, report: 'REL-QA-01' },
+      open_findings: open.map(summaryOf),
+      accepted_risks: accepted.map((item) => ({
+        finding: summaryOf(item),
+        acceptance: item.acceptance,
+      })),
+      cost_total: this.costs(state).total,
+      blocks,
+      ...(state.releaseOverrides ?? {}),
+    }
   }
 
   /**
@@ -1239,6 +1499,16 @@ export class FakeApi {
     if (input.constraints) {
       state.configuration.constraints = this.versionConstraints(null, input.constraints as Json)
     }
+    if (input.budget) {
+      const refusal = this.budgetRefusal(state, input.budget as Json)
+      if (refusal) {
+        this.projects = Object.fromEntries(
+          Object.entries(this.projects).filter(([key]) => key !== id),
+        )
+        return refusal
+      }
+      state.configuration.budget = input.budget
+    }
     return { status: 201, body: state.project }
   }
 
@@ -1249,6 +1519,8 @@ export class FakeApi {
     if (!this.providers.some((provider) => provider.key.status === 'active'))
       missing.push('provider_key')
     if (!state.configuration.model_pair) missing.push('model_pair')
+    // US-39 CA-4: the stop limit is required to start.
+    if (!state.configuration.budget) missing.push('budget')
     if (missing.length > 0) {
       const refusal = problem('incomplete-configuration', 409, { missing })
       return { status: 202, body: this.command('start', 'project', projectId, 'refused', refusal) }
@@ -1263,6 +1535,7 @@ export class FakeApi {
         gates_awaiting: 0,
         open_questions: 0,
         accumulated_cost: { value: '0', currency: 'BRL' },
+        stop_limit: (state.configuration.budget as Json | null)?.stop_limit ?? null,
         active_waves: [{ wave: 'REQ-01', agent: 'requirements-agent', state: 'queued' }],
       },
     }
@@ -1417,5 +1690,34 @@ export function finding(id: string, overrides: Json = {}): Json {
     artifact: id,
     available_actions: ['accept_risk', 'discard'],
     ...overrides,
+  }
+}
+
+/** The Phase 2 default workflow up to the Release; `release` is the state of the last stage. */
+export function releaseWorkflow(release: string, security = 'approved'): Json {
+  const stage = (id: string, name: string, agent: string, dependsOn: string[], state: string) => ({
+    id,
+    name,
+    short_name: name,
+    type: 'stage',
+    agent,
+    depends_on: dependsOn,
+    required_capabilities: [],
+    state,
+    gate: `gate.${id}`,
+    active_waves: 0,
+  })
+  return {
+    id: 'workflow-padrao',
+    version: 1,
+    mode: 'fixed',
+    stages: [
+      stage('requirements', 'Requisitos', 'requirements-agent', [], 'approved'),
+      stage('architecture', 'Arquitetura', 'architect-agent', ['requirements'], 'approved'),
+      stage('implementation', 'Implementação', 'developer-agent', ['architecture'], 'approved'),
+      stage('qa', 'QA', 'qa-agent', ['implementation'], 'approved'),
+      stage('security', 'Segurança', 'security-agent', ['qa'], security),
+      stage('release', 'Release', 'orchestrator', ['security'], release),
+    ],
   }
 }

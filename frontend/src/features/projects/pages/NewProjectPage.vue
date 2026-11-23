@@ -11,7 +11,15 @@ import AppBreadcrumbs from '@/shared/ui/AppBreadcrumbs.vue'
 import LoadingState from '@/shared/ui/LoadingState.vue'
 import ProblemAlert from '@/shared/ui/ProblemAlert.vue'
 import { constraintsAreValid, projectsApi, type ConstraintDraft } from '../api/projectsApi'
+import BudgetFields from '../components/BudgetFields.vue'
 import ConstraintsEditor from '../components/ConstraintsEditor.vue'
+import {
+  budgetPayload,
+  draftFrom,
+  hasBudgetErrors,
+  validateBudget,
+  type BudgetDraft,
+} from '../composables/budgetForm'
 import { parseModelKey, useModelOptions } from '../composables/useModelOptions'
 import { NewProjectFlow, type FlowStep } from '../stores/newProjectFlow'
 import { useProjectNoticesStore } from '../stores/projectNotices'
@@ -46,6 +54,9 @@ const form = reactive({
   constraints: [] as ConstraintDraft[],
 })
 const showErrors = ref(false)
+/** US-39 CA-4, ESP-05 3.2: the stop limit is required; alerts 50% and 80% unless changed. */
+const budget = ref<BudgetDraft>(draftFrom(null))
+const showBudgetErrors = ref(false)
 const nameConflict = ref(false)
 const attachmentRefusal = ref<{ name: string; limit: number }>()
 const submitting = ref(false)
@@ -91,10 +102,24 @@ const pairProviders = computed(() => {
     .map(providerName)
     .join(', ')
 })
+const budgetErrors = computed(() => validateBudget(budget.value))
+/**
+ * The organization's currency (ER-05-7): the contract gives it only through money values, so the
+ * price of the chosen execution model, or else of any model, names it. Without a price the budget
+ * is not sent and the start is refused listing the budget (US-05 CA-2).
+ */
+const currency = computed(() => {
+  const chosen = modelOptions.value.find((option) => option.value === form.execution)
+  return (
+    chosen?.model.current_price?.currency ??
+    modelOptions.value.find((option) => option.model.current_price)?.model.current_price?.currency
+  )
+})
 const canSubmit = computed(
   () =>
     form.acknowledged &&
     stepOneErrors.value.length === 0 &&
+    !hasBudgetErrors(budgetErrors.value) &&
     constraintsAreValid(form.constraints) &&
     !submitting.value,
 )
@@ -114,6 +139,13 @@ async function goTo(next: WizardStep): Promise<void> {
     showErrors.value = true
     await nextTick()
     errorSummary.value?.focus()
+    return
+  }
+  // CA-05-8: leaving step 2 without a valid stop limit points the field out with the reason.
+  if (step.value === 'configuration' && next === 'review' && hasBudgetErrors(budgetErrors.value)) {
+    showBudgetErrors.value = true
+    await nextTick()
+    document.getElementById('new-project-budget-stop-limit')?.focus()
     return
   }
   step.value = next
@@ -150,6 +182,7 @@ async function submit(): Promise<void> {
     modelPair: modelPair.value,
     artifactLanguage: form.artifactLanguage,
     constraints: form.constraints,
+    budget: currency.value ? budgetPayload(budget.value, currency.value) : undefined,
   })
   submitting.value = false
   currentFlowStep.value = undefined
@@ -355,6 +388,17 @@ const breadcrumbs = computed(() => [
         "
         :label="$t('projects.configuration.artifactLanguage')"
       />
+      <!-- ESP-05 3.2 / US-39: the stop limit (required) and the alerts. -->
+      <h3 class="text-subtitle-1 font-weight-medium mt-4 mb-2">
+        {{ $t('projects.budget.title') }}
+      </h3>
+      <BudgetFields
+        v-model="budget"
+        id-prefix="new-project-budget"
+        :currency="currency"
+        :errors="budgetErrors"
+        :show-errors="showBudgetErrors"
+      />
       <!-- ESP-05 3.2 / US-54 CA-1: optional technical constraints, version 1 of the project. -->
       <h3 class="text-subtitle-1 font-weight-medium mt-4">
         {{ $t('projects.constraints.title') }}
@@ -379,6 +423,16 @@ const breadcrumbs = computed(() => [
         <dd>{{ $t(`language.names.${form.artifactLanguage}`) }}</dd>
         <dt>{{ $t('projects.constraints.title') }}</dt>
         <dd>{{ $t('projects.constraints.count', { count: form.constraints.length }) }}</dd>
+        <dt>{{ $t('projects.budget.stopLimit') }}</dt>
+        <dd data-testid="review-stop-limit">
+          {{
+            currency
+              ? format.amount(budgetPayload(budget, currency)?.stop_limit.value ?? '', currency)
+              : budget.limitText
+          }}
+        </dd>
+        <dt>{{ $t('projects.budget.alerts') }}</dt>
+        <dd>{{ budget.alerts.map((value) => format.percent(value)).join(', ') }}</dd>
       </dl>
       <h3 class="text-subtitle-1 font-weight-medium">{{ $t('projects.new.workflow') }}</h3>
       <ol class="ml-6 mb-2">

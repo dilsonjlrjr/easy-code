@@ -5,6 +5,8 @@ import {
   formatDuration,
   formatInteger,
   formatMoney,
+  formatPercent,
+  moneyShare,
   formatRelativeAge,
 } from '../formatters'
 
@@ -20,6 +22,15 @@ describe('formatters (RNF-21, ESP-00 3.3)', () => {
   it('formats dates as dd/mm/aaaa with 24 h in pt-BR', () => {
     const text = formatDateTime('pt-BR', '2026-11-19T16:05:41-03:00')
     expect(text).toMatch(/^\d{2}\/11\/2026,? \d{2}:\d{2}$/)
+  })
+
+  it('formats budget shares as percentages (US-39, ESP-29 3.3)', () => {
+    expect(formatPercent('pt-BR', 80)).toBe('80%')
+    expect(formatPercent('en', 62.5)).toBe('62.5%')
+    expect(moneyShare({ value: '40', currency: 'BRL' }, { value: '50', currency: 'BRL' })).toBe(80)
+    expect(moneyShare({ value: '1', currency: 'BRL' }, { value: '0', currency: 'BRL' })).toBe(
+      undefined,
+    )
   })
 
   it('formats integers with the thousands separator of the language', () => {

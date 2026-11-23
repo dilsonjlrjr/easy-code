@@ -8,6 +8,7 @@ import {
   formatDuration,
   formatInteger,
   formatMoney,
+  formatPercent,
   formatRelativeAge,
 } from './formatters'
 
@@ -17,6 +18,7 @@ export function useFormat() {
   return {
     money: (money: Money | null | undefined) => formatMoney(locale.value, money),
     amount: (value: string, currency: string) => formatDecimalAmount(locale.value, value, currency),
+    percent: (points: number | null | undefined) => formatPercent(locale.value, points),
     integer: (value: number | null | undefined) => formatInteger(locale.value, value),
     dateTime: (iso: string | null | undefined) => formatDateTime(locale.value, iso),
     date: (iso: string | null | undefined) => formatDate(locale.value, iso),

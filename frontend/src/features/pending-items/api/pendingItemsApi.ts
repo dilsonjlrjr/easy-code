@@ -5,8 +5,13 @@ import { joinUrl, type HttpClient } from '@/shared/api/httpClient'
 /** openapi `PendingItemType`. Phase 1 showed gates and questions (US-48 RN-1, CA-19-10). */
 export type PendingItemType = 'gate' | 'question' | 'finding_escalated' | 'budget'
 
-/** Types with a filter: escalated findings join in MARCO-5 (US-32 CA-4); budget comes with US-39. */
-export const SHOWN_TYPES: readonly PendingItemType[] = ['gate', 'question', 'finding_escalated']
+/** Types with a filter: escalated findings (US-32 CA-4) and budget alerts (US-39 CA-1, RN-5). */
+export const SHOWN_TYPES: readonly PendingItemType[] = [
+  'gate',
+  'question',
+  'finding_escalated',
+  'budget',
+]
 
 export interface PendingItem {
   type: PendingItemType
