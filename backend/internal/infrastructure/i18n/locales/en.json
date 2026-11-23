@@ -64,6 +64,8 @@
   "problem.artifact-invalid.detail": "The artifact failed the schema validation of its type.",
   "problem.revoked-session.title": "Session revoked",
   "problem.revoked-session.detail": "The session was ended in the SSO. Sign in again.",
+  "problem.requires-web-session.title": "Action only on the web",
+  "problem.requires-web-session.detail": "The desktop app only reads and notifies. Open this screen on the web to act.",
   "problem.account-without-access.title": "Account without access",
   "problem.account-without-access.detail": "Your account has no access to the platform. Talk to the organization administrator.",
   "problem.last-approver.title": "The project needs at least one approver",

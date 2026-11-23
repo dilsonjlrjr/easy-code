@@ -83,7 +83,7 @@ func (a *api) watchNotices(rc *fasthttp.RequestCtx, principal identity.Principal
 					stream.ended("session_expired")
 					return
 				}
-				if active, err := a.deps.Sessions.Active(ctx, current); err == nil && !active {
+				if active, err := a.sessionActive(ctx, current); err == nil && !active {
 					stream.ended("session_revoked")
 					return
 				}

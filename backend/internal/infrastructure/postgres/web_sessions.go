@@ -121,5 +121,12 @@ func EndSessionsOf(ctx context.Context, q querier, userID int64, reason string) 
 	if err != nil {
 		return fmt.Errorf("end sessions of user: %w", classify(err))
 	}
+	// The sessions of the desktop app end too, and the last address seen goes (RNF-20).
+	_, err = q.Exec(WithOperation(ctx, "local_client_sessions.end_of_user"), `
+UPDATE easycode.local_client_sessions SET ended_at = coalesce(ended_at, now()), end_reason = coalesce(end_reason, $2), ip_address = NULL
+ WHERE user_id = $1 AND (ended_at IS NULL OR ip_address IS NOT NULL)`, userID, reason)
+	if err != nil {
+		return fmt.Errorf("end local client sessions of user: %w", classify(err))
+	}
 	return nil
 }

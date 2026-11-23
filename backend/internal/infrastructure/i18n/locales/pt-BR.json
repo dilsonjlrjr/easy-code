@@ -64,6 +64,8 @@
   "problem.artifact-invalid.detail": "O artefato não passou na validação do esquema do seu tipo.",
   "problem.revoked-session.title": "Sessão revogada",
   "problem.revoked-session.detail": "A sessão foi encerrada no SSO. Entre de novo.",
+  "problem.requires-web-session.title": "Ação só pela web",
+  "problem.requires-web-session.detail": "O app desktop só acompanha e avisa. Abra esta tela na web para agir.",
   "problem.account-without-access.title": "Conta sem acesso",
   "problem.account-without-access.detail": "Sua conta não tem acesso à plataforma. Fale com o administrador da organização.",
   "problem.last-approver.title": "O projeto precisa de ao menos um aprovador",

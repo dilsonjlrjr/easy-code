@@ -9,6 +9,12 @@ func (a *api) register(router *Router) {
 	router.Handle(fasthttp.MethodGet, APIPrefix+"/session/oidc/callback", a.completeWebLogin)
 	router.Handle(fasthttp.MethodGet, APIPrefix+"/me", auth(a.currentUser))
 	router.Handle(fasthttp.MethodPost, APIPrefix+"/session/logout", auth(a.endSession))
+	if a.deps.LocalClient != nil {
+		router.Handle(fasthttp.MethodGet, APIPrefix+"/session/local-client", a.getLocalClientConfiguration)
+		router.Handle(fasthttp.MethodGet, APIPrefix+"/me/local-client-sessions", auth(a.listLocalClientSessions))
+		router.Handle(fasthttp.MethodDelete, APIPrefix+"/me/local-client-sessions/{sessionId}", auth(a.revokeLocalClientSession))
+		router.Handle(fasthttp.MethodPost, APIPrefix+"/me/local-client-sessions/{sessionId}/acknowledgement", auth(a.acknowledgeLocalClientSession))
+	}
 
 	if a.deps.Providers != nil {
 		router.Handle(fasthttp.MethodGet, APIPrefix+"/providers", auth(a.listProviders))

@@ -19,6 +19,7 @@ import (
 	appgate "easycode/internal/application/gate"
 	apphealth "easycode/internal/application/health"
 	"easycode/internal/application/idempotency"
+	applocalclient "easycode/internal/application/localclient"
 	apppending "easycode/internal/application/pending"
 	apppricing "easycode/internal/application/pricing"
 	appproject "easycode/internal/application/project"
@@ -186,8 +187,12 @@ func productDependencies(cfg config.Config, pool *pgxpool.Pool, logger *slog.Log
 	release := appgate.NewReleaseQueries(projects, postgres.NewGates(pool), postgres.NewGates(pool), postgres.NewGates(pool), git.New(cfg.ReposDir), definition)
 	members := appproject.NewMemberService(tx, projects, postgres.NewMembers(pool), oidc.NewPeopleDirectory(oidc.NewAdmin(realm)),
 		postgres.NewOutbox(pool), trail)
+	provider := oidc.NewProvider(realm)
 	deps := httpapi.Dependencies{
-		Sessions:             sessions,
+		Sessions: sessions,
+		// US-45: the read-only token of the desktop app (ADR-20), checked by the realm keys and the SSO session.
+		LocalClient: applocalclient.NewService(postgres.NewUsers(pool), postgres.NewLocalClientSessions(pool),
+			oidc.NewLocalClientVerifier(provider), oidc.NewAppSessions(oidc.NewAdmin(realm)), trail, tx, id.Issuer, id.ClientID),
 		Idempotency:          idempotency.NewGuard(tx, postgres.NewIdempotencyKeys(pool)),
 		PublicOrigin:         cfg.Identity.PublicOrigin,
 		AttachmentLimitBytes: cfg.Providers.AttachmentLimitBytes,

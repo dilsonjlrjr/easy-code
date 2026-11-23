@@ -7,11 +7,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/valyala/fasthttp"
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/trace/noop"
 
 	"easycode/internal/application/idempotency"
+	"easycode/internal/application/localclient"
 	apppricing "easycode/internal/application/pricing"
 	appproject "easycode/internal/application/project"
 	"easycode/internal/infrastructure/i18n"
@@ -63,6 +65,7 @@ func newLiveAPI(t *testing.T, options ...func(*httpapi.Dependencies, *postgreste
 		Members: appproject.NewMemberService(tx, projects, postgres.NewMembers(pool),
 			oidc.NewPeopleDirectory(oidc.NewAdmin(idp.Settings(""))), postgres.NewOutbox(pool), trail),
 		Configuration: appproject.NewConfigurationService(tx, projects, projects, postgres.NewCatalog(pool), trail, wf.Definition),
+		LocalClient:   testLocalClient(idp, pool),
 	}
 	for _, option := range options {
 		option(&deps, db)
@@ -70,6 +73,29 @@ func newLiveAPI(t *testing.T, options ...func(*httpapi.Dependencies, *postgreste
 	live := liveAPI{harness: harness{handler: httpapi.NewHandler(deps), logText: logs, idp: idp}, db: db, deps: deps}
 	live.cookie = sessionCookie(t, live.harness)
 	return live
+}
+
+// testLocalClient is the desktop app side over the fake realm (US-45).
+func testLocalClient(idp *oidctest.Server, pool *pgxpool.Pool) *localclient.Service {
+	settings := idp.Settings("")
+	return localclient.NewService(postgres.NewUsers(pool), postgres.NewLocalClientSessions(pool),
+		oidc.NewLocalClientVerifier(oidc.NewProvider(settings)), oidc.NewAppSessions(oidc.NewAdmin(settings)),
+		postgres.NewAuditTrail(pool), postgres.NewTxRunner(pool), idp.Issuer(), oidctest.ClientID)
+}
+
+// bearer is a request of the desktop app with its access token (no cookie, no Origin).
+func (l liveAPI) bearer(method, path, token, body string) *fasthttp.RequestCtx {
+	rc := &fasthttp.RequestCtx{}
+	rc.Request.Header.SetMethod(method)
+	rc.Request.SetRequestURI(path)
+	rc.Request.Header.Set("Authorization", "Bearer "+token)
+	rc.Request.Header.Set("User-Agent", "easycode-desktop/1.0.0 (linux; amd64)")
+	if body != "" {
+		rc.Request.Header.SetContentType("application/json")
+		rc.Request.SetBodyString(body)
+	}
+	l.handler(rc)
+	return rc
 }
 
 // as is the same api seen by another signed-in person (test identity through the fake SSO).

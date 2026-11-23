@@ -170,7 +170,7 @@ func (a *api) watchProjectEvents(rc *fasthttp.RequestCtx, principal identity.Pri
 // revocation) or the person lost the role in the project (sse.md 5.4). A failed check keeps the
 // stream; the next heartbeat tries again.
 func (a *api) streamEnd(ctx context.Context, principal identity.Principal, current identity.Session, projectID string) string {
-	if active, err := a.deps.Sessions.Active(ctx, current); err == nil && !active {
+	if active, err := a.sessionActive(ctx, current); err == nil && !active {
 		return "session_revoked"
 	}
 	if err := a.deps.Access.Authorize(ctx, principal, projectID); err != nil && failure.From(err).Kind == failure.KindNotFound {

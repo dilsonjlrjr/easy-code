@@ -32,9 +32,22 @@ type Principal struct {
 	Administrator        bool
 }
 
-// Session is a web session (cookie ec_session), stored on the server (ADR-12).
+// Medium is how the session reached the api (CurrentUser.access_medium): the web cookie or the
+// read-only token of the desktop app (ADR-20).
+type Medium string
+
+// Access media.
+const (
+	MediumWeb         Medium = "web"
+	MediumLocalClient Medium = "local_client"
+)
+
+// Session is a web session (cookie ec_session), stored on the server (ADR-12), or a session of the
+// desktop app (Bearer token of the easycode-desktop client, local_client_sessions; ADR-20).
 type Session struct {
-	ID              int64 // internal key of web_sessions
+	ID              int64  // internal key of web_sessions or local_client_sessions (by Medium)
+	Medium          Medium // empty means web
+	PublicID        string // public id of a local client session (listLocalClientSessions); empty on the web
 	Subject         string
 	OrganizationID  string
 	AuthenticatedAt time.Time // last authentication; critical decisions need it recent (ADR-19)
@@ -42,6 +55,9 @@ type Session struct {
 	LastSeenAt      time.Time
 	CSRFToken       string
 }
+
+// LocalClient reports whether the session is the read-only token of the desktop app (PD-07).
+func (s Session) LocalClient() bool { return s.Medium == MediumLocalClient }
 
 // Session lifetimes of RNF-06 and ADR-19.
 const (

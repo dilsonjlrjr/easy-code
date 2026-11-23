@@ -71,6 +71,10 @@ type Server struct {
 	events   []Event
 	Logouts  int
 	Refreshs int
+	// appSessions are the SSO sessions of the desktop app per person (sid → open), device flow of US-45.
+	appSessions map[string]map[string]bool
+	// SessionChecks counts the reads of the sessions of a person (the api confirms at most every 60 s).
+	SessionChecks int
 }
 
 // New starts the fake realm; it stops with the test.
@@ -80,7 +84,7 @@ func New(t *testing.T) *Server {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := &Server{key: key, codes: map[string]grant{}, refresh: map[string]User{}, users: map[string]User{}}
+	s := &Server{key: key, codes: map[string]grant{}, refresh: map[string]User{}, users: map[string]User{}, appSessions: map[string]map[string]bool{}}
 	mux := http.NewServeMux()
 	mux.HandleFunc(realmPath+"/protocol/openid-connect/certs", s.certs)
 	mux.HandleFunc(realmPath+"/protocol/openid-connect/token", s.token)
@@ -153,6 +157,51 @@ func (s *Server) Authorize(t *testing.T, authorizationURL string, u User, authTi
 	s.users[u.Subject] = u
 	s.mu.Unlock()
 	return url.Values{"code": {code}, "state": {q.Get("state")}, "session_state": {"x"}}.Encode()
+}
+
+// DesktopClientID is the public OIDC client of the desktop app (ADR-20).
+const DesktopClientID = "easycode-desktop"
+
+// DesktopToken plays the device flow of the desktop app (US-45): it opens the SSO session sid of the person
+// and returns an access token like Keycloak's (audience easycode-api, azp easycode-desktop, scope
+// easycode-read), valid for ttl. change edits the claims before signing (tests of refusals).
+func (s *Server) DesktopToken(u User, sid string, ttl time.Duration, change func(claims map[string]any)) string {
+	s.mu.Lock()
+	s.users[u.Subject] = u
+	if s.appSessions[u.Subject] == nil {
+		s.appSessions[u.Subject] = map[string]bool{}
+	}
+	s.appSessions[u.Subject][sid] = true
+	s.mu.Unlock()
+	now := time.Now()
+	claims := map[string]any{
+		"iss": s.Issuer(), "sub": u.Subject, "aud": ClientID, "azp": DesktopClientID, "typ": "Bearer",
+		"exp": now.Add(ttl).Unix(), "iat": now.Unix(), "auth_time": now.Add(-time.Minute).Unix(), "sid": sid,
+		"scope": "openid easycode-read profile", "name": u.Name, "preferred_username": strings.ToLower(u.Subject),
+	}
+	if u.Administrator {
+		claims["realm_access"] = map[string]any{"roles": []string{AdministratorRole}}
+	}
+	if change != nil {
+		change(claims)
+	}
+	return s.sign(claims)
+}
+
+// EndAppSession ends an SSO session of the desktop app (refresh token revoked, session removed in the realm).
+func (s *Server) EndAppSession(subject, sid string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.appSessions[subject], sid)
+}
+
+func (s *Server) sign(claims map[string]any) string {
+	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"RS256","kid":"test","typ":"JWT"}`))
+	payloadJSON, _ := json.Marshal(claims)
+	payload := base64.RawURLEncoding.EncodeToString(payloadJSON)
+	digest := sha256.Sum256([]byte(header + "." + payload))
+	signature, _ := rsa.SignPKCS1v15(rand.Reader, s.key, crypto.SHA256, digest[:])
+	return header + "." + payload + "." + base64.RawURLEncoding.EncodeToString(signature)
 }
 
 func random() string {
@@ -276,6 +325,21 @@ func (s *Server) user(w http.ResponseWriter, r *http.Request) {
 	subject := strings.TrimPrefix(r.URL.Path, "/admin"+realmPath+"/users/")
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if person, found := strings.CutSuffix(subject, "/sessions"); found {
+		s.SessionChecks++
+		if _, ok := s.users[person]; !ok {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "User not found"})
+			return
+		}
+		sessions := []map[string]any{}
+		for sid, open := range s.appSessions[person] {
+			if open {
+				sessions = append(sessions, map[string]any{"id": sid, "userId": person, "clients": map[string]string{"c-desktop": DesktopClientID}})
+			}
+		}
+		writeJSON(w, http.StatusOK, sessions)
+		return
+	}
 	u, ok := s.users[subject]
 	if !ok {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "User not found"})

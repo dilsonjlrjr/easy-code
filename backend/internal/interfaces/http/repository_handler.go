@@ -11,6 +11,7 @@ import (
 
 	"github.com/valyala/fasthttp"
 
+	"easycode/internal/application/localclient"
 	apprepository "easycode/internal/application/repository"
 	"easycode/internal/domain/failure"
 	"easycode/internal/domain/identity"
@@ -65,7 +66,7 @@ func (a *api) gitPrincipal(rc *fasthttp.RequestCtx) (identity.Principal, error) 
 	if ok {
 		if raw, err := base64.StdEncoding.DecodeString(encoded); err == nil {
 			if _, password, found := strings.Cut(string(raw), ":"); found {
-				principal, _, err := a.auth.sessions.Authenticate(RequestContext(rc), password)
+				principal, err := a.gitAuthenticate(rc, password)
 				if err == nil {
 					SetUserID(rc, principal.Subject)
 					return principal, nil
@@ -75,6 +76,19 @@ func (a *api) gitPrincipal(rc *fasthttp.RequestCtx) (identity.Principal, error) 
 	}
 	rc.Response.Header.Set("WWW-Authenticate", `Basic realm="Easy Code"`)
 	return identity.Principal{}, failure.New(failure.KindUnauthenticated, failure.CodeNotAuthenticated, nil)
+}
+
+// gitAuthenticate accepts the web session token or the access token of the desktop app (a JWT: its git
+// credential helper answers it as the password, cliente-local.md section 5; the clone is a read).
+func (a *api) gitAuthenticate(rc *fasthttp.RequestCtx, password string) (identity.Principal, error) {
+	if a.auth.local != nil && strings.Count(password, ".") == 2 {
+		principal, _, err := a.auth.local.Authenticate(RequestContext(rc), password, localclient.Client{
+			UserAgent: string(rc.Request.Header.UserAgent()), IPAddress: clientAddress(rc),
+		})
+		return principal, err
+	}
+	principal, _, err := a.auth.sessions.Authenticate(RequestContext(rc), password)
+	return principal, err
 }
 
 // gitProject reads the project of /git/{repository}: "<project uuid>.git".

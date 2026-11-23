@@ -22,7 +22,9 @@ type Dependencies struct {
 	Tracer     trace.Tracer
 	Propagator propagation.TextMapPropagator
 
-	Sessions    SessionUseCases
+	Sessions SessionUseCases
+	// LocalClient authenticates the read-only token of the desktop app and serves its sessions (US-45).
+	LocalClient LocalClientUseCases
 	Idempotency IdempotencyGuard
 	// PublicOrigin is the web origin that writes with the cookie must send in Origin ("" skips the check).
 	PublicOrigin string
@@ -72,7 +74,7 @@ func NewHandler(deps Dependencies) fasthttp.RequestHandler {
 	router := NewRouter(responder)
 	registerRoutes(router, NewHealthHandler(deps.Health, responder))
 	if deps.Sessions != nil {
-		product := &api{deps: deps, responder: responder, auth: authenticator{sessions: deps.Sessions, publicOrigin: deps.PublicOrigin}}
+		product := &api{deps: deps, responder: responder, auth: authenticator{sessions: deps.Sessions, local: deps.LocalClient, publicOrigin: deps.PublicOrigin}}
 		product.register(router)
 	}
 	return Chain(router.Serve,
@@ -90,7 +92,7 @@ func RouteTemplates(deps Dependencies) []string {
 	router := NewRouter(responder)
 	registerRoutes(router, NewHealthHandler(deps.Health, responder))
 	if deps.Sessions != nil {
-		(&api{deps: deps, responder: responder, auth: authenticator{sessions: deps.Sessions, publicOrigin: deps.PublicOrigin}}).register(router)
+		(&api{deps: deps, responder: responder, auth: authenticator{sessions: deps.Sessions, local: deps.LocalClient, publicOrigin: deps.PublicOrigin}}).register(router)
 	}
 	templates := make([]string, 0, len(router.routes))
 	for _, r := range router.routes {
