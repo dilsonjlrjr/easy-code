@@ -53,6 +53,10 @@ func BasicWorkflow() (Workflow, error) {
 // force when their agents do.
 var StandardAgents = []string{"requirements-agent", "architect-agent", "dba-agent", "designer-agent", "developer-agent", "qa-agent", "security-agent"}
 
+// ReleaseAgents are the agents of the full workflow-padrao since MARCO-6: the seven agents and the
+// orchestrator, which consolidates the Release (US-08).
+var ReleaseAgents = append(append([]string{}, StandardAgents...), "orchestrator")
+
 // TeamAgents are the agents of MARCO-4 (without QA and Segurança), kept for the regressions of that marco.
 var TeamAgents = []string{"requirements-agent", "architect-agent", "dba-agent", "designer-agent", "developer-agent"}
 

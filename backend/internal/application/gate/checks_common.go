@@ -154,7 +154,7 @@ var typeAuthors = map[string][2]string{
 	"BACKLOG": {"requirements-agent", "requirements"}, "ARQ": {"architect-agent", "architecture"}, "ADR": {"architect-agent", "architecture"},
 	"T": {"architect-agent", "architecture"}, "DIC": {"dba-agent", "data"}, "PERSIST": {"dba-agent", "data"}, "TELAS": {"designer-agent", "design"},
 	"VALIDACAO": {"architect-agent", "validation"}, "CT": {"qa-agent", "qa-plan"}, "AMEACAS": {"security-agent", "security-threats"},
-	"REL-QA": {"qa-agent", "qa"}, "REL-SEG": {"security-agent", "security"},
+	"REL-QA": {"qa-agent", "qa"}, "REL-SEG": {"security-agent", "security"}, "RELEASE": {"orchestrator", "release"},
 }
 
 var headerAuthors = map[string]string{"orquestrador": "orchestrator", "humano": "human"}

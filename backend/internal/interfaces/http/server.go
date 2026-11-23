@@ -42,6 +42,7 @@ type Dependencies struct {
 	Skills        SkillUseCases // US-43
 	Agents        AgentUseCases // US-43
 	Gates         GateUseCases
+	Release       ReleaseUseCases      // US-08
 	Findings      FindingUseCases      // US-32, US-33
 	Traceability  TraceabilityUseCases // US-28
 	Pending       PendingUseCases

@@ -114,7 +114,18 @@ type Decisions struct {
 	outbox   event.Outbox
 	trail    audit.Trail
 	now      func() time.Time
+	release  *ReleaseQueries
 }
+
+// WithRelease makes the approval of gate.release check the Release blocks at the decision (US-08 CA-2, CA-6).
+func (d *Decisions) WithRelease(release *ReleaseQueries) *Decisions {
+	d.release = release
+	return d
+}
+
+// CodeBlockingFinding refuses an approval of gate.release with a critical or high finding open without risk
+// acceptance or an acceptance past its validity (openapi Problem blocking-finding, `findings`).
+const CodeBlockingFinding = "blocking-finding"
 
 // NewDecisions builds the service.
 func NewDecisions(tx transaction.Runner, projects appproject.Repository, store DecisionStore, outbox event.Outbox, trail audit.Trail) *Decisions {
@@ -178,6 +189,21 @@ func (d *Decisions) Decide(ctx context.Context, principal identity.Principal, se
 	}
 	if current.State != StateAwaitingHuman {
 		return RoundView{}, failure.New(failure.KindConflict, failure.CodeStateConflict, nil).With("current_state", current.State).With("available_actions", []string{})
+	}
+	if decision.Approve && stage == ReleaseStage && d.release != nil {
+		blocks, err := d.release.Blocks(ctx, decision.ProjectID)
+		if err != nil {
+			return RoundView{}, err
+		}
+		findings := []string{}
+		for _, b := range blocks {
+			if b.Type == BlockFindingWithoutAcceptance || b.Type == BlockAcceptanceExpired {
+				findings = append(findings, b.Reference)
+			}
+		}
+		if len(findings) > 0 {
+			return RoundView{}, failure.New(failure.KindConflict, CodeBlockingFinding, nil).With("findings", findings)
+		}
 	}
 	if decision.Approve {
 		if missing, unknown := humanChecks(current.Checks, decision.ConfirmedChecks); len(missing) > 0 || len(unknown) > 0 {

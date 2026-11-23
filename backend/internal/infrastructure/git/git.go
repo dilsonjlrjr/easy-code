@@ -24,6 +24,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"easycode/internal/application/gate"
 	apprepository "easycode/internal/application/repository"
 	"easycode/internal/application/runtime"
 )
@@ -160,12 +161,17 @@ func (r Repositories) Commit(ctx context.Context, projectID string, c runtime.Co
 	if err := r.ensure(ctx, dir); err != nil {
 		return "", err
 	}
-	parent := r.hasHead(ctx, dir)
-	if parent {
+	if r.hasHead(ctx, dir) {
 		if head, err := r.Head(ctx, projectID); err == nil && head.Wave == c.Wave {
 			return head.SHA, nil
 		}
 	}
+	return r.fastImport(ctx, dir, c)
+}
+
+// fastImport writes one commit on main with the files (the parent is the current main, if any).
+func (r Repositories) fastImport(ctx context.Context, dir string, c runtime.Commit) (string, error) {
+	parent := r.hasHead(ctx, dir)
 	paths := make([]string, 0, len(c.Files))
 	for p := range c.Files {
 		paths = append(paths, p)
@@ -283,4 +289,103 @@ func (r Repositories) Reachable(ctx context.Context, projectID, sha string) (boo
 		return false, err
 	}
 	return true, nil
+}
+
+// tagPattern is the name of a release mark (gate.ReleaseTag: lower case id of the RELEASE).
+var tagPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
+
+// HeadCommit implements gate.ReleaseRepository: the last commit of main, "" when none.
+func (r Repositories) HeadCommit(ctx context.Context, projectID string) (string, error) {
+	head, err := r.Head(ctx, projectID)
+	if errors.Is(err, ErrNoRepository) {
+		return "", nil
+	}
+	return head.SHA, err
+}
+
+// IsAncestor implements gate.ReleaseRepository (traceability.release_commit_contains_work).
+func (r Repositories) IsAncestor(ctx context.Context, projectID, sha, commit string) (bool, error) {
+	if !shaPattern.MatchString(sha) || !shaPattern.MatchString(commit) {
+		return false, nil
+	}
+	dir, err := r.Path(projectID)
+	if err != nil {
+		return false, err
+	}
+	if !r.hasHead(ctx, dir) {
+		return false, nil
+	}
+	if err := r.command(ctx, dir, "merge-base", "--is-ancestor", sha, commit).Run(); err != nil {
+		var exit *exec.ExitError
+		if errors.As(err, &exit) {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
+}
+
+// Mark implements gate.ReleaseRepository (US-08 CA-3): the approved RELEASE is committed on main and an
+// annotated tag marks that commit. Repeating it returns the commit of the existing tag; a commit of the mark
+// left without its tag (the worker fell between both) is reused.
+func (r Repositories) Mark(ctx context.Context, projectID string, mark gate.ReleaseMark) (string, error) {
+	if !tagPattern.MatchString(mark.Tag) {
+		return "", fmt.Errorf("invalid release tag %q", mark.Tag)
+	}
+	dir, err := r.Path(projectID)
+	if err != nil {
+		return "", err
+	}
+	if !r.hasHead(ctx, dir) {
+		return "", ErrNoRepository
+	}
+	if out, err := r.run(ctx, dir, nil, "rev-parse", "-q", "--verify", "refs/tags/"+mark.Tag+"^{commit}"); err == nil {
+		return strings.TrimSpace(string(out)), nil
+	}
+	sha := ""
+	if out, err := r.run(ctx, dir, nil, "log", "-1", "--format=%H%x00%B", "refs/heads/"+MainBranch); err == nil {
+		if head, body, ok := strings.Cut(string(out), "\x00"); ok && strings.Contains(body, "Easycode-Tag: "+mark.Tag+"\n") {
+			sha = head
+		}
+	}
+	if sha == "" {
+		if sha, err = r.fastImport(ctx, dir, runtime.Commit{Agent: "orchestrator", Message: mark.Message, Files: map[string][]byte{mark.Path: mark.Content}}); err != nil {
+			return "", err
+		}
+	}
+	if _, err := r.run(ctx, dir, nil, "-c", "user.name=Easy Code", "-c", "user.email=orchestrator@agents.easycode.local",
+		"tag", "-a", mark.Tag, "-m", "Release "+mark.Tag, sha); err != nil {
+		return "", err
+	}
+	return sha, nil
+}
+
+// Marks implements gate.ReleaseRepository: the tags of the repository with their commit (getRepository.marks).
+func (r Repositories) Marks(ctx context.Context, projectID string) ([]gate.Mark, error) {
+	dir, err := r.Path(projectID)
+	if err != nil {
+		return nil, err
+	}
+	if !r.hasHead(ctx, dir) {
+		return []gate.Mark{}, nil
+	}
+	out, err := r.run(ctx, dir, nil, "for-each-ref", "--sort=creatordate",
+		"--format=%(refname:short)%00%(*objectname)%00%(objectname)%00%(creatordate:iso-strict)", "refs/tags")
+	if err != nil {
+		return nil, err
+	}
+	marks := []gate.Mark{}
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		parts := strings.Split(line, "\x00")
+		if len(parts) != 4 {
+			continue
+		}
+		commit := parts[1]
+		if commit == "" {
+			commit = parts[2]
+		}
+		when, _ := time.Parse(time.RFC3339, parts[3])
+		marks = append(marks, gate.Mark{Name: parts[0], Commit: commit, When: when})
+	}
+	return marks, nil
 }

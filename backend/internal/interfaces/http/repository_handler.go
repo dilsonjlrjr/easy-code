@@ -43,6 +43,15 @@ func (a *api) getRepository(rc *fasthttp.RequestCtx, principal identity.Principa
 		}
 		body["last_commit"] = commit
 	}
+	marks := make([]map[string]any, 0, len(view.Marks))
+	for _, m := range view.Marks {
+		mark := map[string]any{"name": m.Name, "commit": m.Commit}
+		if !m.When.IsZero() {
+			mark["when"] = m.When.UTC().Format(time.RFC3339)
+		}
+		marks = append(marks, mark)
+	}
+	body["marks"] = marks // US-08 CA-3: the version mark of the approved Release
 	a.responder.JSON(rc, fasthttp.StatusOK, body)
 	return nil
 }

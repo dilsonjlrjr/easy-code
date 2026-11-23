@@ -2,7 +2,11 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:easycode:schema:release:v1",
   "title": "Release",
-  "description": "Consolidação da entrega (um por entrega), com gates, qualidade, rastreabilidade, custos e aprovação humana. Autor: orquestrador.",
+  "description": "Consolidação da entrega (um por entrega), com gates, qualidade, rastreabilidade, custos e aprovação humana. Autor: orquestrador. Campos de acompanhamento (x-campos-acompanhamento) podem mudar após a aprovação, sem nova versão; o resto é imutável (specs/dominio/estados/artefato.md).",
+  "x-campos-acompanhamento": [
+    "situacao",
+    "aprovacao"
+  ],
   "allOf": [
     {
       "$ref": "cabecalho-comum.schema.json"

@@ -196,6 +196,7 @@ type Progress struct {
 	repository  Repository
 	parser      artifact.HeaderParser
 	hook        RoundHook
+	release     *releaseParts
 	now         func() time.Time
 }
 
@@ -575,6 +576,11 @@ func (p *Progress) approved(ctx context.Context, d Decided, correlation string) 
 	}
 	if p.hook != nil {
 		if err := p.hook.RoundApproved(ctx, d.ProjectID, d.Stage, d.Round, correlation); err != nil {
+			return err
+		}
+	}
+	if d.Stage == ReleaseStage {
+		if err := p.recordRelease(ctx, d.ProjectID); err != nil {
 			return err
 		}
 	}

@@ -24,8 +24,16 @@ type Commit struct {
 	Wave string
 }
 
+// Mark is a tag of the project repository: the version mark of an approved Release (US-08 CA-3).
+type Mark struct {
+	Name, Commit string
+	When         time.Time
+}
+
 // Git reads the project repositories (volume repos, read-only for the api).
 type Git interface {
+	// Marks lists the tags of the repository, oldest first.
+	Marks(ctx context.Context, projectID string) ([]Mark, error)
 	// Head returns the last commit of main, or ErrEmpty.
 	Head(ctx context.Context, projectID string) (Commit, error)
 	// UploadPack answers git-upload-pack (stateless RPC); advertise writes the references.
@@ -37,6 +45,7 @@ type View struct {
 	CloneURL   string
 	MainBranch string
 	LastCommit *Commit
+	Marks      []Mark
 }
 
 // Service is the api side of the repository.
@@ -65,6 +74,9 @@ func (s *Service) Get(ctx context.Context, principal identity.Principal, project
 		return View{}, err
 	default:
 		view.LastCommit = &head
+	}
+	if view.Marks, err = s.git.Marks(ctx, projectID); err != nil {
+		return View{}, err
 	}
 	return view, nil
 }
