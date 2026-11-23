@@ -73,9 +73,13 @@ func TestGetEndsSessionWhenStill401(t *testing.T) {
 		problem(w, 401, ProblemRevokedSession)
 	}))
 	defer server.Close()
-	client := New(server.URL, &fakeTokens{current: "a1", next: "a2"}, "", nil)
+	tokens := &fakeTokens{current: "a1", next: "a2"}
+	client := New(server.URL, tokens, "", nil)
 	if _, err := client.Get(context.Background(), "/me", nil); !errors.Is(err, ErrSessionEnded) {
 		t.Fatalf("want ErrSessionEnded, got %v", err)
+	}
+	if tokens.renews != 0 {
+		t.Fatal("revoked-session must not renew the token")
 	}
 }
 

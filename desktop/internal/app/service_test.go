@@ -35,6 +35,7 @@ type fakeServer struct {
 	waveFrames   chan string
 	issued       int
 	keyInAnswer  bool
+	userAgent    string
 }
 
 func newFakeServer(t *testing.T) *fakeServer {
@@ -104,6 +105,9 @@ func (f *fakeServer) serve(w http.ResponseWriter, r *http.Request) {
 		f.mu.Unlock()
 		w.WriteHeader(204)
 	case "/api/v1/me":
+		f.mu.Lock()
+		f.userAgent = r.Header.Get("User-Agent")
+		f.mu.Unlock()
 		if f.authorized(w, r) {
 			f.json(w, 200, map[string]any{"id": "u1", "name": "Ana", "organization_roles": []string{}, "access_medium": "local_client"})
 		}
@@ -382,7 +386,8 @@ func TestRevokedSessionReturnsToSignIn(t *testing.T) {
 // A REST call with the revoked token also signs out.
 func TestRevokedSessionOnRestCall(t *testing.T) {
 	server := newFakeServer(t)
-	svc, _ := newService(t, &keychain.Memory{})
+	vault := &keychain.Memory{}
+	svc, _ := newService(t, vault)
 	signIn(t, svc, server)
 	server.mu.Lock()
 	server.revoked = true
@@ -393,6 +398,25 @@ func TestRevokedSessionOnRestCall(t *testing.T) {
 		t.Fatalf("want session_ended, got %v", err)
 	}
 	if svc.Status().Reason != ReasonSessionRevoked {
+		t.Fatalf("status %+v", svc.Status())
+	}
+	if _, err := vault.Get(); !errors.Is(err, keychain.ErrNotFound) {
+		t.Fatal("keychain must be cleared after revoked-session")
+	}
+}
+
+// sse.md 5.4 as built: session_expired renews with the refresh token and reconnects.
+func TestExpiredSessionOnStreamRenewsAndReconnects(t *testing.T) {
+	server := newFakeServer(t)
+	svc, _ := newService(t, &keychain.Memory{})
+	signIn(t, svc, server)
+	server.noticeFrames <- "event: easycode.ended\ndata: {\"reason\":\"session_expired\"}\n\n"
+	eventually(t, "reconnected with a renewed token", func() bool {
+		server.mu.Lock()
+		defer server.mu.Unlock()
+		return len(server.noticeAuth) >= 2 && server.noticeAuth[len(server.noticeAuth)-1] != server.noticeAuth[0]
+	})
+	if svc.Status().Phase != PhaseSignedIn {
 		t.Fatalf("status %+v", svc.Status())
 	}
 }
@@ -514,5 +538,23 @@ func TestStartupRestoresStoredSession(t *testing.T) {
 	status := svc.Status()
 	if status.Locale != config.LocaleEn || !status.VersionMismatch {
 		t.Fatalf("status %+v", status)
+	}
+	server.mu.Lock()
+	ua := server.userAgent
+	server.mu.Unlock()
+	if !strings.HasPrefix(ua, "easycode-desktop/2.0.0 (") || !strings.HasSuffix(ua, ")") {
+		t.Fatalf("User-Agent %q", ua)
+	}
+}
+
+// No version warning when either side is a development build.
+func TestNoVersionWarningForDevBuilds(t *testing.T) {
+	svc := &Service{deps: Deps{Version: "1.0.0"}, serverVersion: "dev"}
+	if svc.Status().VersionMismatch {
+		t.Fatal("server dev must not warn")
+	}
+	svc = &Service{deps: Deps{Version: "dev"}, serverVersion: "1.0.0"}
+	if svc.Status().VersionMismatch {
+		t.Fatal("app dev must not warn")
 	}
 }

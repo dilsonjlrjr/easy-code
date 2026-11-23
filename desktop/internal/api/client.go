@@ -116,7 +116,11 @@ func (c *Client) authenticated(ctx context.Context, method, address string) (jso
 	if !errors.As(err, &problem) || problem.Status != http.StatusUnauthorized {
 		return body, err
 	}
-	// cliente-local.md section 2: renew after a 401 and try once more.
+	if problem.Type == ProblemRevokedSession {
+		// The session was revoked: renewing would not help, the app goes back to sign-in.
+		return nil, fmt.Errorf("%w: %s", ErrSessionEnded, problem.Type)
+	}
+	// cliente-local.md section 2: renew after a 401 (session-expired) and try once more.
 	token, err = c.Tokens.Renew(ctx, token)
 	if err != nil {
 		return nil, err

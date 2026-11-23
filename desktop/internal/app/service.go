@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/url"
+	"runtime"
 	"strconv"
 	"sync"
 	"time"
@@ -211,7 +212,10 @@ func (h *Host) Shutdown() {
 	}
 }
 
-func (s *Service) userAgent() string { return "easycode-desktop/" + s.deps.Version }
+// userAgent is shown as the device in Minha conta › Cliente local: easycode-desktop/<version> (<os>; <arch>).
+func (s *Service) userAgent() string {
+	return fmt.Sprintf("easycode-desktop/%s (%s; %s)", s.deps.Version, runtime.GOOS, runtime.GOARCH)
+}
 
 func (s *Service) locale() string {
 	s.mu.Lock()
@@ -355,7 +359,9 @@ func (s *Service) statusLocked() Status {
 		Locale: s.prefs.Locale, MuteSound: s.prefs.MuteSound, AppVersion: s.deps.Version,
 		ServerVersion: s.serverVersion, Device: s.device,
 	}
-	status.VersionMismatch = s.serverVersion != "" && s.deps.Version != "dev" && s.serverVersion != s.deps.Version
+	// No warning when either side is a development build ("dev").
+	status.VersionMismatch = s.serverVersion != "" && s.serverVersion != "dev" && s.deps.Version != "dev" &&
+		s.serverVersion != s.deps.Version
 	if s.phase == PhaseSignedIn {
 		status.User = s.user
 	}
@@ -396,6 +402,7 @@ func (s *Service) handleSessionError(err error) error {
 	switch {
 	case errors.Is(err, session.ErrRevoked), errors.Is(err, api.ErrSessionEnded), errors.Is(err, sse.ErrUnauthorized):
 		s.log.Info("session ended by the server")
+		s.clearSession()
 		s.setSignedOut(ReasonSessionRevoked)
 	case errors.Is(err, session.ErrSignedOut):
 		s.setSignedOut("")
@@ -411,6 +418,15 @@ func (s *Service) handleSessionError(err error) error {
 		}
 	}
 	return toUIError(err)
+}
+
+// clearSession forgets the tokens and clears the keychain after the server ended the session.
+func (s *Service) clearSession() {
+	if tokens, _ := s.current(); tokens != nil {
+		if err := tokens.Clear(); err != nil && !errors.Is(err, keychain.ErrNotFound) {
+			s.log.Warn("could not clear the keychain", "error", err)
+		}
+	}
 }
 
 // SetServer stores the server address typed on the first sign-in (cliente-local.md section 1).

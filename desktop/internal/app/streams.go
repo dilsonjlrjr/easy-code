@@ -146,7 +146,15 @@ func (s *Service) onEnded(ev sse.Event, stream string) sse.Action {
 		return sse.ReconnectNow
 	case "offboarding":
 		return sse.ReconnectWithBackoff
-	case "session_revoked", "session_expired":
+	case "session_revoked":
+		// Revoked on the web or account disabled: back to sign-in (US-45 CA-2).
+		go func() {
+			s.clearSession()
+			s.setSignedOut(ReasonSessionRevoked)
+		}()
+		return sse.Stop
+	case "session_expired":
+		// The session passed its limit: renew with the refresh token and reconnect.
 		go s.verifySession(reason.Reason)
 		return sse.Stop
 	case "access_removed", "project_deleted":
