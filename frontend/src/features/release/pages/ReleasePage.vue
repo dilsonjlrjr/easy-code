@@ -15,6 +15,7 @@ import ConfirmActionDialog from '@/shared/ui/ConfirmActionDialog.vue'
 import LoadingState from '@/shared/ui/LoadingState.vue'
 import ProblemAlert from '@/shared/ui/ProblemAlert.vue'
 import StateLabel from '@/shared/ui/StateLabel.vue'
+import CanvasIcon from '@/shared/ui/CanvasIcon.vue'
 import type { ProjectCosts, Stage } from '@/features/projects/api/projectsApi'
 import {
   currentProjectApi,
@@ -123,7 +124,42 @@ const tab = computed<Tab>({
   set: (value) => void router.replace({ query: { ...route.query, tab: value } }),
 })
 
+/** Canvas tabs (WAI-ARIA tabs): the arrow keys, Home and End move between them. */
+function onTabKey(event: KeyboardEvent): void {
+  const index = TABS.indexOf(tab.value)
+  const next =
+    event.key === 'ArrowRight'
+      ? (index + 1) % TABS.length
+      : event.key === 'ArrowLeft'
+        ? (index - 1 + TABS.length) % TABS.length
+        : event.key === 'Home'
+          ? 0
+          : event.key === 'End'
+            ? TABS.length - 1
+            : undefined
+  const target = next === undefined ? undefined : TABS[next]
+  if (target === undefined) return
+  event.preventDefault()
+  tab.value = target
+  void nextTick(() => document.getElementById(`release-tab-${target}`)?.focus())
+}
+
 // ------------------------------------------------------------------ state of the screen
+
+/** ESP-06 section 8: the position of the Release in the pipeline ("Etapa N"). */
+const position = computed(() => {
+  const index = (store.workflow?.stages ?? [])
+    .filter((item) => item.type === 'stage')
+    .findIndex((item) => item.id === 'release')
+  return index >= 0 ? index + 1 : undefined
+})
+
+/** Canvas "Critério de saída": the mark beside each check (the status is also in text). */
+function checkMark(status: string): { mark: string; tone: string } {
+  if (status === 'passed') return { mark: '✓', tone: 'mark-ok' }
+  if (status === 'failed') return { mark: '✕', tone: 'mark-crit' }
+  return { mark: '!', tone: 'mark-warn' }
+}
 
 const isApprover = computed(() => project.value?.my_roles.includes('approver') ?? false)
 const blocks = computed(() => summary.value?.blocks ?? [])
@@ -404,7 +440,8 @@ async function submitComplete(key: string): Promise<void> {
 </script>
 
 <template>
-  <section aria-labelledby="release-heading" data-testid="release-page">
+  <!-- Layout: canvas EtapaRelease: header with the decision, exit criteria strip, tabs and cards. -->
+  <section aria-labelledby="release-heading" class="release" data-testid="release-page">
     <div role="status" class="sr-only">{{ message }}</div>
     <LoadingState v-if="loader.loading.value && !summary" />
     <ProblemAlert
@@ -414,36 +451,75 @@ async function submitComplete(key: string): Promise<void> {
       @retry="loader.run"
     />
     <template v-else-if="summary">
-      <div class="d-flex flex-wrap align-center ga-3 mb-1">
-        <h2 id="release-heading" class="text-h5">{{ $t('release.title') }}</h2>
-        <StateLabel v-if="stage?.state" machine="stage" :state="stage.state" />
-        <StateLabel v-if="round" machine="gate" :state="round.state" />
+      <div class="rel-head">
+        <div class="rel-title">
+          <h2 id="release-heading">{{ $t('release.title') }}</h2>
+          <span class="rel-meta">
+            <span v-if="position" class="chip mute">
+              {{ $t('projects.workflow.position', { n: position }) }}
+            </span>
+            <StateLabel v-if="stage?.state" machine="stage" :state="stage.state" />
+            <StateLabel v-if="round" machine="gate" :state="round.state" />
+            <span class="t2 meta-text">{{ $t('release.alwaysHuman') }}</span>
+          </span>
+          <p v-if="round" class="t2 meta-text rel-approvals" data-testid="release-approvals">
+            {{ $t('gates.round', { n: round.round }) }} ·
+            {{ $t('release.approvals', { done: approvals.done, needed: approvals.needed }) }}
+            <template v-if="round.partial_approvals?.length">
+              ({{ round.partial_approvals.map(who).join(', ') }})
+            </template>
+          </p>
+        </div>
+        <div v-if="showApprove || canReject" class="rel-actions">
+          <button
+            v-if="canReject"
+            type="button"
+            class="btn"
+            :disabled="deciding || reauthenticating"
+            @click="openReject"
+          >
+            {{ $t('release.reject.action') }}
+          </button>
+          <button
+            v-if="showApprove"
+            type="button"
+            class="btn btn-p"
+            :class="{ 'unavailable-action': approveUnavailable }"
+            :aria-disabled="approveUnavailable ? 'true' : undefined"
+            :aria-describedby="blocks.length ? 'release-blocks' : undefined"
+            :disabled="deciding || reauthenticating"
+            data-testid="release-approve"
+            @click="openApprove"
+          >
+            <CanvasIcon name="check" :size="16" :stroke-width="2.2" />
+            {{ $t('release.approve.action') }}
+          </button>
+        </div>
       </div>
-      <p class="text-body-2 mb-1">{{ $t('release.alwaysHuman') }}</p>
-      <p v-if="round" class="text-body-2 mb-1" data-testid="release-approvals">
-        {{ $t('gates.round', { n: round.round }) }} ·
-        {{ $t('release.approvals', { done: approvals.done, needed: approvals.needed }) }}
-        <template v-if="round.partial_approvals?.length">
-          ({{ round.partial_approvals.map(who).join(', ') }})
-        </template>
-      </p>
-      <v-alert type="info" variant="tonal" class="my-3" data-testid="release-status">
-        {{ statusText }}
-        <template v-if="releaseApproved && round?.decision">
-          {{
-            $t('release.status.approvedBy', {
-              who: who(round.decision.record),
-              when: format.dateTime(round.decision.record.when),
-            })
-          }}
-        </template>
-        <template v-if="round?.decision?.result === 'rejected' && round.decision.reason">
-          {{ $t('release.status.rejectedReason', { reason: round.decision.reason }) }}
-        </template>
-      </v-alert>
-      <v-alert v-if="reauthenticating" type="info" variant="tonal" role="status" class="my-3">
-        {{ $t('gates.reauthenticating') }}
-      </v-alert>
+
+      <div class="note" role="alert" data-testid="release-status">
+        <CanvasIcon name="gate" />
+        <span class="note-text">
+          <span>
+            {{ statusText }}
+            <template v-if="releaseApproved && round?.decision">
+              {{
+                $t('release.status.approvedBy', {
+                  who: who(round.decision.record),
+                  when: format.dateTime(round.decision.record.when),
+                })
+              }}
+            </template>
+            <template v-if="round?.decision?.result === 'rejected' && round.decision.reason">
+              {{ $t('release.status.rejectedReason', { reason: round.decision.reason }) }}
+            </template>
+          </span>
+        </span>
+      </div>
+      <div v-if="reauthenticating" class="note" role="status">
+        <CanvasIcon name="bolt" />
+        <span class="note-text">{{ $t('gates.reauthenticating') }}</span>
+      </div>
 
       <!-- ESP-17 3.2: every block, linked to its object; with any of them there is no approval. -->
       <section
@@ -451,209 +527,225 @@ async function submitComplete(key: string): Promise<void> {
         id="release-blocks"
         tabindex="-1"
         aria-labelledby="release-blocks-heading"
-        class="blocks my-3"
+        class="note note-crit blocks"
         data-testid="release-blocks"
       >
-        <h3 id="release-blocks-heading" class="text-subtitle-1 font-weight-medium mb-1">
-          {{ $t('release.blocks.title') }}
-        </h3>
-        <ul class="plain-list">
-          <li
-            v-for="block in blocks"
-            :key="`${block.type}-${block.reference}`"
-            class="text-body-2 mb-1"
-            :data-testid="`release-block-${block.reference}`"
-          >
-            {{ $t(`release.blocks.types.${block.type}`) }}:
-            <router-link :to="blockRoute(block)" class="monospace">{{
-              blockReference(block)
-            }}</router-link>
-            <template v-if="block.type === 'acceptance_expired'">
-              <template v-if="block.valid_until">
-                · {{ $t('release.blocks.expiredOn', { date: format.date(block.valid_until) }) }}
+        <CanvasIcon name="alert" />
+        <div class="note-text">
+          <h3 id="release-blocks-heading" class="blocks-title">
+            {{ $t('release.blocks.title') }}
+          </h3>
+          <ul class="plain-list blocks-list">
+            <li
+              v-for="block in blocks"
+              :key="`${block.type}-${block.reference}`"
+              :data-testid="`release-block-${block.reference}`"
+            >
+              {{ $t(`release.blocks.types.${block.type}`) }}:
+              <router-link :to="blockRoute(block)" class="mono">{{
+                blockReference(block)
+              }}</router-link>
+              <template v-if="block.type === 'acceptance_expired'">
+                <template v-if="block.valid_until">
+                  · {{ $t('release.blocks.expiredOn', { date: format.date(block.valid_until) }) }}
+                </template>
+                ·
+                <router-link
+                  :to="{
+                    name: ROUTE_NAMES.finding,
+                    params: { projectId, findingId: block.reference },
+                    hash: '#decision',
+                  }"
+                  >{{ $t('release.blocks.renew') }}</router-link
+                >
               </template>
-              ·
-              <router-link
-                :to="{
-                  name: ROUTE_NAMES.finding,
-                  params: { projectId, findingId: block.reference },
-                  hash: '#decision',
-                }"
-                >{{ $t('release.blocks.renew') }}</router-link
-              >
-            </template>
-          </li>
-        </ul>
-        <p class="text-body-2 mt-1">{{ $t('gates.blocked.noOverride') }}</p>
+            </li>
+          </ul>
+          <span class="t2">{{ $t('gates.blocked.noOverride') }}</span>
+        </div>
       </section>
 
-      <v-alert
+      <div
         v-if="separationOfDuties"
-        type="error"
-        variant="tonal"
+        class="note note-crit"
         role="alert"
-        class="my-3"
         data-testid="release-decision-failure"
       >
-        {{ $t(separationOfDuties) }}
-      </v-alert>
+        <CanvasIcon name="alert" />
+        <span class="note-text">{{ $t(separationOfDuties) }}</span>
+      </div>
       <ProblemAlert
         v-else-if="decisionFailure && !approveDialog && !rejectDialog"
         :error="decisionFailure"
-        class="my-3"
         data-testid="release-decision-failure"
       />
 
-      <div v-if="showApprove || canReject" class="d-flex flex-wrap ga-2 my-3">
-        <v-btn
-          v-if="showApprove"
-          color="primary"
-          variant="flat"
-          :class="{ 'unavailable-action': approveUnavailable }"
-          :aria-disabled="approveUnavailable ? 'true' : undefined"
-          :aria-describedby="blocks.length ? 'release-blocks' : undefined"
-          :disabled="deciding || reauthenticating"
-          data-testid="release-approve"
-          @click="openApprove"
-        >
-          {{ $t('release.approve.action') }}
-        </v-btn>
-        <v-btn
-          v-if="canReject"
-          variant="outlined"
-          :disabled="deciding || reauthenticating"
-          @click="openReject"
-        >
-          {{ $t('release.reject.action') }}
-        </v-btn>
-      </div>
-
       <!-- ESP-17 3.3: exit criteria of the current round; with no round, "not evaluated". -->
-      <section aria-labelledby="release-checks-heading" class="my-4">
-        <h3 id="release-checks-heading" class="text-subtitle-1 font-weight-medium mb-1">
-          {{ $t('release.checks') }}
-        </h3>
-        <p v-if="!round" class="text-body-2">{{ $t('release.consolidation.notEvaluated') }}</p>
-        <ul v-else class="plain-list" data-testid="release-checks">
-          <li v-for="check in round.checks" :key="check.check" class="text-body-2 mb-1">
-            {{ check.name }} · {{ $t(`gates.checkTypes.${check.type}`) }} ·
-            {{
-              $t(`gates.checkStatus.${check.status === 'failed' ? 'failedBlocks' : check.status}`)
-            }}
+      <section aria-labelledby="release-checks-heading" class="card rel-strip">
+        <h3 id="release-checks-heading" class="lb">{{ $t('release.checks') }}</h3>
+        <p v-if="!round" class="strip-item">{{ $t('release.consolidation.notEvaluated') }}</p>
+        <ul v-else class="plain-list strip-list" data-testid="release-checks">
+          <li v-for="check in round.checks" :key="check.check" class="strip-item">
+            <span class="mark" :class="checkMark(check.status).tone" aria-hidden="true">{{
+              checkMark(check.status).mark
+            }}</span>
+            <span>
+              {{ check.name }} · {{ $t(`gates.checkTypes.${check.type}`) }} ·
+              {{
+                $t(`gates.checkStatus.${check.status === 'failed' ? 'failedBlocks' : check.status}`)
+              }}
+            </span>
           </li>
         </ul>
       </section>
 
-      <nav :aria-label="$t('release.tabsLabel')" class="mb-4">
-        <v-tabs v-model="tab" color="primary" density="compact">
-          <v-tab v-for="item in TABS" :key="item" :value="item">
-            {{ $t(`release.tabs.${item}`) }}
-          </v-tab>
-        </v-tabs>
-      </nav>
+      <div class="tabs" role="tablist" :aria-label="$t('release.tabsLabel')">
+        <button
+          v-for="item in TABS"
+          :id="`release-tab-${item}`"
+          :key="item"
+          type="button"
+          role="tab"
+          class="tab"
+          :class="{ on: tab === item }"
+          :aria-selected="tab === item ? 'true' : 'false'"
+          :aria-controls="`release-panel-${item}`"
+          :tabindex="tab === item ? 0 : -1"
+          @click="tab = item"
+          @keydown="onTabKey"
+        >
+          {{ $t(`release.tabs.${item}`) }}
+        </button>
+      </div>
 
-      <ReleaseConsolidation
-        v-if="tab === 'consolidation'"
-        :project-id="projectId"
-        :summary="summary"
-        :costs="costs"
-      />
+      <div
+        :id="`release-panel-${tab}`"
+        role="tabpanel"
+        :aria-labelledby="`release-tab-${tab}`"
+        class="rel-panel"
+      >
+        <ReleaseConsolidation
+          v-if="tab === 'consolidation'"
+          :project-id="projectId"
+          :summary="summary"
+          :costs="costs"
+        />
 
-      <section v-else-if="tab === 'notes'" aria-labelledby="release-notes-heading">
-        <h3 id="release-notes-heading" class="text-subtitle-1 font-weight-medium mb-2">
-          {{ $t('release.tabs.notes') }}
-        </h3>
-        <p v-if="releaseArtifact" class="text-body-2" data-testid="release-artifact">
-          <router-link
-            :to="{
-              name: ROUTE_NAMES.artifact,
-              params: { projectId, artifactId: releaseArtifact.id },
-            }"
-            class="monospace"
-            >{{ releaseArtifact.id }}</router-link
-          >
-          · {{ releaseArtifact.title }} ·
-          {{ $t('artifacts.versionNumber', { n: releaseArtifact.version }) }} ·
-          {{ $t(`states.artifact.${releaseArtifact.state}`) }}
-        </p>
-        <!-- The summary names the RELEASE artifact even before the stage lists it. -->
-        <p v-else-if="summary?.release_artifact" class="text-body-2" data-testid="release-artifact">
-          <router-link
-            :to="{
-              name: ROUTE_NAMES.artifact,
-              params: { projectId, artifactId: summary.release_artifact },
-            }"
-            class="monospace"
-            >{{ summary.release_artifact }}</router-link
-          >
-        </p>
-        <p v-else class="text-body-2">{{ $t('release.notes.none') }}</p>
-        <p class="text-body-2 mt-2">{{ $t('release.notes.docs') }}</p>
-      </section>
-
-      <section v-else aria-labelledby="release-delivery-heading" data-testid="release-delivery">
-        <h3 id="release-delivery-heading" class="text-subtitle-1 font-weight-medium mb-2">
-          {{ $t('release.tabs.delivery') }}
-        </h3>
-        <template v-if="releaseApproved">
-          <ul v-if="repository?.marks?.length" class="plain-list mb-2" data-testid="release-marks">
-            <li v-for="mark in repository.marks" :key="mark.name" class="text-body-2 mb-1">
-              {{ $t('release.delivery.mark') }}: <span class="monospace">{{ mark.name }}</span> ·
-              {{ $t('evidence.commit') }}:
-              <span class="monospace" :title="mark.commit">{{ mark.commit.slice(0, 12) }}</span>
-              <template v-if="mark.when"> · {{ format.dateTime(mark.when) }}</template>
-            </li>
-          </ul>
-          <p v-else class="text-body-2 mb-2">{{ $t('release.delivery.noMark') }}</p>
-          <p class="text-body-2 mb-2">{{ $t('release.delivery.releaseInDocs') }}</p>
-        </template>
-        <template v-else>
-          <p class="text-body-2 mb-2" data-testid="release-to-mark">
-            {{ $t('release.delivery.willMark') }}
-            <template v-if="summary?.mark_name">
-              <span class="monospace" data-testid="release-mark-name">{{ summary.mark_name }}</span>
-              ·
-            </template>
-            <template v-if="repository?.clone_url">
-              <span class="monospace">{{ repository.clone_url }}</span>
-            </template>
-            <template v-if="repository?.last_commit?.sha">
-              · {{ $t('evidence.commit') }}:
-              <span class="monospace">{{ repository.last_commit.sha.slice(0, 12) }}</span>
-            </template>
-          </p>
-        </template>
-        <!-- CA-17-17: Phases 1 and 2 end at the repository; nothing is published from here. -->
-        <p class="text-body-2 mb-4" data-testid="release-phase-note">
-          {{ $t('release.delivery.phaseNote') }}
-        </p>
-
-        <section aria-labelledby="release-complete-heading" data-testid="release-complete">
-          <h4 id="release-complete-heading" class="text-subtitle-2 mb-1">
-            {{ $t('release.complete.title') }}
-          </h4>
-          <ul class="plain-list mb-2">
-            <li
-              v-for="condition in conditions"
-              :key="condition.key"
-              class="text-body-2 mb-1"
-              :data-testid="`condition-${condition.key}`"
+        <section
+          v-else-if="tab === 'notes'"
+          aria-labelledby="release-notes-heading"
+          class="card rel-card"
+        >
+          <h3 id="release-notes-heading">{{ $t('release.tabs.notes') }}</h3>
+          <p v-if="releaseArtifact" class="li" data-testid="release-artifact">
+            <router-link
+              :to="{
+                name: ROUTE_NAMES.artifact,
+                params: { projectId, artifactId: releaseArtifact.id },
+              }"
+              class="chip mute mono"
+              >{{ releaseArtifact.id }}</router-link
             >
-              {{ $t(`release.complete.conditions.${condition.key}`) }}:
-              {{ condition.met ? $t('release.complete.met') : $t('release.complete.pending') }}
-            </li>
-          </ul>
-          <v-btn
-            v-if="canComplete"
-            color="primary"
-            variant="flat"
-            data-testid="release-complete-action"
-            @click="completeDialog = true"
-          >
-            {{ $t('projects.lifecycle.complete.action') }}
-          </v-btn>
+            <span class="rel-text">
+              · {{ releaseArtifact.title }} ·
+              {{ $t('artifacts.versionNumber', { n: releaseArtifact.version }) }} ·
+            </span>
+            <StateLabel machine="artifact" :state="releaseArtifact.state" />
+          </p>
+          <!-- The summary names the RELEASE artifact even before the stage lists it. -->
+          <p v-else-if="summary?.release_artifact" class="li" data-testid="release-artifact">
+            <router-link
+              :to="{
+                name: ROUTE_NAMES.artifact,
+                params: { projectId, artifactId: summary.release_artifact },
+              }"
+              class="chip mute mono"
+              >{{ summary.release_artifact }}</router-link
+            >
+          </p>
+          <p v-else class="li t2">{{ $t('release.notes.none') }}</p>
+          <p class="li t2">{{ $t('release.notes.docs') }}</p>
         </section>
-      </section>
+
+        <section
+          v-else
+          aria-labelledby="release-delivery-heading"
+          class="card rel-card"
+          data-testid="release-delivery"
+        >
+          <h3 id="release-delivery-heading">{{ $t('release.tabs.delivery') }}</h3>
+          <template v-if="releaseApproved">
+            <ul
+              v-if="repository?.marks?.length"
+              class="plain-list rel-list"
+              data-testid="release-marks"
+            >
+              <li v-for="mark in repository.marks" :key="mark.name" class="li">
+                <span class="rel-text">
+                  {{ $t('release.delivery.mark') }}: <span class="mono">{{ mark.name }}</span> ·
+                  {{ $t('evidence.commit') }}:
+                  <span class="mono" :title="mark.commit">{{ mark.commit.slice(0, 12) }}</span>
+                </span>
+                <span v-if="mark.when" class="t2"> · {{ format.dateTime(mark.when) }}</span>
+              </li>
+            </ul>
+            <p v-else class="li t2">{{ $t('release.delivery.noMark') }}</p>
+            <p class="li">{{ $t('release.delivery.releaseInDocs') }}</p>
+          </template>
+          <template v-else>
+            <p class="li" data-testid="release-to-mark">
+              <span class="rel-text">
+                {{ $t('release.delivery.willMark') }}
+                <template v-if="summary?.mark_name">
+                  <span class="mono" data-testid="release-mark-name">{{ summary.mark_name }}</span>
+                  ·
+                </template>
+                <template v-if="repository?.clone_url">
+                  <span class="mono">{{ repository.clone_url }}</span>
+                </template>
+                <template v-if="repository?.last_commit?.sha">
+                  · {{ $t('evidence.commit') }}:
+                  <span class="mono">{{ repository.last_commit.sha.slice(0, 12) }}</span>
+                </template>
+              </span>
+            </p>
+          </template>
+          <!-- CA-17-17: Phases 1 and 2 end at the repository; nothing is published from here. -->
+          <p class="li t2" data-testid="release-phase-note">
+            {{ $t('release.delivery.phaseNote') }}
+          </p>
+
+          <section
+            aria-labelledby="release-complete-heading"
+            class="rel-complete"
+            data-testid="release-complete"
+          >
+            <h4 id="release-complete-heading">{{ $t('release.complete.title') }}</h4>
+            <ul class="plain-list rel-list">
+              <li
+                v-for="condition in conditions"
+                :key="condition.key"
+                class="kv"
+                :data-testid="`condition-${condition.key}`"
+              >
+                <span>{{ $t(`release.complete.conditions.${condition.key}`) }}:</span>
+                <span class="chip" :class="condition.met ? 'ok' : 'mute'">
+                  {{ condition.met ? $t('release.complete.met') : $t('release.complete.pending') }}
+                </span>
+              </li>
+            </ul>
+            <button
+              v-if="canComplete"
+              type="button"
+              class="btn btn-p rel-complete-action"
+              data-testid="release-complete-action"
+              @click="completeDialog = true"
+            >
+              {{ $t('projects.lifecycle.complete.action') }}
+            </button>
+          </section>
+        </section>
+      </div>
     </template>
 
     <!-- ESP-17 3.7: blocks (empty), each human check confirmed, optional comment. -->
@@ -665,20 +757,20 @@ async function submitComplete(key: string): Promise<void> {
     >
       <v-card>
         <v-card-title>
-          <h2 id="release-approve-title" class="text-h6 text-wrap">
+          <h2 id="release-approve-title" class="dlg-title">
             {{ $t('release.approve.title') }}
           </h2>
         </v-card-title>
         <v-form @submit.prevent="approve(approvalDecision())">
           <v-card-text>
-            <p class="text-body-2 mb-2">{{ $t('release.approve.noBlocks') }}</p>
+            <p class="dlg-text">{{ $t('release.approve.noBlocks') }}</p>
             <fieldset
               v-if="humanChecks.length > 0"
               class="plain-fieldset"
               aria-describedby="release-human-checks-help"
             >
-              <legend class="text-body-1 mb-1">{{ $t('gates.humanChecks') }}</legend>
-              <p id="release-human-checks-help" class="text-body-2 text-medium-emphasis mb-2">
+              <legend class="dlg-legend">{{ $t('gates.humanChecks') }}</legend>
+              <p id="release-human-checks-help" class="t2 dlg-text">
                 {{ $t('gates.humanChecksHelp') }}
               </p>
               <v-checkbox
@@ -696,10 +788,10 @@ async function submitComplete(key: string): Promise<void> {
               :label="$t('gates.commentOptional')"
               rows="2"
               auto-grow
-              class="mt-4"
+              class="dlg-field"
               :counter="5000"
             />
-            <ProblemAlert v-if="decisionFailure" :error="decisionFailure" class="mt-2" />
+            <ProblemAlert v-if="decisionFailure" :error="decisionFailure" class="dlg-problem" />
           </v-card-text>
           <v-card-actions>
             <v-spacer />
@@ -732,7 +824,7 @@ async function submitComplete(key: string): Promise<void> {
     >
       <v-card>
         <v-card-title>
-          <h2 id="release-reject-title" class="text-h6 text-wrap">
+          <h2 id="release-reject-title" class="dlg-title">
             {{ $t('release.reject.title') }}
           </h2>
         </v-card-title>
@@ -748,7 +840,7 @@ async function submitComplete(key: string): Promise<void> {
               :counter="10000"
               @update:model-value="reasonError = false"
             />
-            <ProblemAlert v-if="decisionFailure" :error="decisionFailure" class="mt-2" />
+            <ProblemAlert v-if="decisionFailure" :error="decisionFailure" class="dlg-problem" />
           </v-card-text>
           <v-card-actions>
             <v-spacer />
@@ -777,7 +869,7 @@ async function submitComplete(key: string): Promise<void> {
       <template #default="{ failure }">
         <p
           v-if="completionReason(failure)"
-          class="mt-2 font-weight-medium"
+          class="completion-reason"
           data-testid="completion-reason"
         >
           {{ completionReason(failure) }}
@@ -788,22 +880,221 @@ async function submitComplete(key: string): Promise<void> {
 </template>
 
 <style scoped>
-.blocks {
-  border-left: 3px solid rgb(var(--v-theme-error));
-  padding-left: 0.75rem;
+.release {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  min-width: 0;
 }
 
-.blocks:focus-visible {
-  outline: 2px solid rgb(var(--v-theme-primary));
+.rel-head {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 16px;
+}
+
+.rel-title {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+/* The Release title reads as the artboard h1 (the page h1 is the project name). */
+.rel-title h2 {
+  font-size: 28px;
+  line-height: 36px;
+}
+
+.rel-meta {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.meta-text {
+  font-size: 13px;
+}
+
+.rel-approvals {
+  margin: 0;
+}
+
+.rel-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.unavailable-action {
+  opacity: 0.6;
+}
+
+.note {
+  margin: 0;
+}
+
+.note > svg {
+  flex: none;
+}
+
+.note-text {
+  flex: 1 1 400px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.note-crit {
+  flex-wrap: wrap;
+  border-color: rgba(239, 68, 68, 0.45);
+  background: rgba(239, 68, 68, 0.1);
+}
+
+.blocks-title {
+  margin: 0;
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 700;
+}
+
+.blocks-list {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.rel-strip {
+  padding: 14px 18px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 24px;
+  align-items: center;
+}
+
+.rel-strip h3 {
+  margin: 0;
+}
+
+.strip-list {
+  margin: 0;
+  flex: 1 1 auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 24px;
+}
+
+.strip-item {
+  margin: 0;
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  font-size: 13px;
+}
+
+.mark {
+  font-weight: 700;
+}
+
+.mark-ok {
+  color: #86efac;
+}
+
+.mark-crit {
+  color: #fca5a5;
+}
+
+.mark-warn {
+  color: #fcd34d;
+}
+
+.rel-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.rel-card {
+  padding: 18px 22px;
+}
+
+.rel-card h3 {
+  margin: 0 0 4px;
+  font-size: 18px;
+  line-height: 24px;
+  font-weight: 700;
+}
+
+.rel-card p.li {
+  margin: 0;
+}
+
+.rel-list {
+  margin: 0;
+}
+
+.rel-text {
+  flex: 1 1 240px;
+  min-width: 0;
+}
+
+.rel-complete {
+  margin-top: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.rel-complete h4 {
+  margin: 0 0 4px;
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 700;
+}
+
+.rel-complete-action {
+  align-self: flex-start;
+  margin-top: 10px;
+}
+
+.dlg-title {
+  margin: 0;
+  font-size: 18px;
+  line-height: 24px;
+  font-weight: 700;
+  white-space: normal;
+}
+
+.dlg-text {
+  margin: 0 0 8px;
+  font-size: 13px;
+}
+
+.dlg-legend {
+  margin-bottom: 4px;
+  font-weight: 600;
+}
+
+.dlg-field {
+  margin-top: 16px;
+}
+
+.dlg-problem {
+  margin-top: 8px;
+}
+
+.completion-reason {
+  margin: 8px 0 0;
+  font-weight: 600;
 }
 
 .plain-fieldset {
   border: 0;
   margin: 0;
   padding: 0;
-}
-
-.unavailable-action {
-  opacity: 0.6;
 }
 </style>

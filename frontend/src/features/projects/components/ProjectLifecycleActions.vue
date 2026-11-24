@@ -5,6 +5,8 @@ import { ROUTE_NAMES } from '@/app/router/routeNames'
 import type { AvailableAction, Command } from '@/shared/api/contract'
 import { ApiError, hasProblemSlug } from '@/shared/api/problemDetails'
 import { waitForCommand } from '@/shared/commands/waitForCommand'
+import CanvasIcon from '@/shared/ui/CanvasIcon.vue'
+import type { CanvasIconName } from '@/shared/ui/canvasIcons'
 import ConfirmActionDialog from '@/shared/ui/ConfirmActionDialog.vue'
 import type { Project, Workflow } from '../api/projectsApi'
 import { currentProjectApi } from '../stores/currentProjectStore'
@@ -47,6 +49,19 @@ const LABELS: Record<LifecycleAction, string> = {
   resume: 'resume',
   cancel: 'cancel',
   record_publication: 'complete',
+}
+
+/** Canvas "Projeto" header: pause is a plain button, cancel the danger one, resume and conclude primary. */
+const BUTTON_CLASSES: Record<LifecycleAction, string> = {
+  pause: 'btn',
+  resume: 'btn btn-p',
+  cancel: 'btn btn-d',
+  record_publication: 'btn btn-p',
+}
+const BUTTON_ICONS: Partial<Record<LifecycleAction, CanvasIconName>> = {
+  pause: 'pause',
+  resume: 'play',
+  record_publication: 'check',
 }
 
 function openDialog(action: LifecycleAction): void {
@@ -135,18 +150,25 @@ const dialogTexts = computed(() => {
 </script>
 
 <template>
-  <div v-if="offered.length" class="d-flex flex-wrap ga-2 mb-3" data-testid="project-actions">
-    <v-btn
+  <!-- Layout: header buttons of canvas "Projeto" (Projeto.dc.html). -->
+  <div v-if="offered.length" class="lifecycle-buttons" data-testid="project-actions">
+    <button
       v-for="action in offered"
       :key="action"
-      :color="action === 'cancel' ? 'error' : 'primary'"
-      :variant="action === 'resume' || action === 'record_publication' ? 'flat' : 'outlined'"
+      type="button"
+      :class="BUTTON_CLASSES[action]"
       @click="openDialog(action)"
     >
+      <CanvasIcon
+        v-if="BUTTON_ICONS[action]"
+        :name="BUTTON_ICONS[action]!"
+        :size="16"
+        :stroke-width="2"
+      />
       {{ $t(`projects.lifecycle.${LABELS[action]}.action`) }}
-    </v-btn>
+    </button>
   </div>
-  <div v-if="notice" role="status" class="text-body-2 mb-2" data-testid="project-action-notice">
+  <div v-if="notice" role="status" class="t2 lifecycle-notice" data-testid="project-action-notice">
     {{ notice }}
   </div>
   <ConfirmActionDialog
@@ -166,9 +188,9 @@ const dialogTexts = computed(() => {
         v-model="typedName"
         :label="$t('projects.lifecycle.cancel.typeName', { name: project.name })"
         autocomplete="off"
-        class="mt-2"
+        class="cancel-name"
       />
-      <p v-if="dialog === 'resume' && project.pause_reason === 'budget'" class="mb-2">
+      <p v-if="dialog === 'resume' && project.pause_reason === 'budget'" class="dialog-line">
         <router-link
           :to="{ name: ROUTE_NAMES.projectConfiguration, params: { projectId: project.id } }"
           @click="dialogOpen = false"
@@ -178,7 +200,7 @@ const dialogTexts = computed(() => {
       </p>
       <p
         v-if="dialog === 'record_publication' && completionReason(failure)"
-        class="mt-2 font-weight-medium"
+        class="dialog-line completion-reason"
         data-testid="completion-reason"
       >
         {{ completionReason(failure) }}
@@ -186,3 +208,28 @@ const dialogTexts = computed(() => {
     </template>
   </ConfirmActionDialog>
 </template>
+
+<style scoped>
+.lifecycle-buttons {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.lifecycle-notice {
+  flex-basis: 100%;
+  font-size: 13px;
+}
+
+.cancel-name {
+  margin-top: 8px;
+}
+
+.dialog-line {
+  margin: 8px 0 0;
+}
+
+.completion-reason {
+  font-weight: 600;
+}
+</style>

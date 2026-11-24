@@ -94,5 +94,8 @@ test('US-49 CA-3: a stage changing state appears without reloading the page', as
 
   await expect(page.getByRole('heading', { level: 2, name: 'Etapa Requisitos' })).toBeVisible()
   await expect(page.getByTestId('stage-summary').locator('..')).toContainText('Aguardando gate')
-  await expect(page.getByText('Em execução', { exact: true })).toHaveCount(0)
+  // The stage header no longer says running; its rework wave keeps its own state in the waves card.
+  await expect(
+    page.locator('.state-label[data-machine="stage"][data-state="running"]'),
+  ).toHaveCount(0)
 })

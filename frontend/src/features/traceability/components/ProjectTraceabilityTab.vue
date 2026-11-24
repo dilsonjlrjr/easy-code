@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, ref, useId, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter, type RouteLocationRaw } from 'vue-router'
 import { ROUTE_NAMES } from '@/app/router/routeNames'
@@ -32,6 +32,7 @@ const route = useRoute()
 const router = useRouter()
 const store = useCurrentProjectStore()
 const { message, announce } = useAnnouncer()
+const uid = `traceability-${useId()}`
 
 const artifacts = ref<ArtifactSummary[]>([])
 const graph = ref<Traceability>()
@@ -126,6 +127,13 @@ function setQuery(change: Record<string, unknown>): void {
   go({ query: { ...route.query, ...change } })
 }
 
+/** CA-24-4: at least one priority stays chosen; none falls back to Must. */
+function togglePriority(priority: Priority, checked: boolean): void {
+  const others = priorities.value.filter((item) => item !== priority)
+  const next = checked ? [...others, priority] : others
+  setQuery({ priority: next.length ? next : ['must'] })
+}
+
 function nodeRoute(node: {
   id: string
   type: string
@@ -153,26 +161,29 @@ const rootNotFound = computed(
 </script>
 
 <template>
-  <section aria-labelledby="traceability-heading">
-    <h2 id="traceability-heading" class="text-h6 mb-2">{{ $t('pages.project.traceability') }}</h2>
+  <!-- Layout: canvas primitives of Projeto.dc.html (.tabf switch, .fld fields, .tbl table); no own artboard. -->
+  <section class="card tab-card" aria-labelledby="traceability-heading">
+    <h2 id="traceability-heading">{{ $t('pages.project.traceability') }}</h2>
     <div role="status" class="sr-only">{{ message }}</div>
-    <nav :aria-label="$t('traceability.views')" class="d-flex ga-2 mb-4">
-      <v-btn
-        :variant="view === 'links' ? 'flat' : 'outlined'"
-        :color="view === 'links' ? 'primary' : undefined"
+    <nav :aria-label="$t('traceability.views')" class="views">
+      <button
+        type="button"
+        class="tabf"
+        :class="{ on: view === 'links' }"
         :aria-current="view === 'links' ? 'page' : undefined"
         @click="go({ view: 'links' })"
       >
         {{ $t('traceability.links.title') }}
-      </v-btn>
-      <v-btn
-        :variant="view === 'coverage' ? 'flat' : 'outlined'"
-        :color="view === 'coverage' ? 'primary' : undefined"
+      </button>
+      <button
+        type="button"
+        class="tabf"
+        :class="{ on: view === 'coverage' }"
         :aria-current="view === 'coverage' ? 'page' : undefined"
         @click="go({ view: 'coverage' })"
       >
         {{ $t('traceability.coverage.title') }}
-      </v-btn>
+      </button>
     </nav>
 
     <ProblemAlert
@@ -184,7 +195,7 @@ const rootNotFound = computed(
 
     <!-- ESP-24 3.1: links of one artifact. -->
     <template v-if="view === 'links'">
-      <div class="params mb-4">
+      <div class="params">
         <v-autocomplete
           :model-value="root || null"
           :items="artifacts"
@@ -197,108 +208,121 @@ const rootNotFound = computed(
           :disabled="viewLoader.loading.value"
           @update:model-value="(value) => value && setQuery({ root: value })"
         />
-        <v-select
-          :model-value="depth"
-          :items="[1, 2, 3, 4, 5]"
-          :label="$t('traceability.links.depth')"
-          density="compact"
-          hide-details
-          class="small-field"
-          :disabled="viewLoader.loading.value"
-          @update:model-value="(value) => setQuery({ depth: value })"
-        />
-        <v-select
-          :model-value="direction"
-          :items="
-            DIRECTIONS.map((value) => ({ value, title: $t(`traceability.directions.${value}`) }))
-          "
-          :label="$t('traceability.links.direction')"
-          density="compact"
-          hide-details
-          class="small-field"
-          :disabled="viewLoader.loading.value"
-          @update:model-value="(value) => setQuery({ direction: value })"
-        />
+        <label :for="`${uid}-depth`" class="field small-field">
+          <span class="field-label">{{ $t('traceability.links.depth') }}</span>
+          <select
+            :id="`${uid}-depth`"
+            class="fld"
+            :value="depth"
+            :disabled="viewLoader.loading.value"
+            @change="setQuery({ depth: Number(($event.target as HTMLSelectElement).value) })"
+          >
+            <option v-for="value in [1, 2, 3, 4, 5]" :key="value" :value="value">
+              {{ value }}
+            </option>
+          </select>
+        </label>
+        <label :for="`${uid}-direction`" class="field small-field">
+          <span class="field-label">{{ $t('traceability.links.direction') }}</span>
+          <select
+            :id="`${uid}-direction`"
+            class="fld"
+            :value="direction"
+            :disabled="viewLoader.loading.value"
+            @change="setQuery({ direction: ($event.target as HTMLSelectElement).value })"
+          >
+            <option v-for="value in DIRECTIONS" :key="value" :value="value">
+              {{ $t(`traceability.directions.${value}`) }}
+            </option>
+          </select>
+        </label>
       </div>
       <LoadingState v-if="viewLoader.loading.value" />
-      <v-alert v-else-if="rootNotFound" type="warning" variant="tonal" role="alert">
+      <p v-else-if="rootNotFound" class="note note-warn" role="alert">
         {{ $t('traceability.links.rootNotFound') }}
-      </v-alert>
+      </p>
       <ProblemAlert
         v-else-if="viewLoader.error.value"
         :error="viewLoader.error.value"
         retry
         @retry="run"
       />
-      <p v-else-if="!root" class="text-body-2">{{ $t('traceability.links.noRoot') }}</p>
+      <p v-else-if="!root" class="t2 plain-text">{{ $t('traceability.links.noRoot') }}</p>
       <template v-else-if="graph">
-        <p class="text-body-2 mb-4" data-testid="trace-root">
-          <span class="monospace">{{ graph.root }}</span>
+        <p class="trace-root" data-testid="trace-root">
+          <span class="chip mute mono">{{ graph.root }}</span>
           <template v-if="rootArtifact">
-            · {{ rootArtifact.title }} · {{ artifactState(rootArtifact.state) }}
+            <span class="trace-root-title">{{ rootArtifact.title }}</span>
+            <span class="t2">· {{ artifactState(rootArtifact.state) }}</span>
           </template>
         </p>
-        <p v-if="groups.length === 0" class="text-body-2">{{ $t('traceability.links.empty') }}</p>
-        <section
-          v-for="group in groups"
-          :key="group.group"
-          :aria-labelledby="`trace-group-${group.group}`"
-          class="mb-4"
-          :data-testid="`trace-group-${group.group}`"
-        >
-          <h3 :id="`trace-group-${group.group}`" class="text-subtitle-1 font-weight-medium">
-            {{
-              $t('traceability.links.group', {
-                group: $t(`traceability.groups.${group.group}`),
-                n: group.nodes.length,
-              })
-            }}
-          </h3>
-          <ul class="plain-list">
-            <li
-              v-for="node in group.nodes"
-              :key="node.id"
-              class="text-body-2 mb-1"
-              :data-testid="`trace-node-${node.id}`"
-            >
-              <router-link v-if="nodeRoute(node)" :to="nodeRoute(node)!" class="monospace">
-                {{ node.id }}
-              </router-link>
-              <span v-else class="monospace">{{ node.id }}</span>
-              <template v-if="!node.exists">
-                · <strong>{{ $t('traceability.links.broken') }}</strong></template
+        <p v-if="groups.length === 0" class="t2 plain-text">
+          {{ $t('traceability.links.empty') }}
+        </p>
+        <div v-else class="groups">
+          <section
+            v-for="group in groups"
+            :key="group.group"
+            :aria-labelledby="`trace-group-${group.group}`"
+            class="group"
+            :data-testid="`trace-group-${group.group}`"
+          >
+            <h3 :id="`trace-group-${group.group}`" class="lb">
+              {{
+                $t('traceability.links.group', {
+                  group: $t(`traceability.groups.${group.group}`),
+                  n: group.nodes.length,
+                })
+              }}
+            </h3>
+            <ul class="plain-list node-list">
+              <li
+                v-for="node in group.nodes"
+                :key="node.id"
+                class="node"
+                :data-testid="`trace-node-${node.id}`"
               >
-              <template v-if="node.title"> · {{ node.title }}</template>
-              <template v-if="node.state"> · {{ artifactState(node.state) }}</template>
-              <template v-if="node.rules.length">
-                · {{ $t('traceability.links.rules', { rules: node.rules.join(', ') }) }}
-              </template>
-            </li>
-          </ul>
-        </section>
+                <router-link v-if="nodeRoute(node)" :to="nodeRoute(node)!" class="mono">
+                  {{ node.id }}
+                </router-link>
+                <span v-else class="mono">{{ node.id }}</span>
+                <template v-if="!node.exists">
+                  · <strong class="broken">{{ $t('traceability.links.broken') }}</strong></template
+                >
+                <template v-if="node.title"> · {{ node.title }}</template>
+                <span v-if="node.state" class="t2"> · {{ artifactState(node.state) }}</span>
+                <span v-if="node.rules.length" class="t2">
+                  · {{ $t('traceability.links.rules', { rules: node.rules.join(', ') }) }}
+                </span>
+              </li>
+            </ul>
+          </section>
+        </div>
       </template>
     </template>
 
     <!-- ESP-24 3.2: coverage matrix. -->
     <template v-else>
-      <fieldset class="plain-fieldset mb-4">
-        <legend class="text-body-2 font-weight-medium mb-1">
-          {{ $t('traceability.coverage.priority') }}
-        </legend>
-        <div class="d-flex flex-wrap ga-2">
-          <v-checkbox
+      <fieldset class="plain-fieldset">
+        <legend class="field-label">{{ $t('traceability.coverage.priority') }}</legend>
+        <div class="checks">
+          <label
             v-for="priority in PRIORITIES"
             :key="priority"
-            :model-value="priorities"
-            :value="priority"
-            :label="$t(`traceability.priorities.${priority}`)"
-            density="compact"
-            hide-details
-            :disabled="viewLoader.loading.value"
-            @update:model-value="
-              (value) => setQuery({ priority: value?.length ? value : ['must'] })
-            "
-          />
+            class="check"
+            :class="{ disabled: viewLoader.loading.value }"
+            :for="`${uid}-priority-${priority}`"
+          >
+            <input
+              :id="`${uid}-priority-${priority}`"
+              type="checkbox"
+              :value="priority"
+              :checked="priorities.includes(priority)"
+              :disabled="viewLoader.loading.value"
+              @change="togglePriority(priority, ($event.target as HTMLInputElement).checked)"
+            />
+            {{ $t(`traceability.priorities.${priority}`) }}
+          </label>
         </div>
       </fieldset>
       <LoadingState v-if="viewLoader.loading.value" />
@@ -309,15 +333,17 @@ const rootNotFound = computed(
         @retry="run"
       />
       <template v-else-if="matrix">
-        <p class="text-body-2 mb-2" data-testid="coverage-summary">
+        <p class="plain-text summary" data-testid="coverage-summary">
           {{ $t('traceability.coverage.summary', counts) }}
         </p>
-        <v-alert v-if="notExecuted" type="info" variant="tonal" class="mb-4">
+        <p v-if="notExecuted" class="note">
           {{ $t('traceability.coverage.notExecuted') }}
-        </v-alert>
-        <p v-if="rows.length === 0" class="text-body-2">{{ $t('traceability.coverage.empty') }}</p>
+        </p>
+        <p v-if="rows.length === 0" class="t2 plain-text">
+          {{ $t('traceability.coverage.empty') }}
+        </p>
         <div v-else class="table-scroll">
-          <v-table density="comfortable" data-testid="coverage-table">
+          <table class="tbl coverage-table" data-testid="coverage-table">
             <caption class="sr-only">
               {{
                 $t('traceability.coverage.title')
@@ -333,27 +359,29 @@ const rootNotFound = computed(
             </thead>
             <tbody>
               <tr v-for="row in rows" :key="row.us" :data-testid="`coverage-${row.us}`">
-                <th scope="row" class="font-weight-regular">
+                <th scope="row" class="row-head">
                   <router-link
                     :to="{
                       name: ROUTE_NAMES.traceability,
                       params: { projectId, view: 'links' },
                       query: { root: row.us },
                     }"
-                    class="monospace"
+                    class="mono"
                     :aria-label="$t('traceability.coverage.openLinks', { us: row.us })"
                   >
                     {{ row.us }}
                   </router-link>
                 </th>
                 <td>{{ $t(`traceability.priorities.${row.priority}`) }}</td>
-                <td :class="row.status === 'gap' ? 'text-error font-weight-medium' : ''">
-                  {{ $t(`traceability.coverage.statuses.${row.status}`) }}
+                <td>
+                  <span class="chip" :class="row.status === 'gap' ? 'crit' : 'ok'">
+                    {{ $t(`traceability.coverage.statuses.${row.status}`) }}
+                  </span>
                 </td>
                 <td>
-                  <ul class="plain-list">
-                    <li v-for="criterion in row.criteria" :key="criterion.ca" class="text-body-2">
-                      <span class="monospace">{{ criterion.ca }}</span>:
+                  <ul class="plain-list criteria">
+                    <li v-for="criterion in row.criteria" :key="criterion.ca">
+                      <span class="mono">{{ criterion.ca }}</span>:
                       <template v-if="criterion.cts.length === 0">
                         {{ $t('traceability.coverage.noScenario') }}
                       </template>
@@ -363,7 +391,7 @@ const rootNotFound = computed(
                             name: ROUTE_NAMES.artifact,
                             params: { projectId, artifactId: ct.ct },
                           }"
-                          class="monospace"
+                          class="mono"
                           >{{ ct.ct }}</router-link
                         >
                         {{ $t(`traceability.results.${ct.result}`)
@@ -374,7 +402,7 @@ const rootNotFound = computed(
                 </td>
               </tr>
             </tbody>
-          </v-table>
+          </table>
         </div>
       </template>
     </template>
@@ -382,15 +410,39 @@ const rootNotFound = computed(
 </template>
 
 <style scoped>
+.tab-card {
+  padding: 18px 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.views {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.tabf {
+  min-height: 44px;
+}
+
 .params {
   display: flex;
   flex-wrap: wrap;
+  align-items: flex-end;
   gap: 16px;
 }
 
 .root-field {
+  flex: 1 1 260px;
   min-width: 260px;
   max-width: 420px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
 }
 
 .small-field {
@@ -398,9 +450,125 @@ const rootNotFound = computed(
   max-width: 200px;
 }
 
+.field-label {
+  display: block;
+  margin-bottom: 6px;
+  padding: 0;
+  font-size: 13px;
+  font-weight: 500;
+  color: #c7cceb;
+}
+
 .plain-fieldset {
   border: 0;
   margin: 0;
   padding: 0;
+  min-width: 0;
+}
+
+.checks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+}
+
+.check {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  cursor: pointer;
+}
+
+.check input {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: #7c3aed;
+  cursor: pointer;
+}
+
+.check.disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.note {
+  margin: 0;
+}
+
+.note-warn {
+  border-color: rgba(234, 179, 8, 0.45);
+  background: rgba(234, 179, 8, 0.1);
+}
+
+.plain-text {
+  margin: 0;
+}
+
+.summary {
+  font-weight: 600;
+}
+
+.trace-root {
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.trace-root-title {
+  font-weight: 700;
+  font-size: 15px;
+}
+
+.groups {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 10px;
+}
+
+.group {
+  padding: 14px 16px;
+  border-radius: 12px;
+  border: 1px solid rgba(140, 150, 255, 0.16);
+  background: rgba(10, 13, 40, 0.35);
+}
+
+.group h3 {
+  margin: 0 0 6px;
+}
+
+.node-list {
+  margin: 0;
+}
+
+.node {
+  padding: 8px 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  font-size: 13px;
+}
+
+.broken {
+  color: #fca5a5;
+}
+
+.coverage-table {
+  min-width: 720px;
+}
+
+.row-head {
+  font-weight: 400;
+  padding: 10px 10px 10px 0;
+  border-bottom: 1px solid rgba(140, 150, 255, 0.08);
+  vertical-align: top;
+}
+
+.criteria {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
 </style>

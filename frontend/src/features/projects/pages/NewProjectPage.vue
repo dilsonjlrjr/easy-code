@@ -8,6 +8,7 @@ import { useAnnouncer } from '@/shared/composables/useAnnouncer'
 import { useFormat } from '@/shared/format/useFormat'
 import { useSessionStore } from '@/shared/session/sessionStore'
 import AppBreadcrumbs from '@/shared/ui/AppBreadcrumbs.vue'
+import CanvasIcon from '@/shared/ui/CanvasIcon.vue'
 import LoadingState from '@/shared/ui/LoadingState.vue'
 import ProblemAlert from '@/shared/ui/ProblemAlert.vue'
 import { constraintsAreValid, projectsApi, type ConstraintDraft } from '../api/projectsApi'
@@ -213,217 +214,281 @@ const breadcrumbs = computed(() => [
 </script>
 
 <template>
-  <v-container max-width="960">
-    <AppBreadcrumbs :items="breadcrumbs" />
-    <h1 class="text-h4 mb-4">{{ $t('pages.newProject.title') }}</h1>
+  <!-- Layout: canvas "Novo projeto" (NovoProjeto.dc.html). -->
+  <AppBreadcrumbs :items="breadcrumbs" />
+  <div>
+    <h1>{{ $t('pages.newProject.title') }}</h1>
+    <p class="t2 new-description">{{ $t('pages.newProject.description') }}</p>
+  </div>
 
-    <!-- ESP-05 section 8: step indicator with aria-current="step" and "passo N de 3" in text. -->
-    <nav :aria-label="$t('projects.new.stepsLabel')" class="mb-6">
-      <ol class="wizard-steps">
-        <li
-          v-for="(item, index) in STEPS"
-          :key="item"
-          :aria-current="item === step ? 'step' : undefined"
-          :class="{ 'wizard-step--current': item === step, 'wizard-step--done': index < stepIndex }"
-        >
-          <span class="text-body-2">{{
+  <!-- ESP-05 section 8: step indicator with aria-current="step" and "passo N de 3" in text. -->
+  <nav :aria-label="$t('projects.new.stepsLabel')">
+    <ol class="wizard-steps">
+      <li
+        v-for="(item, index) in STEPS"
+        :key="item"
+        class="wizard-step"
+        :aria-current="item === step ? 'step' : undefined"
+        :class="{ 'wizard-step--current': item === step, 'wizard-step--done': index < stepIndex }"
+      >
+        <span class="wizard-step-number" aria-hidden="true">
+          <CanvasIcon v-if="index < stepIndex" name="check" :size="14" :stroke-width="3" />
+          <template v-else>{{ index + 1 }}</template>
+        </span>
+        <span class="wizard-step-text">
+          <span class="wizard-step-name">{{ $t(`projects.new.steps.${item}`) }}</span>
+          <span class="t2 wizard-step-of">{{
             $t('projects.new.stepOf', { n: index + 1, total: STEPS.length })
           }}</span>
-          <span class="font-weight-medium">{{ $t(`projects.new.steps.${item}`) }}</span>
           <span v-if="index < stepIndex" class="sr-only">{{ $t('projects.new.stepDone') }}</span>
-        </li>
-      </ol>
-    </nav>
+        </span>
+      </li>
+    </ol>
+  </nav>
 
-    <div role="status" class="sr-only">{{ message }}</div>
+  <div role="status" class="sr-only">{{ message }}</div>
 
+  <section class="card new-card">
     <div
       v-if="showErrors && step === 'need' && stepOneErrors.length > 0"
       ref="errorSummary"
       tabindex="-1"
-      class="mb-4"
+      class="note note-crit error-summary"
     >
-      <v-alert type="error" variant="tonal">
-        <p class="font-weight-medium">{{ $t('projects.new.errorSummary') }}</p>
-        <ul class="ml-4">
+      <div>
+        <p class="error-summary-title">{{ $t('projects.new.errorSummary') }}</p>
+        <ul class="error-summary-list">
           <li v-for="error in stepOneErrors" :key="error.field">
             <a :href="`#${error.field}`">{{ error.text }}</a>
           </li>
         </ul>
-      </v-alert>
+      </div>
     </div>
 
     <!-- Step 1: need and sources -->
-    <section v-show="step === 'need'" aria-labelledby="step-need-heading">
-      <h2 id="step-need-heading" class="text-h6 mb-4">{{ $t('projects.new.steps.need') }}</h2>
-      <v-text-field
-        id="project-name"
-        v-model="form.name"
-        :label="$t('projects.new.name')"
-        :counter="NAME_MAX"
-        :error-messages="showErrors && nameError ? [nameError] : []"
-        autocomplete="off"
-        @update:model-value="nameConflict = false"
-      />
-      <v-textarea
-        id="project-need"
-        v-model="form.businessNeed"
-        :label="$t('projects.new.need')"
-        :hint="$t('projects.new.needHint')"
-        persistent-hint
-        rows="6"
-        auto-grow
-        :error-messages="showErrors && needError ? [needError] : []"
-        class="mb-4"
-      />
-
-      <h3 class="text-subtitle-1 font-weight-medium mt-4">{{ $t('projects.new.attachments') }}</h3>
-      <p class="text-body-2 text-medium-emphasis">
-        {{
-          attachmentLimit === undefined
-            ? $t('projects.new.attachmentsHelp')
-            : $t('projects.new.attachmentsLimit', { limit: format.bytes(attachmentLimit) })
-        }}
-      </p>
-      <input
-        id="project-attachments"
-        ref="fileInput"
-        type="file"
-        multiple
-        class="sr-only"
-        :aria-label="$t('projects.new.addAttachment')"
-        @change="chooseFiles"
-      />
-      <v-btn variant="tonal" class="mt-2" @click="fileInput?.click()">
-        {{ $t('projects.new.addAttachment') }}
-      </v-btn>
-      <v-alert
-        v-if="attachmentRefusal"
-        type="error"
-        variant="tonal"
-        role="alert"
-        class="mt-2"
-        data-testid="attachment-refusal"
-      >
-        {{
-          $t('projects.new.attachmentTooLarge', {
-            name: attachmentRefusal.name,
-            limit: format.bytes(attachmentRefusal.limit),
-          })
-        }}
-      </v-alert>
-      <ul v-if="form.attachments.length > 0" class="attachment-list mt-2">
-        <li v-for="(file, index) in form.attachments" :key="`${file.name}-${index}`">
-          <span>{{ file.name }}</span>
-          <span class="text-body-2 text-medium-emphasis">({{ format.bytes(file.size) }})</span>
-          <v-btn
-            variant="text"
-            size="small"
-            :aria-label="$t('projects.new.removeAttachment', { name: file.name })"
-            @click="removeAttachment(index)"
+    <section v-show="step === 'need'" class="new-step" aria-labelledby="step-need-heading">
+      <h2 id="step-need-heading">{{ $t('projects.new.steps.need') }}</h2>
+      <div class="fl">
+        <label for="project-name" class="fl-control">
+          <span class="fl-label">{{ $t('projects.new.name') }}</span>
+          <input
+            id="project-name"
+            v-model="form.name"
+            class="fld"
+            type="text"
+            autocomplete="off"
+            :aria-invalid="showErrors && !!nameError"
+            :aria-describedby="
+              showErrors && nameError
+                ? 'project-name-error project-name-counter'
+                : 'project-name-counter'
+            "
+            @input="nameConflict = false"
+          />
+        </label>
+        <span class="fld-foot">
+          <span
+            v-if="showErrors && nameError"
+            id="project-name-error"
+            class="fld-error"
+            role="alert"
           >
-            {{ $t('common.remove') }}
-          </v-btn>
-        </li>
-      </ul>
+            {{ nameError }}
+          </span>
+          <span id="project-name-counter" class="t2 fld-counter">
+            {{ form.name.length }} / {{ NAME_MAX }}
+          </span>
+        </span>
+      </div>
+      <div class="fl">
+        <label for="project-need" class="fl-control">
+          <span class="fl-label">{{ $t('projects.new.need') }}</span>
+          <textarea
+            id="project-need"
+            v-model="form.businessNeed"
+            class="fld"
+            rows="5"
+            :aria-invalid="showErrors && !!needError"
+            :aria-describedby="
+              showErrors && needError ? 'project-need-error project-need-hint' : 'project-need-hint'
+            "
+          />
+        </label>
+        <span v-if="showErrors && needError" id="project-need-error" class="fld-error" role="alert">
+          {{ needError }}
+        </span>
+        <span id="project-need-hint" class="t2 fld-hint">{{ $t('projects.new.needHint') }}</span>
+      </div>
+
+      <div class="fl">
+        <h3 class="fl-title">{{ $t('projects.new.attachments') }}</h3>
+        <span class="t2 fld-hint">
+          {{
+            attachmentLimit === undefined
+              ? $t('projects.new.attachmentsHelp')
+              : $t('projects.new.attachmentsLimit', { limit: format.bytes(attachmentLimit) })
+          }}
+        </span>
+        <input
+          id="project-attachments"
+          ref="fileInput"
+          type="file"
+          multiple
+          class="sr-only"
+          :aria-label="$t('projects.new.addAttachment')"
+          @change="chooseFiles"
+        />
+        <ul v-if="form.attachments.length > 0" class="attachment-list">
+          <li v-for="(file, index) in form.attachments" :key="`${file.name}-${index}`">
+            <span class="chip mute">
+              {{ file.name }}
+              <span class="attachment-size">({{ format.bytes(file.size) }})</span>
+            </span>
+            <button
+              type="button"
+              class="btn btn-d attachment-remove"
+              :aria-label="$t('projects.new.removeAttachment', { name: file.name })"
+              @click="removeAttachment(index)"
+            >
+              {{ $t('common.remove') }}
+            </button>
+          </li>
+        </ul>
+        <div class="source-actions">
+          <button type="button" class="btn source-button" @click="fileInput?.click()">
+            {{ $t('projects.new.addAttachment') }}
+          </button>
+        </div>
+        <p
+          v-if="attachmentRefusal"
+          class="note note-crit attachment-refusal"
+          role="alert"
+          data-testid="attachment-refusal"
+        >
+          {{
+            $t('projects.new.attachmentTooLarge', {
+              name: attachmentRefusal.name,
+              limit: format.bytes(attachmentRefusal.limit),
+            })
+          }}
+        </p>
+      </div>
     </section>
 
     <!-- Step 2: configuration -->
-    <section v-show="step === 'configuration'" aria-labelledby="step-configuration-heading">
-      <h2 id="step-configuration-heading" class="text-h6 mb-2">
-        {{ $t('projects.new.steps.configuration') }}
-      </h2>
-      <h3 class="text-subtitle-1 font-weight-medium">
-        {{ $t('projects.configuration.modelPair') }}
-      </h3>
-      <p class="text-body-2 text-medium-emphasis mb-4">
-        {{ $t('projects.configuration.pairHelp') }}
-      </p>
-      <LoadingState v-if="modelsLoader.loading.value" type="list-item-two-line@2" />
-      <ProblemAlert
-        v-else-if="modelsLoader.error.value"
-        :error="modelsLoader.error.value"
-        retry
-        @retry="modelsLoader.run"
-      />
-      <v-alert v-else-if="modelOptions.length === 0" type="warning" variant="tonal" class="mb-4">
-        {{ $t('projects.configuration.noModelAvailable') }}
-      </v-alert>
-      <template v-else>
-        <v-select
-          v-model="form.reasoning"
-          :items="modelOptions"
-          item-title="title"
-          item-value="value"
-          :label="$t('projects.configuration.reasoningModel')"
-          :hint="$t('projects.configuration.reasoningHint')"
-          persistent-hint
-          clearable
-          class="mb-4"
-        >
-          <template #item="{ props: itemProps, item }">
-            <v-list-item v-bind="itemProps" :subtitle="item.raw.subtitle" />
+    <section
+      v-show="step === 'configuration'"
+      class="new-step new-step--configuration"
+      aria-labelledby="step-configuration-heading"
+    >
+      <h2 id="step-configuration-heading">{{ $t('projects.new.steps.configuration') }}</h2>
+      <div class="config-block">
+        <div>
+          <h3 class="block-title">{{ $t('projects.configuration.modelPair') }}</h3>
+          <p class="t2 block-help">{{ $t('projects.configuration.pairHelp') }}</p>
+        </div>
+        <LoadingState v-if="modelsLoader.loading.value" type="list-item-two-line@2" />
+        <ProblemAlert
+          v-else-if="modelsLoader.error.value"
+          :error="modelsLoader.error.value"
+          retry
+          @retry="modelsLoader.run"
+        />
+        <p v-else-if="modelOptions.length === 0" class="note note-warn">
+          {{ $t('projects.configuration.noModelAvailable') }}
+        </p>
+        <div class="field-grid">
+          <template
+            v-if="
+              !modelsLoader.loading.value && !modelsLoader.error.value && modelOptions.length > 0
+            "
+          >
+            <v-select
+              v-model="form.reasoning"
+              :items="modelOptions"
+              item-title="title"
+              item-value="value"
+              :label="$t('projects.configuration.reasoningModel')"
+              :hint="$t('projects.configuration.reasoningHint')"
+              persistent-hint
+              clearable
+            >
+              <template #item="{ props: itemProps, item }">
+                <v-list-item v-bind="itemProps" :subtitle="item.raw.subtitle" />
+              </template>
+            </v-select>
+            <v-select
+              v-model="form.execution"
+              :items="modelOptions"
+              item-title="title"
+              item-value="value"
+              :label="$t('projects.configuration.executionModel')"
+              :hint="$t('projects.configuration.executionHint')"
+              persistent-hint
+              clearable
+            >
+              <template #item="{ props: itemProps, item }">
+                <v-list-item v-bind="itemProps" :subtitle="item.raw.subtitle" />
+              </template>
+            </v-select>
           </template>
-        </v-select>
-        <v-select
-          v-model="form.execution"
-          :items="modelOptions"
-          item-title="title"
-          item-value="value"
-          :label="$t('projects.configuration.executionModel')"
-          :hint="$t('projects.configuration.executionHint')"
-          persistent-hint
-          clearable
-          class="mb-4"
-        >
-          <template #item="{ props: itemProps, item }">
-            <v-list-item v-bind="itemProps" :subtitle="item.raw.subtitle" />
-          </template>
-        </v-select>
-      </template>
-      <v-select
-        v-model="form.artifactLanguage"
-        :items="
-          ARTIFACT_LANGUAGES.map((value) => ({ value, title: $t(`language.names.${value}`) }))
-        "
-        :label="$t('projects.configuration.artifactLanguage')"
-      />
+          <div class="fl">
+            <label for="new-project-artifact-language" class="fl-control">
+              <span id="new-project-artifact-language-label" class="fl-label">{{
+                $t('projects.configuration.artifactLanguage')
+              }}</span>
+              <select
+                id="new-project-artifact-language"
+                v-model="form.artifactLanguage"
+                aria-labelledby="new-project-artifact-language-label"
+                class="fld"
+              >
+                <option v-for="value in ARTIFACT_LANGUAGES" :key="value" :value="value">
+                  {{ $t(`language.names.${value}`) }}
+                </option>
+              </select>
+            </label>
+          </div>
+        </div>
+      </div>
       <!-- ESP-05 3.2 / US-39: the stop limit (required) and the alerts. -->
-      <h3 class="text-subtitle-1 font-weight-medium mt-4 mb-2">
-        {{ $t('projects.budget.title') }}
-      </h3>
-      <BudgetFields
-        v-model="budget"
-        id-prefix="new-project-budget"
-        :currency="currency"
-        :errors="budgetErrors"
-        :show-errors="showBudgetErrors"
-      />
+      <div class="config-block">
+        <h3 class="block-title">{{ $t('projects.budget.title') }}</h3>
+        <BudgetFields
+          v-model="budget"
+          id-prefix="new-project-budget"
+          :currency="currency"
+          :errors="budgetErrors"
+          :show-errors="showBudgetErrors"
+        />
+      </div>
       <!-- ESP-05 3.2 / US-54 CA-1: optional technical constraints, version 1 of the project. -->
-      <h3 class="text-subtitle-1 font-weight-medium mt-4">
-        {{ $t('projects.constraints.title') }}
-      </h3>
-      <p class="text-body-2 text-medium-emphasis mb-2">{{ $t('projects.constraints.help') }}</p>
-      <ConstraintsEditor v-model="form.constraints" />
+      <div class="config-block">
+        <div>
+          <h3 class="block-title">{{ $t('projects.constraints.title') }}</h3>
+          <p class="t2 block-help">{{ $t('projects.constraints.help') }}</p>
+        </div>
+        <ConstraintsEditor v-model="form.constraints" />
+      </div>
     </section>
 
     <!-- Step 3: review and start -->
-    <section v-show="step === 'review'" aria-labelledby="step-review-heading">
-      <h2 id="step-review-heading" class="text-h6 mb-4">{{ $t('projects.new.steps.review') }}</h2>
-      <dl class="summary-list mb-4">
-        <dt>{{ $t('projects.new.name') }}</dt>
-        <dd>{{ form.name }}</dd>
-        <dt>{{ $t('projects.new.attachments') }}</dt>
+    <section v-show="step === 'review'" class="new-step" aria-labelledby="step-review-heading">
+      <h2 id="step-review-heading">{{ $t('projects.new.steps.review') }}</h2>
+      <dl class="review-list">
+        <dt class="t2">{{ $t('projects.new.name') }}</dt>
+        <dd class="review-name">{{ form.name }}</dd>
+        <dt class="t2">{{ $t('projects.new.attachments') }}</dt>
         <dd>{{ $t('projects.new.attachmentCount', { count: form.attachments.length }) }}</dd>
-        <dt>{{ $t('projects.configuration.reasoningModel') }}</dt>
+        <dt class="t2">{{ $t('projects.configuration.reasoningModel') }}</dt>
         <dd>{{ modelTitle(form.reasoning) }}</dd>
-        <dt>{{ $t('projects.configuration.executionModel') }}</dt>
+        <dt class="t2">{{ $t('projects.configuration.executionModel') }}</dt>
         <dd>{{ modelTitle(form.execution) }}</dd>
-        <dt>{{ $t('projects.configuration.artifactLanguage') }}</dt>
+        <dt class="t2">{{ $t('projects.configuration.artifactLanguage') }}</dt>
         <dd>{{ $t(`language.names.${form.artifactLanguage}`) }}</dd>
-        <dt>{{ $t('projects.constraints.title') }}</dt>
+        <dt class="t2">{{ $t('projects.constraints.title') }}</dt>
         <dd>{{ $t('projects.constraints.count', { count: form.constraints.length }) }}</dd>
-        <dt>{{ $t('projects.budget.stopLimit') }}</dt>
+        <dt class="t2">{{ $t('projects.budget.stopLimit') }}</dt>
         <dd data-testid="review-stop-limit">
           {{
             currency
@@ -431,101 +496,356 @@ const breadcrumbs = computed(() => [
               : budget.limitText
           }}
         </dd>
-        <dt>{{ $t('projects.budget.alerts') }}</dt>
+        <dt class="t2">{{ $t('projects.budget.alerts') }}</dt>
         <dd>{{ budget.alerts.map((value) => format.percent(value)).join(', ') }}</dd>
+        <dt class="t2">{{ $t('projects.new.workflow') }}</dt>
+        <dd>
+          <ol class="stage-flow">
+            <li v-for="stage in PHASE_ONE_STAGES" :key="stage">{{ $t(`stages.${stage}`) }}</li>
+          </ol>
+        </dd>
+        <dt class="t2">{{ $t('projects.gateModes.title') }}</dt>
+        <dd>{{ $t('projects.new.gatesHuman') }}</dd>
       </dl>
-      <h3 class="text-subtitle-1 font-weight-medium">{{ $t('projects.new.workflow') }}</h3>
-      <ol class="ml-6 mb-2">
-        <li v-for="stage in PHASE_ONE_STAGES" :key="stage">{{ $t(`stages.${stage}`) }}</li>
-      </ol>
-      <p class="text-body-2 text-medium-emphasis mb-4">{{ $t('projects.new.gatesHuman') }}</p>
       <!-- US-03 CA-3: native checkbox with the full label; nothing is created without it. -->
-      <v-checkbox v-model="form.acknowledged" data-testid="provider-acknowledgment">
-        <template #label>
+      <label
+        for="new-project-acknowledgment"
+        class="acknowledgment"
+        data-testid="provider-acknowledgment"
+      >
+        <input
+          id="new-project-acknowledgment"
+          v-model="form.acknowledged"
+          type="checkbox"
+          class="acknowledgment-box"
+        />
+        <span>
           {{
             pairProviders
               ? $t('projects.new.acknowledgmentWithProvider', { provider: pairProviders })
               : $t('projects.new.acknowledgment')
           }}
-        </template>
-      </v-checkbox>
-      <ProblemAlert v-if="submitFailure" :error="submitFailure" class="mb-4" />
-      <div v-if="submitting" role="status" class="text-body-2 mb-2">
-        <v-progress-linear indeterminate class="mb-1" />
+        </span>
+      </label>
+      <ProblemAlert v-if="submitFailure" :error="submitFailure" />
+      <div v-if="submitting" role="status" class="t2 submit-progress">
+        <v-progress-linear indeterminate color="#7C3AED" bg-color="#3B3F7A" rounded />
         {{ currentFlowStep ? $t(`projects.new.progress.${currentFlowStep}`) : '' }}
       </div>
     </section>
 
-    <div class="d-flex flex-wrap ga-2 mt-6">
-      <v-btn variant="text" :to="{ name: ROUTE_NAMES.projects }" :disabled="submitting">
-        {{ $t('common.cancel') }}
-      </v-btn>
-      <v-spacer />
-      <v-btn
-        v-if="stepIndex > 0"
-        variant="outlined"
-        :disabled="submitting"
-        @click="goTo(STEPS[stepIndex - 1] ?? 'need')"
-      >
-        {{ $t('common.back') }}
-      </v-btn>
-      <v-btn
+    <div class="new-actions">
+      <div class="new-actions-group">
+        <button v-if="submitting" type="button" class="btn" disabled>
+          {{ $t('common.cancel') }}
+        </button>
+        <router-link v-else class="btn" :to="{ name: ROUTE_NAMES.projects }">
+          {{ $t('common.cancel') }}
+        </router-link>
+        <button
+          v-if="stepIndex > 0"
+          type="button"
+          class="btn"
+          :disabled="submitting"
+          @click="goTo(STEPS[stepIndex - 1] ?? 'need')"
+        >
+          {{ $t('common.back') }}
+        </button>
+      </div>
+      <button
         v-if="step !== 'review'"
-        color="primary"
-        variant="flat"
+        type="button"
+        class="btn btn-p"
         @click="goTo(STEPS[stepIndex + 1] ?? 'review')"
       >
         {{ $t('common.continue') }}
-      </v-btn>
-      <v-btn
+      </button>
+      <button
         v-else
-        color="primary"
-        variant="flat"
+        type="button"
+        class="btn btn-p"
         :disabled="!canSubmit"
-        :loading="submitting"
+        :aria-busy="submitting"
         @click="submit"
       >
+        <CanvasIcon name="play" :size="16" :stroke-width="2" />
         {{ $t('projects.new.createAndStart') }}
-      </v-btn>
+      </button>
     </div>
-  </v-container>
+  </section>
 </template>
 
 <style scoped>
-.wizard-steps {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 1rem;
-  list-style: none;
-  padding: 0;
-  margin: 0;
+.new-description {
+  margin: 4px 0 0;
 }
 
-.wizard-steps li {
+.wizard-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
   display: flex;
-  flex-direction: column;
-  min-width: 160px;
-  padding: 0.5rem 0.75rem;
-  border-bottom: 3px solid rgb(var(--v-theme-on-surface), 0.2);
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.wizard-step {
+  flex: 1 1 200px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-radius: 12px;
+  background: transparent;
+  border: 1px solid rgba(140, 150, 255, 0.16);
 }
 
 .wizard-step--current {
-  border-bottom-color: rgb(var(--v-theme-primary)) !important;
+  background: rgba(99, 102, 241, 0.16);
+  border-color: rgba(129, 140, 248, 0.5);
 }
 
-.wizard-step--done {
-  border-bottom-color: rgb(var(--v-theme-success)) !important;
+.wizard-step-number {
+  width: 28px;
+  height: 28px;
+  border-radius: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 13px;
+  flex: none;
+  background: rgba(255, 255, 255, 0.14);
+  color: #ffffff;
+}
+
+.wizard-step--current .wizard-step-number,
+.wizard-step--done .wizard-step-number {
+  background: #6366f1;
+}
+
+.wizard-step-text {
+  display: flex;
+  flex-direction: column;
+}
+
+.wizard-step-name {
+  font-weight: 600;
+}
+
+.wizard-step-of {
+  font-size: 12px;
+}
+
+.new-card {
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  max-width: 980px;
+}
+
+.new-step {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.new-step--configuration {
+  gap: 22px;
+}
+
+.fl {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.fl-control {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.fl-label {
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.fl-title {
+  margin: 0;
+  font-weight: 600;
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.fld[aria-invalid='true'] {
+  border-color: #fca5a5;
+}
+
+.fld-foot {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.fld-counter {
+  margin-left: auto;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.fld-hint {
+  font-size: 12px;
+}
+
+.fld-error {
+  color: #fca5a5;
+  font-size: 12px;
+}
+
+.note {
+  margin: 0;
+}
+
+.note-crit {
+  border-color: rgba(239, 68, 68, 0.45);
+  background: rgba(239, 68, 68, 0.12);
+}
+
+.note-warn {
+  border-color: rgba(234, 179, 8, 0.45);
+  background: rgba(234, 179, 8, 0.1);
+}
+
+.error-summary-title {
+  margin: 0;
+  font-weight: 600;
+}
+
+.error-summary-list {
+  margin: 4px 0 0;
+  padding-left: 18px;
 }
 
 .attachment-list {
   list-style: none;
+  margin: 0;
   padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .attachment-list li {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.attachment-size {
+  font-weight: 400;
+}
+
+.attachment-remove,
+.source-button {
+  min-height: 40px;
+}
+
+.source-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.config-block {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.block-title {
+  margin: 0;
+  font-size: 16px;
+  line-height: 24px;
+  font-weight: 700;
+}
+
+.block-help {
+  margin: 2px 0 0;
+  font-size: 13px;
+}
+
+.field-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 16px;
+  align-items: start;
+}
+
+.review-list {
+  margin: 0;
+  display: grid;
+  grid-template-columns: minmax(160px, 220px) 1fr;
+  gap: 10px 16px;
+}
+
+.review-list dd {
+  margin: 0;
+}
+
+.review-name {
+  font-weight: 600;
+}
+
+.stage-flow {
+  list-style: none;
+  margin: 0;
+  padding: 0;
   display: flex;
   flex-wrap: wrap;
-  align-items: center;
-  gap: 0.5rem;
+}
+
+.stage-flow li + li::before {
+  content: '·';
+  margin: 0 6px;
+}
+
+.acknowledgment {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  cursor: pointer;
+}
+
+.acknowledgment-box {
+  width: 18px;
+  height: 18px;
+  margin: 1px 0 0;
+  flex: none;
+  accent-color: #7c3aed;
+  cursor: pointer;
+}
+
+.submit-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.new-actions {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  padding-top: 16px;
+}
+
+.new-actions-group {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
 }
 </style>

@@ -53,28 +53,29 @@ function artifactRoute(reference: string) {
 </script>
 
 <template>
-  <section aria-labelledby="structured-heading" class="mb-6" data-testid="structured-view">
-    <h2 id="structured-heading" class="text-h6 mb-2">
+  <!-- Look: canvas "Artefato" side cards (h2, `.kv` rows, `.tbl` tables). -->
+  <section aria-labelledby="structured-heading" class="card sv" data-testid="structured-view">
+    <h2 id="structured-heading">
       {{ $t(`structured.title.${props.artifact.type}`) }}
     </h2>
 
     <!-- DIC (ESP-09 3): tables, dictionary, relationships and personal data. -->
     <template v-if="dic">
-      <p v-if="dic.modelo_dbml" class="text-body-2 mb-3">
-        {{ $t('structured.dic.model') }} <span class="monospace">{{ dic.modelo_dbml }}</span>
+      <p v-if="dic.modelo_dbml" class="sv-text">
+        {{ $t('structured.dic.model') }} <span class="mono">{{ dic.modelo_dbml }}</span>
       </p>
       <section
         v-for="table in dic.tabelas"
         :key="table.nome"
         :aria-labelledby="`table-${table.nome}`"
-        class="mb-5"
+        class="sv-block"
         :data-testid="`dic-table-${table.nome}`"
       >
-        <h3 :id="`table-${table.nome}`" class="text-subtitle-1 font-weight-medium monospace">
+        <h3 :id="`table-${table.nome}`" class="mono">
           {{ table.nome }}
         </h3>
-        <p class="text-body-2">{{ table.descricao }}</p>
-        <p v-if="table.origem?.length" class="text-body-2">
+        <p>{{ table.descricao }}</p>
+        <p v-if="table.origem?.length" class="sv-text">
           {{ $t('structured.dic.origin') }}
           <template v-for="(origin, index) in table.origem" :key="origin">
             <router-link v-if="artifactRoute(origin)" :to="artifactRoute(origin) ?? ''">{{
@@ -84,7 +85,7 @@ function artifactRoute(reference: string) {
           </template>
         </p>
         <div class="table-scroll">
-          <v-table density="compact">
+          <table class="tbl">
             <caption class="sr-only">
               {{
                 $t('structured.dic.columnsOf', { table: table.nome })
@@ -101,25 +102,25 @@ function artifactRoute(reference: string) {
             </thead>
             <tbody>
               <tr v-for="column in table.colunas" :key="column.nome">
-                <td class="monospace">
+                <td class="mono">
                   {{ column.nome }}
-                  <span v-if="column.dado_pessoal" class="font-weight-bold">
+                  <span v-if="column.dado_pessoal" class="sv-strong">
                     · {{ $t('structured.dic.personal') }}</span
                   >
                 </td>
-                <td class="monospace">{{ column.tipo }}</td>
+                <td class="mono">{{ column.tipo }}</td>
                 <td>{{ yesNo(column.nulo) }}</td>
-                <td class="monospace">{{ column.padrao ?? '' }}</td>
+                <td class="mono">{{ column.padrao ?? '' }}</td>
                 <td>{{ column.descricao }}</td>
               </tr>
             </tbody>
-          </v-table>
+          </table>
         </div>
-        <ul v-if="table.constraints.length" class="ml-4 mt-2">
-          <li v-for="constraint in table.constraints" :key="constraint.nome" class="text-body-2">
-            <span class="monospace">{{ constraint.nome }}</span> ·
+        <ul v-if="table.constraints.length" class="sv-rows">
+          <li v-for="constraint in table.constraints" :key="constraint.nome">
+            <span class="mono">{{ constraint.nome }}</span> ·
             {{ label('structured.dic.constraintTypes', constraint.tipo) }} ·
-            <span class="monospace">{{ constraint.definicao }}</span>
+            <span class="mono">{{ constraint.definicao }}</span>
             <template v-if="constraint.regra">
               ·
               <router-link
@@ -131,27 +132,27 @@ function artifactRoute(reference: string) {
         </ul>
       </section>
 
-      <h3 class="text-subtitle-1 font-weight-medium mb-1">
+      <h3>
         {{ $t('structured.dic.relationships') }}
       </h3>
-      <p v-if="relationships.length === 0" class="text-body-2 mb-4">
+      <p v-if="relationships.length === 0" class="sv-text">
         {{ $t('structured.dic.noRelationships') }}
       </p>
-      <ul v-else class="ml-4 mb-4">
-        <li v-for="item in relationships" :key="item.constraint.nome" class="text-body-2">
-          <span class="monospace">{{ item.table }}</span> ·
-          <span class="monospace">{{ item.constraint.definicao }}</span>
+      <ul v-else class="sv-rows">
+        <li v-for="item in relationships" :key="item.constraint.nome">
+          <span class="mono">{{ item.table }}</span> ·
+          <span class="mono">{{ item.constraint.definicao }}</span>
         </li>
       </ul>
 
-      <h3 class="text-subtitle-1 font-weight-medium mb-1">
+      <h3>
         {{ $t('structured.dic.personalData') }}
       </h3>
-      <p v-if="dic.dados_pessoais.length === 0" class="text-body-2">
+      <p v-if="dic.dados_pessoais.length === 0" class="sv-text">
         {{ $t('structured.dic.noPersonalData') }}
       </p>
       <div v-else class="table-scroll" data-testid="dic-personal-data">
-        <v-table density="compact">
+        <table class="tbl">
           <thead>
             <tr>
               <th scope="col">{{ $t('structured.dic.field') }}</th>
@@ -162,24 +163,24 @@ function artifactRoute(reference: string) {
           </thead>
           <tbody>
             <tr v-for="item in dic.dados_pessoais" :key="item.campo">
-              <td class="monospace">{{ item.campo }}</td>
+              <td class="mono">{{ item.campo }}</td>
               <td>{{ item.finalidade }}</td>
               <td>
                 {{ label('structured.dic.legalBases', item.base_legal) }}
-                <span v-if="item.base_legal === 'a_confirmar'" class="font-weight-bold">
+                <span v-if="item.base_legal === 'a_confirmar'" class="sv-strong">
                   · {{ $t('structured.dic.legalBasisPending') }}
                 </span>
               </td>
               <td>{{ item.retencao }}</td>
             </tr>
           </tbody>
-        </v-table>
+        </table>
       </div>
     </template>
 
     <!-- PERSIST (ESP-09 3): one block per schema field. -->
     <template v-if="persist">
-      <dl class="summary-list mb-4" data-testid="persist-summary">
+      <dl class="sv-fields" data-testid="persist-summary">
         <dt>{{ $t('structured.persist.database') }}</dt>
         <dd>{{ persist.banco.sgbd }} {{ persist.banco.versao }}</dd>
         <dt>{{ $t('structured.persist.access') }}</dt>
@@ -209,22 +210,22 @@ function artifactRoute(reference: string) {
         </template>
       </dl>
 
-      <h3 class="text-subtitle-1 font-weight-medium mb-1">
+      <h3>
         {{ $t('structured.persist.concurrency') }}
       </h3>
-      <ul class="ml-4 mb-4">
-        <li v-for="(item, index) in persist.concorrencia" :key="index" class="text-body-2">
+      <ul class="sv-rows">
+        <li v-for="(item, index) in persist.concorrencia" :key="index">
           {{ item.situacao }} · {{ item.garantia }}
         </li>
       </ul>
 
-      <h3 class="text-subtitle-1 font-weight-medium mb-1">
+      <h3>
         {{ $t('structured.persist.indexes') }}
       </h3>
-      <ul class="ml-4 mb-4" data-testid="persist-indexes">
-        <li v-for="item in persist.indices" :key="item.nome" class="text-body-2 mb-1">
-          <span class="monospace">{{ item.nome }}</span> ·
-          <span class="monospace">{{ item.tabela }}({{ item.colunas.join(', ') }})</span> ·
+      <ul class="sv-rows" data-testid="persist-indexes">
+        <li v-for="item in persist.indices" :key="item.nome">
+          <span class="mono">{{ item.nome }}</span> ·
+          <span class="mono">{{ item.tabela }}({{ item.colunas.join(', ') }})</span> ·
           {{ item.tipo }} · {{ item.justificativa }}
           <template v-if="item.custo_escrita_aceito">
             · {{ $t('structured.persist.writeCostAccepted') }}</template
@@ -232,11 +233,11 @@ function artifactRoute(reference: string) {
         </li>
       </ul>
 
-      <h3 class="text-subtitle-1 font-weight-medium mb-1">
+      <h3>
         {{ $t('structured.persist.performance') }}
       </h3>
-      <ul class="ml-4 mb-4">
-        <li v-for="(item, index) in persist.desempenho" :key="index" class="text-body-2 mb-1">
+      <ul class="sv-rows">
+        <li v-for="(item, index) in persist.desempenho" :key="index">
           {{ item.consulta }} · {{ item.volume }} · {{ item.meta }}
           <template v-if="item.rnf">
             ·
@@ -244,19 +245,19 @@ function artifactRoute(reference: string) {
               item.rnf
             }}</router-link><span v-else>{{ item.rnf }}</span>
           </template>
-          <span v-if="!item.plano_conferido" class="font-weight-bold">
+          <span v-if="!item.plano_conferido" class="sv-strong">
             · {{ $t('structured.persist.planNotChecked') }}</span
           >
         </li>
       </ul>
 
-      <h3 class="text-subtitle-1 font-weight-medium mb-1">
+      <h3>
         {{ $t('structured.persist.permissions') }}
       </h3>
-      <ul class="ml-4">
-        <li v-for="item in persist.permissoes" :key="item.papel" class="text-body-2">
-          <span class="monospace">{{ item.papel }}</span> · {{ item.privilegios.join(', ') }}
-          <span v-if="item.ddl_em_producao" class="font-weight-bold">
+      <ul class="sv-rows">
+        <li v-for="item in persist.permissoes" :key="item.papel">
+          <span class="mono">{{ item.papel }}</span> · {{ item.privilegios.join(', ') }}
+          <span v-if="item.ddl_em_producao" class="sv-strong">
             · {{ $t('structured.persist.ddlInProduction') }}</span
           >
         </li>
@@ -265,13 +266,13 @@ function artifactRoute(reference: string) {
 
     <!-- TELAS (ESP-10): the screen ↔ story map, prototype and accessibility. -->
     <template v-if="telas">
-      <dl class="summary-list mb-4">
+      <dl class="sv-fields">
         <dt>{{ $t('structured.telas.flow') }}</dt>
-        <dd class="monospace">{{ telas.fluxo }}</dd>
+        <dd class="mono">{{ telas.fluxo }}</dd>
         <dt>{{ $t('structured.telas.prototype') }}</dt>
-        <dd class="monospace">{{ telas.prototipo }}</dd>
+        <dd class="mono">{{ telas.prototipo }}</dd>
         <dt>{{ $t('structured.telas.style') }}</dt>
-        <dd class="monospace">{{ telas.estilo }}</dd>
+        <dd class="mono">{{ telas.estilo }}</dd>
         <dt>{{ $t('structured.telas.accessibility') }}</dt>
         <dd>
           {{ label('structured.telas.levels', telas.acessibilidade.nivel) }} ·
@@ -286,7 +287,7 @@ function artifactRoute(reference: string) {
         </dd>
       </dl>
       <div class="table-scroll" data-testid="telas-map">
-        <v-table density="compact">
+        <table class="tbl">
           <caption class="sr-only">
             {{
               $t('structured.telas.map')
@@ -303,8 +304,8 @@ function artifactRoute(reference: string) {
           <tbody>
             <tr v-for="screen in telas.telas" :key="screen.id" :data-testid="`screen-${screen.id}`">
               <td>
-                <span class="monospace">{{ screen.id }}</span> · {{ screen.nome }}
-                <div class="text-body-2 monospace">{{ screen.arquivo }}</div>
+                <span class="mono">{{ screen.id }}</span> · {{ screen.nome }}
+                <div class="t2 mono">{{ screen.arquivo }}</div>
               </td>
               <td>
                 <template v-for="(story, index) in screen.us" :key="story">
@@ -314,18 +315,18 @@ function artifactRoute(reference: string) {
                   ><span v-if="index < screen.us.length - 1">, </span>
                 </template>
               </td>
-              <td class="monospace">{{ screen.criterios.join(', ') }}</td>
+              <td class="mono">{{ screen.criterios.join(', ') }}</td>
               <td>{{ screen.estados.join(', ') }}</td>
             </tr>
           </tbody>
-        </v-table>
+        </table>
       </div>
       <template v-if="telas.lacunas_contrato.length">
-        <h3 class="text-subtitle-1 font-weight-medium mt-4 mb-1">
+        <h3>
           {{ $t('structured.telas.contractGaps') }}
         </h3>
-        <ul class="ml-4">
-          <li v-for="(gap, index) in telas.lacunas_contrato" :key="index" class="text-body-2">
+        <ul class="sv-rows">
+          <li v-for="(gap, index) in telas.lacunas_contrato" :key="index">
             {{ gap }}
           </li>
         </ul>
@@ -334,31 +335,31 @@ function artifactRoute(reference: string) {
 
     <!-- VALIDACAO (ESP-13, US-20 CA-4): cross checks, opinions and the verdict. -->
     <template v-if="validacao">
-      <p class="text-body-1 font-weight-medium mb-3" data-testid="validation-verdict">
+      <p class="sv-text" data-testid="validation-verdict">
         {{
           $t('structured.validacao.verdict', {
             verdict: label('structured.validacao.verdicts', validacao.veredito),
           })
         }}
       </p>
-      <h3 class="text-subtitle-1 font-weight-medium mb-1">
+      <h3>
         {{ $t('structured.validacao.checks') }}
       </h3>
-      <ul class="ml-4 mb-4">
-        <li v-for="item in validacao.conferencias" :key="item.par" class="text-body-2 mb-1">
+      <ul class="sv-rows">
+        <li v-for="item in validacao.conferencias" :key="item.par">
           {{ label('structured.validacao.pairs', item.par) }} ·
           {{ label('structured.validacao.results', item.resultado) }}
           <template v-if="item.inconsistencia"> · {{ item.inconsistencia }}</template>
           <template v-if="item.achado">
-            · <span class="monospace">{{ item.achado }}</span></template
+            · <span class="mono">{{ item.achado }}</span></template
           >
         </li>
       </ul>
-      <h3 class="text-subtitle-1 font-weight-medium mb-1">
+      <h3>
         {{ $t('structured.validacao.opinions') }}
       </h3>
-      <ul class="ml-4" data-testid="validation-opinions">
-        <li v-for="item in validacao.pareceres" :key="item.participante" class="text-body-2 mb-1">
+      <ul class="sv-rows" data-testid="validation-opinions">
+        <li v-for="item in validacao.pareceres" :key="item.participante">
           {{ label('structured.validacao.participants', item.participante) }} ·
           {{ label('structured.validacao.opinionValues', item.parecer) }}
           <template v-if="item.ressalvas.length"> · {{ item.ressalvas.join('; ') }}</template>
@@ -367,3 +368,101 @@ function artifactRoute(reference: string) {
     </template>
   </section>
 </template>
+
+<style scoped>
+.sv {
+  padding: 18px 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.sv h2 {
+  margin-bottom: 2px;
+}
+
+.sv h3 {
+  margin: 8px 0 0;
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 700;
+}
+
+.sv-text {
+  margin: 0;
+  font-size: 13px;
+}
+
+.sv-strong {
+  font-weight: 700;
+}
+
+.sv-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+/* Label / value rows (canvas `.kv` separators). */
+.sv-fields {
+  display: grid;
+  grid-template-columns: minmax(140px, max-content) 1fr;
+  column-gap: 12px;
+  margin: 0;
+}
+
+.sv-fields > dt,
+.sv-fields > dd {
+  margin: 0;
+  padding: 10px 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.sv-fields > dt {
+  color: #a9b0d6;
+}
+
+/* Lists of generated items: one per row, canvas `.li` separators. */
+.sv-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-size: 13px;
+}
+
+.sv-rows > li {
+  padding: 8px 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  overflow-wrap: anywhere;
+}
+
+.sv-steps {
+  margin: 0;
+  padding-left: 22px;
+  font-size: 13px;
+}
+
+.sv-steps > li + li {
+  margin-top: 4px;
+}
+
+.tbl th[scope='row'] {
+  font-weight: 400;
+  color: #f1f3ff;
+}
+
+.pre-wrap {
+  white-space: pre-wrap;
+}
+
+.note-warn {
+  flex-direction: column;
+  gap: 6px;
+  border-color: rgba(234, 179, 8, 0.45);
+  background: rgba(234, 179, 8, 0.1);
+}
+</style>

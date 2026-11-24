@@ -9,9 +9,21 @@ const projectId = computed(() => String(route.params.projectId))
 </script>
 
 <template>
-  <section aria-labelledby="audit-heading">
-    <h2 id="audit-heading" class="text-h6 mb-1">{{ $t('audit.title') }}</h2>
-    <p class="text-body-2 text-medium-emphasis mb-4">{{ $t('audit.description') }}</p>
+  <!-- Layout: canvas primitives of Projeto.dc.html (section card with h2); no own artboard. -->
+  <section class="card tab-card" aria-labelledby="audit-heading">
+    <h2 id="audit-heading">{{ $t('audit.title') }}</h2>
+    <p class="t2 tab-hint">{{ $t('audit.description') }}</p>
     <AuditTrail scope="project" :project-id="projectId" />
   </section>
 </template>
+
+<style scoped>
+.tab-card {
+  padding: 18px 22px;
+}
+
+.tab-hint {
+  margin: 4px 0 16px;
+  font-size: 13px;
+}
+</style>

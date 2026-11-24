@@ -56,6 +56,14 @@ const balance = computed(
     subtractMoney(store.project?.summary?.stop_limit, store.project?.summary?.accumulated_cost),
 )
 
+/** Canvas "Custo e tempo": the bar fills up to the stop limit; each alert is a mark on it. */
+const usedWidth = computed(
+  () => `${String(Math.min(Math.max(costs.value?.budget?.used_percentage ?? 0, 0), 100))}%`,
+)
+const alertMarks = computed(() =>
+  budget.value ? (budget.value.percentage_alert_limits ?? [50, 80]) : [],
+)
+
 function stageName(id: string): string {
   const key = `stages.${id}`
   return i18n.te(key) ? t(key) : id
@@ -71,18 +79,9 @@ watch(
 </script>
 
 <template>
-  <section aria-labelledby="cost-summary-heading" class="mt-6" data-testid="cost-summary">
-    <div class="d-flex flex-wrap align-center ga-2 mb-2">
-      <h2 id="cost-summary-heading" class="text-h6">{{ $t('costs.summary.title') }}</h2>
-      <v-spacer />
-      <router-link
-        :to="{ name: ROUTE_NAMES.projectCosts, params: { projectId } }"
-        class="text-body-2"
-        data-testid="cost-summary-details"
-      >
-        {{ $t('costs.summary.details') }}
-      </router-link>
-    </div>
+  <!-- Layout: "Custo e tempo" card of canvas "Projeto" (Projeto.dc.html). -->
+  <section aria-labelledby="cost-summary-heading" class="card cost-card" data-testid="cost-summary">
+    <h2 id="cost-summary-heading">{{ $t('costs.summary.title') }}</h2>
     <LoadingState v-if="loader.loading.value && !costs" type="paragraph" />
     <ProblemAlert
       v-else-if="loader.error.value && !costs"
@@ -91,66 +90,84 @@ watch(
       @retry="loader.run"
     />
     <template v-else-if="costs">
-      <dl class="summary-list mb-4">
-        <dt>{{ $t('costs.summary.budgetUse') }}</dt>
-        <dd data-testid="cost-summary-budget">
-          <template v-if="costs.budget?.stop_limit">
+      <div class="budget-use" data-testid="cost-summary-budget">
+        <template v-if="costs.budget?.stop_limit">
+          <span class="budget-percentage">{{ format.percent(costs.budget.used_percentage) }}</span>
+          <span class="t2">
             {{
-              $t('costs.summary.budgetUseValue', {
+              $t('costs.summary.ofBudget', {
                 spend: format.money(costs.total.total),
                 limit: format.money(costs.budget.stop_limit),
-                percentage: format.percent(costs.budget.used_percentage),
               })
             }}
-          </template>
-          <template v-else>{{ $t('costs.budget.none') }}</template>
-        </dd>
-        <template v-if="budget">
-          <dt>{{ $t('costs.summary.alertsAndStop') }}</dt>
-          <dd>
-            {{
-              $t('costs.summary.alertsAndStopValue', {
-                alerts: (budget.percentage_alert_limits ?? [50, 80])
-                  .map((value) => format.percent(value))
-                  .join(', '),
-                limit: format.money(budget.stop_limit),
-              })
-            }}
-          </dd>
+          </span>
         </template>
-        <dt>{{ $t('costs.columns.rework') }}</dt>
-        <dd data-testid="cost-summary-rework">
-          {{
-            $t('costs.summary.reworkValue', {
-              n: reworkWaves.length,
-              cost:
-                format.money(costs.total.rework) ||
-                format.money({ value: '0', currency: costs.total.total.currency }),
-            })
-          }}
-          <template v-if="reworkFindings.length">
-            · {{ $t('costs.summary.reworkFindings', { findings: reworkFindings.join(', ') }) }}
-          </template>
-        </dd>
-        <dt>{{ $t('costs.columns.cycle') }}</dt>
-        <dd data-testid="cost-summary-cycle">{{ format.longDuration(costs.time.cycle_ms) }}</dd>
-        <dt>{{ $t('costs.columns.execution') }}</dt>
-        <dd data-testid="cost-summary-execution">
-          {{ format.longDuration(costs.time.execution_ms) }}
-        </dd>
-      </dl>
+        <span v-else class="t2">{{ $t('costs.budget.none') }}</span>
+      </div>
+      <template v-if="costs.budget?.stop_limit">
+        <!-- The text above and below carries the values; the bar only repeats them. -->
+        <div class="budget-bar" aria-hidden="true">
+          <div class="budget-fill" :style="{ width: usedWidth }" />
+          <span
+            v-for="mark in alertMarks"
+            :key="mark"
+            class="budget-mark"
+            :style="{ left: `${String(mark)}%` }"
+          />
+        </div>
+      </template>
+      <span v-if="budget" class="t2 budget-rule">
+        {{
+          $t('costs.summary.alertsAndStopValue', {
+            alerts: (budget.percentage_alert_limits ?? [50, 80])
+              .map((value) => format.percent(value))
+              .join(', '),
+            limit: format.money(budget.stop_limit),
+          })
+        }}
+      </span>
+      <div class="cost-rows">
+        <div class="kv">
+          <span class="t2">{{ $t('costs.columns.rework') }}</span>
+          <span class="kv-value" data-testid="cost-summary-rework">
+            {{
+              $t('costs.summary.reworkValue', {
+                n: reworkWaves.length,
+                cost:
+                  format.money(costs.total.rework) ||
+                  format.money({ value: '0', currency: costs.total.total.currency }),
+              })
+            }}
+            <template v-if="reworkFindings.length">
+              · {{ $t('costs.summary.reworkFindings', { findings: reworkFindings.join(', ') }) }}
+            </template>
+          </span>
+        </div>
+        <div class="kv">
+          <span class="t2">{{ $t('costs.columns.cycle') }}</span>
+          <span class="kv-value" data-testid="cost-summary-cycle">
+            {{ format.longDuration(costs.time.cycle_ms) }}
+          </span>
+        </div>
+        <div class="kv">
+          <span class="t2">{{ $t('costs.columns.execution') }}</span>
+          <span class="kv-value" data-testid="cost-summary-execution">
+            {{ format.longDuration(costs.time.execution_ms) }}
+          </span>
+        </div>
+      </div>
     </template>
 
     <!-- ESP-06 3.6: the next stage with its estimate; "First stage" while the project is created. -->
-    <div v-if="nextStage" data-testid="next-stage">
-      <p class="text-body-1 mb-1">
+    <div v-if="nextStage" class="next-stage" data-testid="next-stage">
+      <p class="next-stage-title">
         {{
           store.project?.state === 'created'
             ? $t('costs.summary.firstStage', { stage: stageName(nextStage.id) })
             : $t('costs.summary.nextStage', { stage: stageName(nextStage.id) })
         }}
       </p>
-      <p v-if="nextStage.state === 'blocked'" class="text-body-2 mb-2">
+      <p v-if="nextStage.state === 'blocked'" class="t2 next-stage-wait">
         {{
           $t('projects.workflow.waitingFor', {
             stages: nextStage.depends_on.map((id) => stageName(id)).join(', '),
@@ -164,5 +181,95 @@ watch(
         :revision="store.revision"
       />
     </div>
+    <router-link
+      :to="{ name: ROUTE_NAMES.projectCosts, params: { projectId } }"
+      class="card-link"
+      data-testid="cost-summary-details"
+    >
+      {{ $t('costs.summary.details') }}
+    </router-link>
   </section>
 </template>
+
+<style scoped>
+.cost-card {
+  padding: 18px 22px;
+  display: flex;
+  flex-direction: column;
+}
+
+.budget-use {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.budget-percentage {
+  font-size: 22px;
+  font-weight: 700;
+}
+
+.budget-bar {
+  position: relative;
+  height: 10px;
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.12);
+  margin: 10px 0 4px;
+}
+
+.budget-fill {
+  height: 10px;
+  border-radius: 5px;
+  background: linear-gradient(90deg, #3b82f6, #8b5cf6);
+}
+
+.budget-mark {
+  position: absolute;
+  top: -3px;
+  width: 2px;
+  height: 16px;
+  background: #f59e0b;
+}
+
+.budget-rule {
+  font-size: 12px;
+}
+
+.cost-rows {
+  margin-top: 10px;
+}
+
+.kv-value {
+  font-weight: 600;
+  text-align: right;
+}
+
+.next-stage {
+  padding-top: 10px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.next-stage-title {
+  margin: 0;
+  font-weight: 600;
+}
+
+.next-stage-wait {
+  margin: 4px 0 0;
+  font-size: 13px;
+}
+
+.next-stage :deep([data-testid='stage-estimate']) {
+  margin: 10px 0 0;
+}
+
+.card-link {
+  display: inline-flex;
+  align-self: flex-start;
+  min-height: 44px;
+  align-items: center;
+  font-weight: 500;
+  text-decoration: none;
+}
+</style>

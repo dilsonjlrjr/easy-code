@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { mdiContentCopy } from '@mdi/js'
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, ref, useId, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import type { Page } from '@/shared/api/contract'
@@ -59,6 +59,8 @@ const actionOptions = computed(() =>
   ),
 )
 const draftPeriodValid = computed(() => periodIsValid(draft.value))
+/** Ids of the native date fields, unique per trail on the page. */
+const uid = `audit-${useId()}`
 
 function list(cursor?: string): Promise<Page<AuditRecord>> {
   const query = apiQueryOf(applied.value, cursor)
@@ -81,6 +83,7 @@ const invalidPeriod = computed(
   () => isApiError(loader.error.value) && loader.error.value.status === 400,
 )
 const filtered = computed(() => hasFilters(applied.value))
+const periodError = computed(() => !draftPeriodValid.value || invalidPeriod.value)
 
 function apply(): void {
   if (!draftPeriodValid.value) return
@@ -156,23 +159,18 @@ watch(
 </script>
 
 <template>
-  <div data-testid="audit-trail">
+  <!-- Layout: canvas primitives of Projeto.dc.html (filters with .fld, table .tbl); no own artboard. -->
+  <div class="audit-trail" data-testid="audit-trail">
     <div role="status" class="sr-only">{{ message }}</div>
     <!-- ER-27-8: a member without approver or lead, or a non-administrator, gets "no permission". -->
-    <v-alert
-      v-if="forbidden"
-      type="warning"
-      variant="tonal"
-      role="alert"
-      data-testid="audit-forbidden"
-    >
+    <p v-if="forbidden" class="note note-warn" role="alert" data-testid="audit-forbidden">
       {{ $t('audit.forbidden') }}
-    </v-alert>
-    <v-alert v-else-if="notFound" type="warning" variant="tonal" role="alert">
+    </p>
+    <p v-else-if="notFound" class="note note-warn" role="alert">
       {{ $t('problems.not-found') }}
-    </v-alert>
+    </p>
     <template v-else>
-      <form class="audit-filters mb-4" data-testid="audit-filters" @submit.prevent="apply">
+      <form class="audit-filters" data-testid="audit-filters" @submit.prevent="apply">
         <v-select
           v-model="draft.actions"
           :items="actionOptions"
@@ -186,39 +184,49 @@ watch(
           hide-details
           class="audit-actions"
         />
-        <v-text-field
-          v-model="draft.from"
-          type="date"
-          :label="$t('audit.filters.from')"
-          :disabled="loader.loading.value"
-          density="comfortable"
-          hide-details="auto"
-        />
-        <v-text-field
-          v-model="draft.until"
-          type="date"
-          :label="$t('audit.filters.until')"
-          :disabled="loader.loading.value"
-          :error-messages="
-            draftPeriodValid && !invalidPeriod ? [] : [$t('audit.filters.invalidPeriod')]
-          "
-          density="comfortable"
-          hide-details="auto"
-          data-testid="audit-until"
-        />
-        <div class="d-flex flex-wrap align-center ga-2">
-          <v-btn type="submit" color="primary" variant="flat" :disabled="!draftPeriodValid">
+        <div class="field">
+          <label :for="`${uid}-from`" class="field-control">
+            <span class="field-label">{{ $t('audit.filters.from') }}</span>
+            <input
+              :id="`${uid}-from`"
+              v-model="draft.from"
+              type="date"
+              class="fld"
+              :disabled="loader.loading.value"
+            />
+          </label>
+        </div>
+        <div class="field">
+          <label :for="`${uid}-until`" class="field-control">
+            <span class="field-label">{{ $t('audit.filters.until') }}</span>
+            <input
+              :id="`${uid}-until`"
+              v-model="draft.until"
+              type="date"
+              class="fld"
+              :disabled="loader.loading.value"
+              :aria-invalid="periodError ? 'true' : undefined"
+              :aria-describedby="periodError ? `${uid}-until-error` : undefined"
+              data-testid="audit-until"
+            />
+          </label>
+          <p v-if="periodError" :id="`${uid}-until-error`" class="field-error">
+            {{ $t('audit.filters.invalidPeriod') }}
+          </p>
+        </div>
+        <div class="filter-actions">
+          <button type="submit" class="btn btn-p" :disabled="!draftPeriodValid">
             {{ $t('audit.filters.apply') }}
-          </v-btn>
-          <v-btn v-if="filtered" variant="outlined" @click="clearFilters">
+          </button>
+          <button v-if="filtered" type="button" class="btn" @click="clearFilters">
             {{ $t('audit.filters.clear') }}
-          </v-btn>
-          <v-btn variant="text" data-testid="audit-order" @click="toggleOrder">
+          </button>
+          <button type="button" class="btn" data-testid="audit-order" @click="toggleOrder">
             {{ applied.order === 'desc' ? $t('audit.order.toAsc') : $t('audit.order.toDesc') }}
-          </v-btn>
+          </button>
         </div>
       </form>
-      <p class="text-body-2 text-medium-emphasis mb-2">
+      <p class="t2 audit-hint">
         {{ applied.order === 'desc' ? $t('audit.order.desc') : $t('audit.order.asc') }}
         · {{ $t('audit.readOnly') }}
       </p>
@@ -231,17 +239,17 @@ watch(
         @retry="loader.run"
       />
       <template v-else-if="records.length === 0 && !loader.loading.value">
-        <p v-if="filtered" data-testid="audit-empty">
+        <p v-if="filtered" class="t2 audit-empty" data-testid="audit-empty">
           {{ $t('audit.emptyFiltered') }}
-          <v-btn variant="text" size="small" @click="clearFilters">
+          <button type="button" class="ib" @click="clearFilters">
             {{ $t('audit.filters.clear') }}
-          </v-btn>
+          </button>
         </p>
-        <p v-else data-testid="audit-empty">{{ $t('audit.empty') }}</p>
+        <p v-else class="t2 audit-empty" data-testid="audit-empty">{{ $t('audit.empty') }}</p>
       </template>
       <template v-else>
         <div class="table-scroll">
-          <v-table density="comfortable" data-testid="audit-records">
+          <table class="tbl audit-table" data-testid="audit-records">
             <caption class="sr-only">
               {{
                 $t('audit.caption')
@@ -271,15 +279,15 @@ watch(
                 :data-testid="`audit-record-${record.id}`"
                 :data-action="record.action"
               >
-                <th scope="row">{{ actorText(record.actor, t, (key) => i18n.te(key)) }}</th>
+                <th scope="row" class="row-head">
+                  {{ actorText(record.actor, t, (key) => i18n.te(key)) }}
+                </th>
                 <td>
                   <time :datetime="record.when">{{ format.dateTime(record.when) }}</time>
                 </td>
                 <td>
                   {{ actionText(record.action, t, (key) => i18n.te(key)) }}
-                  <span v-if="record.decision" class="d-block text-body-2 monospace">{{
-                    record.decision
-                  }}</span>
+                  <span v-if="record.decision" class="mono decision">{{ record.decision }}</span>
                 </td>
                 <td>{{ originText(record.origin) }}</td>
                 <td>
@@ -287,48 +295,53 @@ watch(
                   <router-link
                     v-if="targetLocation(record, projectId)"
                     :to="targetLocation(record, projectId) ?? ''"
-                    class="monospace"
+                    class="mono"
                   >
                     {{ record.target.id }}
                   </router-link>
-                  <span v-else class="monospace">{{ record.target.id }}</span>
+                  <span v-else class="mono">{{ record.target.id }}</span>
                 </td>
-                <td v-if="scope === 'organization'" class="monospace">
+                <td v-if="scope === 'organization'" class="mono">
                   {{ record.project ?? '—' }}
                 </td>
                 <td class="audit-reason">{{ record.reason ?? '—' }}</td>
                 <td>{{ record.lost_cost ? format.money(record.lost_cost) : '—' }}</td>
                 <td>
-                  <template v-if="record.correlationid">
-                    <code class="monospace correlation">{{ record.correlationid }}</code>
-                    <v-btn
-                      :icon="mdiContentCopy"
-                      size="x-small"
-                      variant="text"
+                  <span v-if="record.correlationid" class="correlation-cell">
+                    <code class="mono correlation">{{ record.correlationid }}</code>
+                    <button
+                      type="button"
+                      class="ibtn copy-button"
                       :aria-label="$t('audit.copyCorrelation')"
                       @click="copyCorrelation(record.correlationid)"
-                    />
-                  </template>
+                    >
+                      <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true">
+                        <path :d="mdiContentCopy" fill="currentColor" />
+                      </svg>
+                    </button>
+                  </span>
                   <template v-else>—</template>
                 </td>
               </tr>
             </tbody>
-          </v-table>
+          </table>
         </div>
-        <div class="mt-4">
-          <v-btn
+        <div class="audit-more">
+          <button
             v-if="nextCursor"
-            variant="outlined"
-            :loading="loadingMore"
+            type="button"
+            class="btn"
+            :disabled="loadingMore"
+            :aria-busy="loadingMore ? 'true' : undefined"
             data-testid="audit-load-more"
             @click="loadMore"
           >
             {{ $t('common.loadMore') }}
-          </v-btn>
-          <p v-else class="text-body-2 text-medium-emphasis" data-testid="audit-end">
+          </button>
+          <p v-else class="t2 audit-end" data-testid="audit-end">
             {{ $t('audit.end') }}
           </p>
-          <ProblemAlert v-if="moreFailure" :error="moreFailure" class="mt-2" />
+          <ProblemAlert v-if="moreFailure" :error="moreFailure" />
         </div>
       </template>
     </template>
@@ -336,15 +349,95 @@ watch(
 </template>
 
 <style scoped>
+.audit-trail {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.note {
+  margin: 0;
+}
+
+.note-warn {
+  border-color: rgba(234, 179, 8, 0.45);
+  background: rgba(234, 179, 8, 0.1);
+}
+
 .audit-filters {
   display: grid;
-  gap: 0.75rem;
+  gap: 12px;
   grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-  align-items: start;
+  align-items: end;
 }
 
 .audit-actions {
   grid-column: 1 / -1;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-self: start;
+}
+
+.field-control {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.field-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: #c7cceb;
+}
+
+.field-error {
+  margin: 0;
+  font-size: 12px;
+  color: #fca5a5;
+}
+
+.fld[aria-invalid='true'] {
+  border-color: rgba(239, 68, 68, 0.7);
+}
+
+.filter-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.audit-hint {
+  margin: 0;
+  font-size: 13px;
+}
+
+.audit-empty {
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.audit-table {
+  min-width: 900px;
+}
+
+.row-head {
+  font-weight: 600;
+  color: #f1f3ff;
+  border-bottom: 1px solid rgba(140, 150, 255, 0.08);
+  padding: 10px 10px 10px 0;
+  vertical-align: top;
+}
+
+.decision {
+  display: block;
 }
 
 .audit-reason {
@@ -352,7 +445,29 @@ watch(
   min-width: 12rem;
 }
 
+.correlation-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
 .correlation {
-  font-size: 0.75rem;
+  font-size: 12px;
+}
+
+.copy-button {
+  margin: -10px 0;
+}
+
+.audit-more {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.audit-end {
+  margin: 0;
+  font-size: 13px;
 }
 </style>

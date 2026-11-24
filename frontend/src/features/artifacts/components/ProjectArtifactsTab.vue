@@ -5,6 +5,7 @@ import { useLoader } from '@/shared/composables/useLoader'
 import { useFormat } from '@/shared/format/useFormat'
 import LoadingState from '@/shared/ui/LoadingState.vue'
 import ProblemAlert from '@/shared/ui/ProblemAlert.vue'
+import CanvasIcon from '@/shared/ui/CanvasIcon.vue'
 import StateLabel from '@/shared/ui/StateLabel.vue'
 import { useCurrentProjectStore } from '@/features/projects/stores/currentProjectStore'
 import { artifactsApi, type ArtifactSummary } from '../api/artifactsApi'
@@ -40,32 +41,28 @@ onMounted(() => {
 </script>
 
 <template>
-  <section aria-labelledby="artifacts-heading">
-    <div class="d-flex flex-wrap align-center ga-2 mb-4">
-      <h2 id="artifacts-heading" class="text-h6">{{ $t('pages.project.artifacts') }}</h2>
-      <v-spacer />
-      <v-btn
+  <!-- Layout: canvas primitives of Projeto.dc.html ("Ondas" card and table); no own artboard. -->
+  <section class="card tab-card" aria-labelledby="artifacts-heading">
+    <div class="card-head">
+      <h2 id="artifacts-heading">{{ $t('pages.project.artifacts') }}</h2>
+      <button
         v-if="canCreate"
-        color="primary"
-        variant="tonal"
+        type="button"
+        class="btn btn-p"
         data-testid="create-artifact"
         @click="createOpen = true"
       >
+        <CanvasIcon name="plus" :size="16" :stroke-width="2.2" />
         {{ $t('artifactEdit.create') }}
-      </v-btn>
+      </button>
     </div>
     <div role="status" class="sr-only">{{ message }}</div>
-    <v-alert
-      v-if="notice"
-      type="info"
-      variant="tonal"
-      class="mb-4"
-      closable
-      data-testid="artifact-edit-notice"
-      @click:close="dismiss"
-    >
-      {{ notice }}
-    </v-alert>
+    <div v-if="notice" class="note" data-testid="artifact-edit-notice">
+      <span class="note-text">{{ notice }}</span>
+      <button type="button" class="ib note-close" @click="dismiss">
+        {{ $t('common.close') }}
+      </button>
+    </div>
     <LoadingState v-if="loader.loading.value" type="table-row@3" />
     <ProblemAlert
       v-else-if="loader.error.value"
@@ -73,9 +70,9 @@ onMounted(() => {
       retry
       @retry="loader.run"
     />
-    <p v-else-if="artifacts.length === 0">{{ $t('artifacts.empty') }}</p>
+    <p v-else-if="artifacts.length === 0" class="t2 card-empty">{{ $t('artifacts.empty') }}</p>
     <div v-else class="table-scroll">
-      <v-table density="comfortable">
+      <table class="tbl">
         <thead>
           <tr>
             <th scope="col">{{ $t('artifacts.id') }}</th>
@@ -88,10 +85,9 @@ onMounted(() => {
         </thead>
         <tbody>
           <tr v-for="artifact in artifacts" :key="artifact.id">
-            <td>
+            <td class="mono">
               <router-link
                 :to="{ name: ROUTE_NAMES.artifact, params: { projectId, artifactId: artifact.id } }"
-                class="monospace"
               >
                 {{ artifact.id }}
               </router-link>
@@ -99,11 +95,11 @@ onMounted(() => {
             <td>{{ artifact.title }}</td>
             <td><StateLabel machine="artifact" :state="artifact.state" /></td>
             <td>{{ artifact.version }}</td>
-            <td class="monospace">{{ artifact.wave }}</td>
+            <td class="mono">{{ artifact.wave }}</td>
             <td>{{ format.dateTime(artifact.updated_at) }}</td>
           </tr>
         </tbody>
-      </v-table>
+      </table>
     </div>
     <ArtifactEditDialog
       v-if="canCreate"
@@ -114,3 +110,35 @@ onMounted(() => {
     />
   </section>
 </template>
+
+<style scoped>
+.tab-card {
+  padding: 18px 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.card-head {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.note-text {
+  flex: 1;
+}
+
+.note-close {
+  flex: none;
+  min-height: 44px;
+  margin: -12px -8px -12px 0;
+  border-color: transparent;
+}
+
+.card-empty {
+  margin: 0;
+}
+</style>

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, reactive, ref, watch } from 'vue'
+import { computed, reactive, ref, useId, watch } from 'vue'
 import type { ProviderId } from '@/shared/api/contract'
 import ProblemAlert from '@/shared/ui/ProblemAlert.vue'
 import type { Model, Provider } from '../api/providersApi'
@@ -12,6 +12,7 @@ const emit = defineEmits<{ saved: [model: Model] }>()
 const store = useProvidersStore()
 const saving = ref(false)
 const failure = ref<unknown>()
+const fieldId = useId()
 const MODEL_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/
 
 const form = reactive<{
@@ -86,83 +87,172 @@ async function save(): Promise<void> {
 </script>
 
 <template>
-  <v-dialog v-model="open" max-width="560">
+  <!-- Look: canvas "Configurações" (Configuracoes.dc.html) primitives (.fld, .btn) inside the dialog. -->
+  <v-dialog v-model="open" max-width="560" aria-labelledby="model-dialog-title">
     <v-card>
-      <v-card-title>
-        <h2 class="text-h6">
-          {{ isEdit ? $t('settings.models.editTitle') : $t('settings.models.addTitle') }}
-        </h2>
-      </v-card-title>
-      <v-form @submit.prevent="save">
-        <v-card-text>
-          <v-select
-            v-model="form.provider"
-            :items="providerOptions"
-            :label="$t('settings.models.provider')"
-            :disabled="isEdit"
-          />
-          <v-text-field
-            v-model="form.model"
-            :label="$t('settings.models.modelId')"
-            :hint="$t('settings.models.modelIdHint')"
-            persistent-hint
-            :disabled="isEdit"
-            autocomplete="off"
-            spellcheck="false"
-            class="mb-2"
-          />
-          <v-text-field
-            v-model="form.displayName"
-            :label="$t('settings.models.displayName')"
-            maxlength="120"
-          />
-          <v-text-field
-            v-model.number="form.contextTokens"
-            type="number"
-            min="1"
-            :label="$t('settings.models.contextTokens')"
-          />
+      <form @submit.prevent="save">
+        <div class="dialog-body">
+          <h2 id="model-dialog-title">
+            {{ isEdit ? $t('settings.models.editTitle') : $t('settings.models.addTitle') }}
+          </h2>
+          <div class="field">
+            <label :for="`${fieldId}-provider`" class="control">
+              <span class="field-label">{{ $t('settings.models.provider') }}</span>
+              <select
+                :id="`${fieldId}-provider`"
+                v-model="form.provider"
+                class="fld"
+                :disabled="isEdit"
+              >
+                <option v-for="option in providerOptions" :key="option.value" :value="option.value">
+                  {{ option.title }}
+                </option>
+              </select>
+            </label>
+          </div>
+          <div class="field">
+            <label :for="`${fieldId}-model`" class="control">
+              <span class="field-label">{{ $t('settings.models.modelId') }}</span>
+              <input
+                :id="`${fieldId}-model`"
+                v-model="form.model"
+                class="fld"
+                :disabled="isEdit"
+                autocomplete="off"
+                spellcheck="false"
+                :aria-describedby="`${fieldId}-model-hint`"
+              />
+            </label>
+            <span :id="`${fieldId}-model-hint`" class="t2 hint">
+              {{ $t('settings.models.modelIdHint') }}
+            </span>
+          </div>
+          <div class="field">
+            <label :for="`${fieldId}-name`" class="control">
+              <span class="field-label">{{ $t('settings.models.displayName') }}</span>
+              <input
+                :id="`${fieldId}-name`"
+                v-model="form.displayName"
+                class="fld"
+                maxlength="120"
+              />
+            </label>
+          </div>
+          <div class="field">
+            <label :for="`${fieldId}-context`" class="control">
+              <span class="field-label">{{ $t('settings.models.contextTokens') }}</span>
+              <input
+                :id="`${fieldId}-context`"
+                v-model.number="form.contextTokens"
+                class="fld"
+                type="number"
+                min="1"
+              />
+            </label>
+          </div>
           <fieldset class="capabilities">
-            <legend class="text-subtitle-2">{{ $t('settings.models.capabilities') }}</legend>
-            <v-checkbox
-              v-model="form.toolUse"
-              :label="$t('settings.models.toolUse')"
-              hide-details
-            />
-            <v-checkbox
-              v-model="form.promptCache"
-              :label="$t('settings.models.promptCache')"
-              hide-details
-            />
-            <v-checkbox
-              v-model="form.imageInput"
-              :label="$t('settings.models.imageInput')"
-              hide-details
-            />
+            <legend class="lb">{{ $t('settings.models.capabilities') }}</legend>
+            <label :for="`${fieldId}-toolUse`" class="check">
+              <input :id="`${fieldId}-toolUse`" v-model="form.toolUse" type="checkbox" />
+              {{ $t('settings.models.toolUse') }}
+            </label>
+            <label :for="`${fieldId}-promptCache`" class="check">
+              <input :id="`${fieldId}-promptCache`" v-model="form.promptCache" type="checkbox" />
+              {{ $t('settings.models.promptCache') }}
+            </label>
+            <label :for="`${fieldId}-imageInput`" class="check">
+              <input :id="`${fieldId}-imageInput`" v-model="form.imageInput" type="checkbox" />
+              {{ $t('settings.models.imageInput') }}
+            </label>
           </fieldset>
-          <v-checkbox
-            v-model="form.active"
-            :label="$t('settings.models.activeLabel')"
-            hide-details
-          />
-          <ProblemAlert v-if="failure" :error="failure" class="mt-2" />
-        </v-card-text>
-        <v-card-actions>
-          <v-spacer />
-          <v-btn variant="text" @click="open = false">{{ $t('common.cancel') }}</v-btn>
-          <v-btn type="submit" color="primary" variant="flat" :loading="saving" :disabled="!valid">
+          <label :for="`${fieldId}-active`" class="check">
+            <input :id="`${fieldId}-active`" v-model="form.active" type="checkbox" />
+            {{ $t('settings.models.activeLabel') }}
+          </label>
+          <ProblemAlert v-if="failure" :error="failure" />
+        </div>
+        <div class="dialog-actions">
+          <button type="button" class="btn" @click="open = false">{{ $t('common.cancel') }}</button>
+          <button
+            type="submit"
+            class="btn btn-p"
+            :disabled="saving || !valid"
+            :aria-busy="saving ? 'true' : undefined"
+          >
             {{ $t('common.save') }}
-          </v-btn>
-        </v-card-actions>
-      </v-form>
+          </button>
+        </div>
+      </form>
     </v-card>
   </v-dialog>
 </template>
 
 <style scoped>
+.dialog-body {
+  padding: 22px 24px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.control {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.field-label {
+  font-weight: 600;
+}
+
+.hint {
+  font-size: 12px;
+}
+
+.fld:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
 .capabilities {
   border: 0;
-  margin: 0 0 0.5rem;
+  margin: 0;
   padding: 0;
+}
+
+.capabilities legend {
+  padding: 0;
+  margin-bottom: 2px;
+}
+
+.check {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  cursor: pointer;
+}
+
+.check input {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  flex: none;
+  accent-color: #7c3aed;
+  cursor: pointer;
+}
+
+.dialog-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 24px 22px;
 }
 </style>

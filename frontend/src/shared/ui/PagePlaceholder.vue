@@ -6,9 +6,28 @@ defineProps<{
 </script>
 
 <template>
-  <v-container class="page-placeholder" max-width="1200">
-    <h1 class="text-h4 mb-2">{{ title }}</h1>
-    <p class="text-body-1 text-medium-emphasis mb-6">{{ description }}</p>
-    <v-alert type="info" variant="tonal" :text="$t('placeholder.underConstruction')" />
-  </v-container>
+  <!-- Layout: canvas page head (h1 + `.t2` lead) with an informative `.note`. -->
+  <div class="page-placeholder">
+    <div>
+      <h1>{{ title }}</h1>
+      <p class="t2 page-placeholder-description">{{ description }}</p>
+    </div>
+    <p class="note page-placeholder-note" role="alert">
+      {{ $t('placeholder.underConstruction') }}
+    </p>
+  </div>
 </template>
+
+<style scoped>
+.page-placeholder {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+.page-placeholder-description {
+  margin: 4px 0 0;
+}
+.page-placeholder-note {
+  margin: 0;
+}
+</style>

@@ -51,23 +51,104 @@ onBeforeUnmount(() => {
 })
 
 const translate = (key: string, values?: Record<string, unknown>) => t(key, values ?? {})
+
+/** Canvas "Atividade recente": the dot takes the color of the state family the event leads to. */
+function dotColor(event: CloudEvent): string {
+  const type = event.type.toLowerCase()
+  if (/reject|fail|escalat|finding/.test(type)) return '#EF4444'
+  if (/question|awaiting_user/.test(type)) return '#A855F7'
+  if (/approved|completed|published|closed|accepted/.test(type)) return '#22C55E'
+  if (/gate|paus|budget/.test(type)) return '#F59E0B'
+  return '#818CF8'
+}
 </script>
 
 <template>
-  <section aria-labelledby="home-activity-heading" class="mb-8" data-testid="home-activity">
-    <h2 id="home-activity-heading" class="text-h6 mb-2">{{ $t('home.activity') }}</h2>
-    <p v-if="items.length === 0" class="text-body-2">{{ $t('home.noActivity') }}</p>
-    <ol v-else class="plain-list">
-      <li v-for="event in items" :key="event.id" class="mb-2 text-body-2">
-        <span class="font-weight-medium">{{ describeEvent(translate, event) }}</span>
-        <template v-if="event.projectid">
-          ·
-          <router-link :to="{ name: ROUTE_NAMES.project, params: { projectId: event.projectid } }">
-            {{ projectName(event) ?? $t('home.aProject') }}
-          </router-link>
-        </template>
-        · {{ format.age(event.time) }}
+  <section
+    class="card activity"
+    aria-labelledby="home-activity-heading"
+    data-testid="home-activity"
+  >
+    <h2 id="home-activity-heading" class="activity-title">{{ $t('home.activity') }}</h2>
+    <p v-if="items.length === 0" class="t2 activity-empty">{{ $t('home.noActivity') }}</p>
+    <ol v-else class="activity-list">
+      <li v-for="event in items" :key="event.id" class="activity-item">
+        <span class="activity-rail" aria-hidden="true">
+          <span class="activity-dot" :style="{ background: dotColor(event) }" />
+          <span class="activity-line" />
+        </span>
+        <span class="activity-text">
+          <span>{{ describeEvent(translate, event) }}</span>
+          <span class="t2 activity-meta">
+            <template v-if="event.projectid">
+              <router-link
+                :to="{ name: ROUTE_NAMES.project, params: { projectId: event.projectid } }"
+              >
+                {{ projectName(event) ?? $t('home.aProject') }}
+              </router-link>
+              ·
+            </template>
+            {{ format.age(event.time) }}
+          </span>
+        </span>
       </li>
     </ol>
   </section>
 </template>
+
+<style scoped>
+.activity {
+  padding: 18px 22px;
+}
+
+.activity-title {
+  margin-bottom: 8px;
+}
+
+.activity-empty {
+  margin: 0;
+}
+
+.activity-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.activity-item {
+  display: flex;
+  gap: 14px;
+}
+
+.activity-rail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 12px;
+  flex: none;
+}
+
+.activity-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 6px;
+  margin-top: 4px;
+}
+
+.activity-line {
+  flex: 1;
+  width: 2px;
+  background: rgba(140, 150, 255, 0.22);
+  margin: 4px 0;
+}
+
+.activity-text {
+  display: flex;
+  flex-direction: column;
+  padding-bottom: 14px;
+}
+
+.activity-meta {
+  font-size: 12px;
+}
+</style>

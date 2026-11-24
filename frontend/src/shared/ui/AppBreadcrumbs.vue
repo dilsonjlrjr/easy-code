@@ -10,8 +10,9 @@ defineProps<{ items: BreadcrumbItem[] }>()
 </script>
 
 <template>
-  <!-- ESP-00 section 8: the path is a `nav` named "Caminho"; every level except the current is a link. -->
-  <nav :aria-label="$t('common.breadcrumbs')" class="app-breadcrumbs">
+  <!-- ESP-00 section 8: the path is a `nav` named "Caminho"; every level except the current is a link.
+       Look: canvas breadcrumb (`.bc`). -->
+  <nav :aria-label="$t('common.breadcrumbs')" class="bc">
     <ol>
       <li v-for="(item, index) in items" :key="index">
         <router-link v-if="item.to && index < items.length - 1" :to="item.to">
@@ -22,25 +23,3 @@ defineProps<{ items: BreadcrumbItem[] }>()
     </ol>
   </nav>
 </template>
-
-<style scoped>
-.app-breadcrumbs ol {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.25rem;
-  list-style: none;
-  margin: 0 0 0.75rem;
-  padding: 0;
-  font-size: 0.875rem;
-}
-
-.app-breadcrumbs li:not(:last-child)::after {
-  content: '›';
-  margin-left: 0.25rem;
-  color: rgb(var(--v-theme-on-surface), 0.7);
-}
-
-.app-breadcrumbs a {
-  color: rgb(var(--v-theme-primary));
-}
-</style>

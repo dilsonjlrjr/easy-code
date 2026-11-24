@@ -5,6 +5,7 @@ import type { ModelPair, StageId } from '@/shared/api/contract'
 import { hasProblemSlug } from '@/shared/api/problemDetails'
 import { useAnnouncer } from '@/shared/composables/useAnnouncer'
 import { useLoader } from '@/shared/composables/useLoader'
+import CanvasIcon from '@/shared/ui/CanvasIcon.vue'
 import LoadingState from '@/shared/ui/LoadingState.vue'
 import ProblemAlert from '@/shared/ui/ProblemAlert.vue'
 import { useFormat } from '@/shared/format/useFormat'
@@ -207,94 +208,100 @@ function stageName(stage: StageSummary): string {
 </script>
 
 <template>
-  <section aria-labelledby="configuration-heading">
-    <h2 id="configuration-heading" class="text-h6 mb-2">
-      {{ $t('projects.configuration.modelPair') }}
-    </h2>
-    <p class="text-body-2 text-medium-emphasis mb-4">{{ $t('projects.configuration.pairHelp') }}</p>
-    <div role="status" class="sr-only">{{ message }}</div>
+  <!-- Layout: canvas primitives of Projeto.dc.html (no own artboard): .card sections, h2, .kv, .note, .btn. -->
+  <div class="configuration">
+    <section aria-labelledby="configuration-heading" class="card block">
+      <h2 id="configuration-heading">{{ $t('projects.configuration.modelPair') }}</h2>
+      <p class="t2 help">{{ $t('projects.configuration.pairHelp') }}</p>
+      <div role="status" class="sr-only">{{ message }}</div>
 
-    <LoadingState v-if="loader.loading.value && !configuration" />
-    <ProblemAlert
-      v-else-if="loader.error.value && !configuration"
-      :error="loader.error.value"
-      retry
-      @retry="loader.run"
-    />
-    <template v-else-if="configuration">
-      <v-alert v-if="concurrentChange" type="warning" variant="tonal" role="alert" class="mb-4">
-        {{ $t('projects.configuration.concurrentChange') }}
-      </v-alert>
-      <v-alert v-if="!configuration.model_pair" type="info" variant="tonal" class="mb-4">
-        {{ $t('projects.configuration.pairMissing') }}
-      </v-alert>
-
-      <dl class="summary-list mb-4" data-testid="current-pair">
-        <dt>{{ $t('projects.configuration.reasoningModel') }}</dt>
-        <dd>{{ describeRef(modelRefKey(configuration.model_pair?.reasoning)) }}</dd>
-        <dt>{{ $t('projects.configuration.executionModel') }}</dt>
-        <dd>{{ describeRef(modelRefKey(configuration.model_pair?.execution)) }}</dd>
-      </dl>
-
-      <v-form v-if="canEdit" class="mb-8" @submit.prevent="saveProjectPair">
-        <v-alert
-          v-if="options.length === 0 && !optionsLoader.loading.value"
-          type="warning"
-          variant="tonal"
-          class="mb-4"
-        >
-          {{ $t('projects.configuration.noModelAvailable') }}
-        </v-alert>
-        <v-select
-          v-model="pairForm.reasoning"
-          :items="options"
-          item-title="title"
-          item-value="value"
-          :label="$t('projects.configuration.reasoningModel')"
-          :loading="optionsLoader.loading.value"
-          class="mb-2"
-        >
-          <template #item="{ props: itemProps, item }">
-            <v-list-item v-bind="itemProps" :subtitle="item.raw.subtitle" />
-          </template>
-        </v-select>
-        <v-select
-          v-model="pairForm.execution"
-          :items="options"
-          item-title="title"
-          item-value="value"
-          :label="$t('projects.configuration.executionModel')"
-          :loading="optionsLoader.loading.value"
-          class="mb-2"
-        >
-          <template #item="{ props: itemProps, item }">
-            <v-list-item v-bind="itemProps" :subtitle="item.raw.subtitle" />
-          </template>
-        </v-select>
-        <!-- CA-29-4: the running wave keeps its pair; the notice comes before saving. -->
-        <p v-if="hasRunningWave" class="text-body-2 mb-2">
-          {{ $t('projects.configuration.runningWaveKeepsPair') }}
+      <LoadingState v-if="loader.loading.value && !configuration" />
+      <ProblemAlert
+        v-else-if="loader.error.value && !configuration"
+        :error="loader.error.value"
+        retry
+        @retry="loader.run"
+      />
+      <template v-else-if="configuration">
+        <div v-if="concurrentChange" class="note note-warn" role="alert">
+          <CanvasIcon name="alert" />
+          <span>{{ $t('projects.configuration.concurrentChange') }}</span>
+        </div>
+        <p v-if="!configuration.model_pair" class="note">
+          <span>{{ $t('projects.configuration.pairMissing') }}</span>
         </p>
-        <StartRefusal v-if="failure?.scope === 'project'" :error="failure.error" class="mb-2" />
-        <v-btn
-          type="submit"
-          color="primary"
-          variant="flat"
-          :loading="saving === 'project'"
-          :disabled="!pairOf(pairForm)"
-        >
-          {{ $t('projects.configuration.savePair') }}
-        </v-btn>
-      </v-form>
 
-      <h3 class="text-subtitle-1 font-weight-medium mb-2">
-        {{ $t('projects.configuration.byStage') }}
-      </h3>
-      <ul class="stage-pairs">
-        <li v-for="stage in stages" :key="stage.id" :data-testid="`stage-pair-${stage.id}`">
-          <v-card variant="outlined" class="pa-4">
-            <h4 class="text-subtitle-2">{{ stageName(stage) }}</h4>
-            <p v-if="stage.required_capabilities?.length" class="text-body-2">
+        <dl class="kvs" data-testid="current-pair">
+          <div class="kv">
+            <dt class="t2">{{ $t('projects.configuration.reasoningModel') }}</dt>
+            <dd>{{ describeRef(modelRefKey(configuration.model_pair?.reasoning)) }}</dd>
+          </div>
+          <div class="kv">
+            <dt class="t2">{{ $t('projects.configuration.executionModel') }}</dt>
+            <dd>{{ describeRef(modelRefKey(configuration.model_pair?.execution)) }}</dd>
+          </div>
+        </dl>
+
+        <form v-if="canEdit" class="pair-form" @submit.prevent="saveProjectPair">
+          <div v-if="options.length === 0 && !optionsLoader.loading.value" class="note note-warn">
+            <CanvasIcon name="alert" />
+            <span>{{ $t('projects.configuration.noModelAvailable') }}</span>
+          </div>
+          <v-select
+            v-model="pairForm.reasoning"
+            :items="options"
+            item-title="title"
+            item-value="value"
+            :label="$t('projects.configuration.reasoningModel')"
+            :loading="optionsLoader.loading.value"
+          >
+            <template #item="{ props: itemProps, item }">
+              <v-list-item v-bind="itemProps" :subtitle="item.raw.subtitle" />
+            </template>
+          </v-select>
+          <v-select
+            v-model="pairForm.execution"
+            :items="options"
+            item-title="title"
+            item-value="value"
+            :label="$t('projects.configuration.executionModel')"
+            :loading="optionsLoader.loading.value"
+          >
+            <template #item="{ props: itemProps, item }">
+              <v-list-item v-bind="itemProps" :subtitle="item.raw.subtitle" />
+            </template>
+          </v-select>
+          <!-- CA-29-4: the running wave keeps its pair; the notice comes before saving. -->
+          <p v-if="hasRunningWave" class="t2 help">
+            {{ $t('projects.configuration.runningWaveKeepsPair') }}
+          </p>
+          <StartRefusal v-if="failure?.scope === 'project'" :error="failure.error" />
+          <div class="actions">
+            <button
+              type="submit"
+              class="btn btn-p"
+              :disabled="saving === 'project' || !pairOf(pairForm)"
+              :aria-busy="saving === 'project'"
+            >
+              {{ $t('projects.configuration.savePair') }}
+            </button>
+          </div>
+        </form>
+      </template>
+    </section>
+
+    <template v-if="configuration">
+      <section aria-labelledby="stage-pairs-heading" class="card block">
+        <h2 id="stage-pairs-heading">{{ $t('projects.configuration.byStage') }}</h2>
+        <ul class="stage-pairs">
+          <li
+            v-for="stage in stages"
+            :key="stage.id"
+            class="stage-pair"
+            :data-testid="`stage-pair-${stage.id}`"
+          >
+            <h3 class="stage-name">{{ stageName(stage) }}</h3>
+            <p v-if="stage.required_capabilities?.length" class="t2 small">
               {{
                 $t('projects.configuration.requires', {
                   capabilities: stage.required_capabilities
@@ -303,7 +310,7 @@ function stageName(stage: StageSummary): string {
                 })
               }}
             </p>
-            <p class="text-body-2">
+            <p class="small">
               <template v-if="configuration.pair_by_stage?.[stage.id]">
                 {{
                   $t('projects.configuration.stagePair', {
@@ -318,9 +325,9 @@ function stageName(stage: StageSummary): string {
               </template>
               <template v-else>{{ $t('projects.configuration.usesProjectPair') }}</template>
             </p>
-            <v-form
+            <form
               v-if="canEdit && stageForms[stage.id]"
-              class="mt-2"
+              class="stage-form"
               @submit.prevent="saveStagePair(stage.id)"
             >
               <v-select
@@ -339,32 +346,29 @@ function stageName(stage: StageSummary): string {
                 :label="$t('projects.configuration.executionModel')"
                 density="compact"
               />
-              <StartRefusal
-                v-if="failure?.scope === stage.id"
-                :error="failure.error"
-                class="mb-2"
-              />
-              <div class="d-flex flex-wrap ga-2">
-                <v-btn
+              <StartRefusal v-if="failure?.scope === stage.id" :error="failure.error" />
+              <div class="actions">
+                <button
                   type="submit"
-                  variant="tonal"
-                  :loading="saving === stage.id"
-                  :disabled="!pairOf(stageForms[stage.id] ?? {})"
+                  class="btn"
+                  :disabled="saving === stage.id || !pairOf(stageForms[stage.id] ?? {})"
+                  :aria-busy="saving === stage.id"
                 >
                   {{ $t('projects.configuration.saveStagePair') }}
-                </v-btn>
-                <v-btn
+                </button>
+                <button
                   v-if="configuration.pair_by_stage?.[stage.id]"
-                  variant="text"
+                  type="button"
+                  class="btn"
                   @click="resetStagePair(stage.id)"
                 >
                   {{ $t('projects.configuration.useProjectPair') }}
-                </v-btn>
+                </button>
               </div>
-            </v-form>
-          </v-card>
-        </li>
-      </ul>
+            </form>
+          </li>
+        </ul>
+      </section>
 
       <ProjectGatesSection
         :configuration="configuration"
@@ -382,12 +386,10 @@ function stageName(stage: StageSummary): string {
       />
 
       <!-- US-54 / ESP-29: technical constraints, input of the Architecture stage. -->
-      <section aria-labelledby="constraints-heading" class="mt-8" data-testid="constraints">
-        <h3 id="constraints-heading" class="text-subtitle-1 font-weight-medium mb-1">
-          {{ $t('projects.constraints.title') }}
-        </h3>
-        <p class="text-body-2 text-medium-emphasis mb-2">{{ $t('projects.constraints.help') }}</p>
-        <p v-if="configuration.constraints" class="text-body-2 mb-2">
+      <section aria-labelledby="constraints-heading" class="card block" data-testid="constraints">
+        <h2 id="constraints-heading">{{ $t('projects.constraints.title') }}</h2>
+        <p class="t2 help">{{ $t('projects.constraints.help') }}</p>
+        <p v-if="configuration.constraints" class="t2 small">
           {{
             $t('projects.constraints.version', {
               version: configuration.constraints.version,
@@ -397,65 +399,155 @@ function stageName(stage: StageSummary): string {
           }}
         </p>
         <template v-if="!editingConstraints">
-          <p v-if="!configuration.constraints?.items.length" class="text-body-2 mb-2">
+          <p v-if="!configuration.constraints?.items.length" class="t2 small">
             {{ $t('projects.constraints.none') }}
           </p>
-          <dl v-else class="constraints-list mb-2">
-            <template v-for="item in configuration.constraints.items" :key="item.id">
-              <dt class="font-weight-medium">
-                <span class="monospace">{{ item.id }}</span> ·
+          <dl v-else class="constraints-list">
+            <div v-for="item in configuration.constraints.items" :key="item.id" class="constraint">
+              <dt class="constraint-title">
+                <span class="mono">{{ item.id }}</span> ·
                 {{ $t(`projects.constraints.categories.${item.category}`) }}
               </dt>
-              <dd class="constraint-text mb-2">{{ item.description }}</dd>
-            </template>
+              <dd class="constraint-text">{{ item.description }}</dd>
+            </div>
           </dl>
           <!-- CA-4 / CA-6: only the lead changes them, and not after the project ends. -->
-          <v-btn v-if="canEdit" variant="tonal" @click="editingConstraints = true">
-            {{ $t('projects.constraints.edit') }}
-          </v-btn>
-          <p v-else class="text-body-2 text-medium-emphasis">
-            {{ $t('projects.constraints.readOnly') }}
-          </p>
+          <div v-if="canEdit" class="actions">
+            <button type="button" class="btn" @click="editingConstraints = true">
+              {{ $t('projects.constraints.edit') }}
+            </button>
+          </div>
+          <p v-else class="t2 small">{{ $t('projects.constraints.readOnly') }}</p>
         </template>
-        <v-form v-else @submit.prevent="saveConstraints">
+        <form v-else class="constraints-form" @submit.prevent="saveConstraints">
           <ConstraintsEditor v-model="constraintsForm" :disabled="saving === 'constraints'" />
-          <p class="text-body-2 mt-2">{{ $t('projects.constraints.newVersionNotice') }}</p>
-          <StartRefusal
-            v-if="failure?.scope === 'constraints'"
-            :error="failure.error"
-            class="my-2"
-          />
-          <div class="d-flex flex-wrap ga-2 mt-2">
-            <v-btn
+          <p class="t2 small">{{ $t('projects.constraints.newVersionNotice') }}</p>
+          <StartRefusal v-if="failure?.scope === 'constraints'" :error="failure.error" />
+          <div class="actions">
+            <button
               type="submit"
-              color="primary"
-              variant="flat"
-              :loading="saving === 'constraints'"
-              :disabled="!constraintsAreValid(constraintsForm)"
+              class="btn btn-p"
+              :disabled="saving === 'constraints' || !constraintsAreValid(constraintsForm)"
+              :aria-busy="saving === 'constraints'"
             >
               {{ $t('projects.constraints.save') }}
-            </v-btn>
-            <v-btn variant="text" @click="cancelConstraints">{{ $t('common.cancel') }}</v-btn>
+            </button>
+            <button type="button" class="btn" @click="cancelConstraints">
+              {{ $t('common.cancel') }}
+            </button>
           </div>
-        </v-form>
+        </form>
       </section>
 
       <!-- US-04 / ESP-29 3.6: deleting an ended project. -->
       <ProjectDeletionSection v-if="store.project" :project="store.project" />
     </template>
-  </section>
+  </div>
 </template>
 
 <style scoped>
-.constraint-text {
-  white-space: pre-wrap;
+.configuration {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.block {
+  padding: 18px 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.help {
+  margin: 0;
+  font-size: 13px;
+}
+
+.small {
+  margin: 0;
+  font-size: 13px;
+}
+
+.note {
+  margin: 0;
+}
+
+.note-warn {
+  border-color: rgba(234, 179, 8, 0.45);
+  background: rgba(234, 179, 8, 0.1);
+}
+
+.note svg {
+  flex: none;
+}
+
+.kvs {
+  margin: 0;
+}
+
+.kvs dd {
+  margin: 0;
+  font-weight: 600;
+  text-align: right;
+}
+
+.pair-form,
+.stage-form,
+.constraints-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 4px;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .stage-pairs {
   display: grid;
-  gap: 1rem;
+  gap: 10px;
   grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
   list-style: none;
+  margin: 0;
   padding: 0;
+}
+
+.stage-pair {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 14px;
+  border: 1px solid rgba(140, 150, 255, 0.16);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.stage-name {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.constraints-list {
+  margin: 0;
+}
+
+.constraint {
+  padding: 10px 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.constraint-title {
+  font-weight: 600;
+}
+
+.constraint-text {
+  margin: 4px 0 0;
+  white-space: pre-wrap;
+  color: #a9b0d6;
 }
 </style>

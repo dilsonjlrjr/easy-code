@@ -31,7 +31,7 @@ test('US-01 CA-3 / CA-4: signing out shows the login page with the reason; its b
   await expect(page.getByRole('heading', { level: 1, name: 'Entrar' })).toBeVisible()
   await expect(page.getByText('Você saiu da plataforma.')).toBeVisible()
   // CA-02-12: product name and subtitle in pt-BR.
-  await expect(page.getByText('Easy Code', { exact: true })).toBeVisible()
+  await expect(page.getByText('EasyCode', { exact: true })).toBeVisible()
   expect(api.signedIn).toBe(false)
   await expectNoSeriousA11yViolations(page)
 
@@ -41,7 +41,8 @@ test('US-01 CA-3 / CA-4: signing out shows the login page with the reason; its b
   await page.keyboard.press('Enter')
 
   await expect(page).toHaveURL(/\/$/)
-  await expect(page.getByRole('heading', { level: 1, name: 'Início' })).toBeVisible()
+  // The Home page greets the person by name (canvas "Desktop · Início").
+  await expect(page.getByRole('heading', { level: 1, name: /^Olá, / })).toBeVisible()
   expect(api.signedIn).toBe(true)
 })
 

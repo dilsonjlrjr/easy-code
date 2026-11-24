@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, ref, useId, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import { ROUTE_NAMES } from '@/app/router/routeNames'
@@ -41,6 +41,7 @@ const nextCursor = ref<string | null>(null)
 const loadingMore = ref(false)
 const moreFailure = ref<unknown>()
 const autoUpdate = ref(true)
+const destinationId = `findings-destination-${useId()}`
 
 const projectId = computed(() => store.project?.id ?? '')
 const isApprover = computed(() => store.project?.my_roles.includes('approver') ?? false)
@@ -125,6 +126,19 @@ function chooseShortcut(shortcut: StatusShortcut | null): void {
 
 function chooseSeverities(severity: Severity[]): void {
   applyFilters({ severity })
+}
+
+function toggleSeverity(severity: Severity, checked: boolean): void {
+  const others = filters.value.severity.filter((item) => item !== severity)
+  chooseSeverities(checked ? [...others, severity] : others)
+}
+
+/** Canvas chip tones for the severity; the text names the severity, the color only reinforces it. */
+const SEVERITY_TONES: Record<Severity, string> = {
+  critical: 'crit',
+  high: 'crit',
+  medium: 'warn',
+  low: 'mute',
 }
 
 function chooseDestination(destination: string | null): void {
@@ -213,79 +227,80 @@ const emptyKey = computed(() => {
 </script>
 
 <template>
-  <section aria-labelledby="findings-heading">
-    <h2 id="findings-heading" class="text-h6 mb-4">{{ $t('pages.project.findings') }}</h2>
+  <!-- Layout: canvas primitives of Projeto.dc.html (filters .tabf/.fld, table .tbl); no own artboard. -->
+  <section class="card tab-card" aria-labelledby="findings-heading">
+    <h2 id="findings-heading">{{ $t('pages.project.findings') }}</h2>
     <div role="status" class="sr-only">{{ message }}</div>
 
-    <form class="filters mb-4" @submit.prevent>
+    <form class="filters" @submit.prevent>
       <fieldset class="plain-fieldset">
-        <legend class="text-body-2 font-weight-medium mb-1">
-          {{ $t('findings.list.statusFilter') }}
-        </legend>
-        <v-btn-toggle
-          :model-value="filters.shortcut"
-          density="comfortable"
-          variant="outlined"
-          divided
-          mandatory
-          :disabled="loader.loading.value"
-          @update:model-value="chooseShortcut"
-        >
-          <v-btn
-            v-for="shortcut in Object.keys(STATUS_SHORTCUTS)"
+        <legend class="field-label">{{ $t('findings.list.statusFilter') }}</legend>
+        <div class="chips-row">
+          <button
+            v-for="shortcut in Object.keys(STATUS_SHORTCUTS) as StatusShortcut[]"
             :key="shortcut"
-            :value="shortcut"
+            type="button"
+            class="tabf"
+            :class="{ on: filters.shortcut === shortcut }"
             :aria-pressed="filters.shortcut === shortcut"
+            :disabled="loader.loading.value"
+            @click="chooseShortcut(shortcut)"
           >
             {{ $t(`findings.list.shortcuts.${shortcut}`) }}
-          </v-btn>
-        </v-btn-toggle>
-      </fieldset>
-      <fieldset class="plain-fieldset">
-        <legend class="text-body-2 font-weight-medium mb-1">
-          {{ $t('findings.list.severityFilter') }}
-        </legend>
-        <div class="d-flex flex-wrap ga-2">
-          <v-checkbox
-            v-for="severity in SEVERITIES"
-            :key="severity"
-            :model-value="filters.severity"
-            :value="severity"
-            :label="$t(`findings.severity.${severity}`)"
-            density="compact"
-            hide-details
-            :disabled="loader.loading.value"
-            @update:model-value="(value) => chooseSeverities((value ?? []) as Severity[])"
-          />
+          </button>
         </div>
       </fieldset>
-      <v-select
-        :model-value="filters.destination ?? null"
-        :items="stageOptions"
-        :label="$t('findings.list.destinationFilter')"
-        density="compact"
-        clearable
-        hide-details
-        class="destination-filter"
-        :disabled="loader.loading.value"
-        @update:model-value="chooseDestination"
-      />
+      <fieldset class="plain-fieldset">
+        <legend class="field-label">{{ $t('findings.list.severityFilter') }}</legend>
+        <div class="chips-row">
+          <label
+            v-for="severity in SEVERITIES"
+            :key="severity"
+            class="check"
+            :class="{ disabled: loader.loading.value }"
+            :for="`${destinationId}-${severity}`"
+          >
+            <input
+              :id="`${destinationId}-${severity}`"
+              type="checkbox"
+              :value="severity"
+              :checked="filters.severity.includes(severity)"
+              :disabled="loader.loading.value"
+              @change="toggleSeverity(severity, ($event.target as HTMLInputElement).checked)"
+            />
+            {{ $t(`findings.severity.${severity}`) }}
+          </label>
+        </div>
+      </fieldset>
+      <div class="field destination-filter">
+        <label :for="destinationId">
+          <span class="field-label">{{ $t('findings.list.destinationFilter') }}</span>
+          <select
+            :id="destinationId"
+            class="fld"
+            :value="filters.destination ?? ''"
+            :disabled="loader.loading.value"
+            @change="chooseDestination(($event.target as HTMLSelectElement).value || null)"
+          >
+            <option value="">{{ $t('findings.list.anyDestination') }}</option>
+            <option v-for="option in stageOptions" :key="option.value" :value="option.value">
+              {{ option.title }}
+            </option>
+          </select>
+        </label>
+      </div>
     </form>
-    <p class="text-body-2 mb-2" data-testid="active-filters">
+    <p class="t2 active-filters" data-testid="active-filters">
       {{ $t('findings.list.activeFilters', { filters: activeFilterText }) }}
-      <v-btn v-if="hasActiveFilters" variant="text" size="small" @click="clearFilters">
+      <button v-if="hasActiveFilters" type="button" class="ib" @click="clearFilters">
         {{ $t('findings.list.clear') }}
-      </v-btn>
+      </button>
     </p>
     <!-- WCAG 2.2.2: the automatic updates can be paused. -->
-    <v-switch
-      v-model="autoUpdate"
-      :label="$t('findings.list.autoUpdate')"
-      color="primary"
-      density="compact"
-      hide-details
-      class="mb-2"
-    />
+    <label class="check switch" :for="`${destinationId}-auto`">
+      <input :id="`${destinationId}-auto`" v-model="autoUpdate" type="checkbox" role="switch" />
+      {{ $t('findings.list.autoUpdate') }}
+    </label>
 
     <LoadingState v-if="loader.loading.value && items.length === 0" type="table-row@3" />
     <ProblemAlert
@@ -294,27 +309,27 @@ const emptyKey = computed(() => {
       retry
       @retry="() => reload(false)"
     />
-    <div v-else-if="items.length === 0" data-testid="findings-empty">
-      <p class="text-body-2">{{ $t(emptyKey) }}</p>
-      <v-btn
+    <div v-else-if="items.length === 0" class="empty" data-testid="findings-empty">
+      <p class="t2">{{ $t(emptyKey) }}</p>
+      <button
         v-if="emptyKey === 'findings.list.emptyOpen'"
-        variant="text"
-        size="small"
+        type="button"
+        class="ib"
         @click="chooseShortcut('all')"
       >
         {{ $t('findings.list.showAll') }}
-      </v-btn>
-      <v-btn
+      </button>
+      <button
         v-else-if="emptyKey === 'findings.list.emptyFiltered'"
-        variant="text"
-        size="small"
+        type="button"
+        class="ib"
         @click="clearFilters"
       >
         {{ $t('findings.list.clear') }}
-      </v-btn>
+      </button>
     </div>
     <div v-else class="table-scroll">
-      <v-table density="comfortable" data-testid="findings-table">
+      <table class="tbl findings-table" data-testid="findings-table">
         <caption class="sr-only">
           {{
             $t('pages.project.findings')
@@ -335,17 +350,21 @@ const emptyKey = computed(() => {
         </thead>
         <tbody>
           <tr v-for="finding in items" :key="finding.id" :data-testid="`finding-${finding.id}`">
-            <th scope="row" class="font-weight-regular">
+            <th scope="row" class="row-head">
               <router-link
                 :to="{
                   name: ROUTE_NAMES.finding,
                   params: { projectId, findingId: finding.id },
                 }"
               >
-                <span class="monospace">{{ finding.id }}</span> · {{ finding.title }}
+                <span class="mono">{{ finding.id }}</span> · {{ finding.title }}
               </router-link>
             </th>
-            <td>{{ $t(`findings.severity.${finding.severity}`) }}</td>
+            <td>
+              <span class="chip" :class="SEVERITY_TONES[finding.severity]">
+                {{ $t(`findings.severity.${finding.severity}`) }}
+              </span>
+            </td>
             <td>{{ finding.category }}</td>
             <td>
               <StateLabel
@@ -357,7 +376,7 @@ const emptyKey = computed(() => {
                     : undefined
                 "
               />
-              <p v-if="finding.status === 'escalated'" class="text-body-2 mt-1">
+              <p v-if="finding.status === 'escalated'" class="cell-note">
                 {{ $t('findings.list.waitingDecision') }}
                 <router-link
                   v-if="isApprover && !projectClosed"
@@ -371,7 +390,7 @@ const emptyKey = computed(() => {
                   {{ $t('findings.list.decide') }}
                 </router-link>
               </p>
-              <p v-else-if="finding.status === 'awaiting_scope'" class="text-body-2 mt-1">
+              <p v-else-if="finding.status === 'awaiting_scope'" class="cell-note">
                 {{ $t('findings.list.scopeInProgress') }}
               </p>
             </td>
@@ -407,22 +426,35 @@ const emptyKey = computed(() => {
             <td>{{ finding.opened_at ? format.dateTime(finding.opened_at) : '' }}</td>
           </tr>
         </tbody>
-      </v-table>
+      </table>
     </div>
-    <div v-if="nextCursor" class="mt-4">
-      <v-btn variant="outlined" :loading="loadingMore" @click="loadMore">
+    <div v-if="nextCursor" class="more">
+      <button
+        type="button"
+        class="btn"
+        :disabled="loadingMore"
+        :aria-busy="loadingMore ? 'true' : undefined"
+        @click="loadMore"
+      >
         {{ $t('findings.list.loadMore') }}
-      </v-btn>
-      <ProblemAlert v-if="moreFailure" :error="moreFailure" class="mt-2" />
+      </button>
+      <ProblemAlert v-if="moreFailure" :error="moreFailure" />
     </div>
   </section>
 </template>
 
 <style scoped>
+.tab-card {
+  padding: 18px 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
 .filters {
   display: flex;
   flex-wrap: wrap;
-  gap: 16px;
+  gap: 16px 24px;
   align-items: flex-end;
 }
 
@@ -430,10 +462,107 @@ const emptyKey = computed(() => {
   border: 0;
   margin: 0;
   padding: 0;
+  min-width: 0;
+}
+
+.field-label {
+  display: block;
+  margin-bottom: 6px;
+  padding: 0;
+  font-size: 13px;
+  font-weight: 500;
+  color: #c7cceb;
+}
+
+.chips-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.tabf {
+  min-height: 44px;
+}
+
+.tabf[disabled] {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.check {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding-right: 8px;
+  cursor: pointer;
+}
+
+.check input {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: #7c3aed;
+  cursor: pointer;
+}
+
+.check.disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.switch {
+  align-self: flex-start;
 }
 
 .destination-filter {
   min-width: 240px;
   max-width: 320px;
+  flex: 1 1 240px;
+}
+
+.active-filters {
+  margin: 0;
+  font-size: 13px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.empty {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.empty p {
+  margin: 0;
+}
+
+.findings-table {
+  min-width: 960px;
+}
+
+.row-head {
+  font-weight: 400;
+  color: #f1f3ff;
+  padding: 10px 10px 10px 0;
+  border-bottom: 1px solid rgba(140, 150, 255, 0.08);
+  vertical-align: top;
+}
+
+.cell-note {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: #a9b0d6;
+}
+
+.more {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
 }
 </style>

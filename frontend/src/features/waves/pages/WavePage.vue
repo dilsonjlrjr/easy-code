@@ -9,6 +9,8 @@ import { describeEvent } from '@/shared/events/eventDescriptions'
 import type { CloudEvent } from '@/shared/events/eventStream'
 import { useFormat } from '@/shared/format/useFormat'
 import AppBreadcrumbs from '@/shared/ui/AppBreadcrumbs.vue'
+import CanvasIcon from '@/shared/ui/CanvasIcon.vue'
+import { stateTone, type ChipTone } from '@/shared/ui/stateFamilies'
 import LiveConnectionStatus from '@/shared/ui/LiveConnectionStatus.vue'
 import LoadingState from '@/shared/ui/LoadingState.vue'
 import ProblemAlert from '@/shared/ui/ProblemAlert.vue'
@@ -244,6 +246,8 @@ function providerName(id: string): string {
   return i18n.te(key) ? t(key) : id
 }
 
+const OUTPUT_TONES: Record<string, ChipTone> = { written: 'ok', writing: 'info', pending: 'mute' }
+
 function callTitle(call: CallRecord): string {
   if (call.type === 'tool') return t('waves.calls.tool', { tool: call.tool ?? '' })
   return t('waves.calls.model', {
@@ -254,139 +258,157 @@ function callTitle(call: CallRecord): string {
 </script>
 
 <template>
-  <v-container max-width="1200">
-    <LoadingState v-if="live.loading.value && !wave" />
-    <template v-else-if="live.error.value && !wave">
-      <h1 class="text-h4 mb-4">{{ $t('pages.wave.title') }}</h1>
-      <v-alert v-if="notFound" type="warning" variant="tonal" role="alert">
+  <!-- Layout: canvas "Onda" (Onda.dc.html). -->
+  <LoadingState v-if="live.loading.value && !wave" />
+  <template v-else-if="live.error.value && !wave">
+    <h1>{{ $t('pages.wave.title') }}</h1>
+    <div v-if="notFound" class="note n-warn" role="alert">
+      <span class="note-icon fg-warn"><CanvasIcon name="alert" :stroke-width="2" /></span>
+      <div class="note-body">
         <p>{{ $t('waves.notFound') }}</p>
         <router-link :to="{ name: ROUTE_NAMES.projects }">{{
           $t('common.goProjects')
         }}</router-link>
-      </v-alert>
-      <ProblemAlert v-else :error="live.error.value" retry @retry="live.load" />
-    </template>
+      </div>
+    </div>
+    <ProblemAlert v-else :error="live.error.value" retry @retry="live.load" />
+  </template>
 
-    <template v-else-if="wave">
-      <AppBreadcrumbs :items="breadcrumbs" />
-      <div class="d-flex flex-wrap align-center ga-3 mb-1">
-        <h1 class="text-h4">
-          {{ $t('waves.heading') }} <span class="monospace">{{ wave.id }}</span>
-        </h1>
-        <StateLabel
-          machine="wave"
-          :state="wave.state"
-          :detail="
-            wave.state === 'queued' && wave.attempt > 1 ? $t('waves.control.restarted') : undefined
-          "
-        />
-        <v-spacer />
-        <LiveConnectionStatus :status="live.status.value" />
+  <template v-else-if="wave">
+    <AppBreadcrumbs :items="breadcrumbs" />
+    <div class="wave-head">
+      <div class="page-head">
+        <h1>{{ $t('waves.heading') }} {{ wave.id }} · {{ $t(`stages.${wave.stage}`) }}</h1>
+        <span class="head-row">
+          <StateLabel
+            machine="wave"
+            :state="wave.state"
+            :detail="
+              wave.state === 'queued' && wave.attempt > 1
+                ? $t('waves.control.restarted')
+                : undefined
+            "
+          />
+          <span class="t2 head-text">
+            {{ $t(`agents.${wave.agent}`) }} · {{ $t(`waves.purpose.${wave.purpose}`) }}
+            <template v-if="wave.task"> · {{ $t('waves.task', { task: wave.task }) }}</template>
+            <template v-if="wave.attempt > 1">
+              · {{ $t('waves.attempt', { n: wave.attempt }) }}</template
+            >
+          </span>
+          <LiveConnectionStatus :status="live.status.value" />
+        </span>
+        <span v-if="wave.git_commit" class="t2 head-text" data-testid="wave-commit">
+          {{ $t('evidence.commit') }}:
+          <span class="mono" :title="wave.git_commit">{{ wave.git_commit.slice(0, 12) }}</span>
+        </span>
       </div>
       <!-- ESP-18 section 4: lifecycle controls, only from the web (US-12 RN-1). -->
-      <div v-if="hasControls" class="d-flex flex-wrap ga-2 mb-3" data-testid="wave-actions">
-        <v-btn
+      <div v-if="hasControls" class="head-actions" data-testid="wave-actions">
+        <button
           v-if="canPause"
-          variant="outlined"
-          :loading="sendingAction === 'pause'"
+          type="button"
+          class="btn"
           :disabled="sendingAction !== undefined"
+          :aria-busy="sendingAction === 'pause' || undefined"
           @click="sendWithoutDialog('pause')"
         >
+          <v-progress-circular v-if="sendingAction === 'pause'" indeterminate size="16" width="2" />
+          <CanvasIcon v-else name="pause" :size="16" :stroke-width="2" />
           {{ $t('waves.control.pause') }}
-        </v-btn>
-        <v-btn
+        </button>
+        <button
           v-if="canPauseNow"
-          color="warning"
-          variant="outlined"
+          type="button"
+          class="btn"
           :disabled="sendingAction !== undefined"
           @click="pauseNowDialogOpen = true"
         >
           {{ $t('waves.control.pauseNow') }}
-        </v-btn>
-        <v-btn
+        </button>
+        <button
           v-if="canResume"
-          color="primary"
-          variant="flat"
-          :loading="sendingAction === 'resume'"
+          type="button"
+          class="btn btn-p"
           :disabled="sendingAction !== undefined"
+          :aria-busy="sendingAction === 'resume' || undefined"
           @click="sendWithoutDialog('resume')"
         >
+          <v-progress-circular
+            v-if="sendingAction === 'resume'"
+            indeterminate
+            size="16"
+            width="2"
+          />
+          <CanvasIcon v-else name="play" :size="16" :stroke-width="2" />
           {{ $t('waves.control.resume') }}
-        </v-btn>
-        <v-btn
+        </button>
+        <button
           v-if="canRestart"
-          color="primary"
-          variant="flat"
+          type="button"
+          class="btn"
           :disabled="sendingAction !== undefined"
           @click="restartDialogOpen = true"
         >
           {{ $t('waves.control.restart') }}
-        </v-btn>
-        <v-btn
+        </button>
+        <button
           v-if="canCancel"
-          color="error"
-          variant="outlined"
+          type="button"
+          class="btn btn-d"
           :disabled="sendingAction !== undefined"
           @click="cancelDialogOpen = true"
         >
           {{ $t('waves.cancel.action') }}
-        </v-btn>
+        </button>
       </div>
-      <ConfirmActionDialog
-        v-model="cancelDialogOpen"
-        :title="$t('waves.cancel.title', { wave: wave.id })"
-        :lines="[$t('waves.cancel.final'), $t('waves.cancel.lostCall')]"
-        :keep-label="$t('waves.cancel.keep')"
-        :confirm-label="$t('waves.cancel.confirm')"
-        test-id="cancel-wave-dialog"
-        :submit="submitCancel"
-      />
-      <ConfirmActionDialog
-        v-model="pauseNowDialogOpen"
-        :title="$t('waves.control.pauseNowTitle', { wave: wave.id })"
-        :lines="[$t('waves.control.pauseNowLost'), $t('waves.control.pauseNowResume')]"
-        :keep-label="$t('waves.control.back')"
-        :confirm-label="$t('waves.control.pauseNowConfirm')"
-        confirm-color="warning"
-        test-id="pause-now-dialog"
-        :submit="submitPauseNow"
-      />
-      <ConfirmActionDialog
-        v-model="restartDialogOpen"
-        :title="$t('waves.control.restartTitle', { wave: wave.id })"
-        :lines="[$t('waves.control.restartEffect'), $t('waves.control.restartHistory')]"
-        :keep-label="$t('waves.control.back')"
-        :confirm-label="$t('waves.control.restartConfirm')"
-        confirm-color="primary"
-        test-id="restart-dialog"
-        :submit="submitRestart"
-      />
-      <div v-if="controlNotice" role="status" class="text-body-2 mb-2" data-testid="control-notice">
-        {{ controlNotice }}
-      </div>
-      <ProblemAlert
-        v-if="controlFailure"
-        :error="controlFailure"
-        class="mb-3"
-        data-testid="control-failure"
-      />
-      <v-alert
-        v-if="pausingTooLong"
-        type="warning"
-        variant="tonal"
-        role="alert"
-        class="mb-4"
-        data-testid="pausing-too-long"
-      >
-        {{ $t('waves.control.pausingTooLong') }}
-      </v-alert>
-      <v-alert
-        v-if="wave.state === 'paused' || wave.state === 'pausing'"
-        type="info"
-        variant="tonal"
-        class="mb-4"
-        data-testid="pause-details"
-      >
+    </div>
+    <ConfirmActionDialog
+      v-model="cancelDialogOpen"
+      :title="$t('waves.cancel.title', { wave: wave.id })"
+      :lines="[$t('waves.cancel.final'), $t('waves.cancel.lostCall')]"
+      :keep-label="$t('waves.cancel.keep')"
+      :confirm-label="$t('waves.cancel.confirm')"
+      test-id="cancel-wave-dialog"
+      :submit="submitCancel"
+    />
+    <ConfirmActionDialog
+      v-model="pauseNowDialogOpen"
+      :title="$t('waves.control.pauseNowTitle', { wave: wave.id })"
+      :lines="[$t('waves.control.pauseNowLost'), $t('waves.control.pauseNowResume')]"
+      :keep-label="$t('waves.control.back')"
+      :confirm-label="$t('waves.control.pauseNowConfirm')"
+      confirm-color="warning"
+      test-id="pause-now-dialog"
+      :submit="submitPauseNow"
+    />
+    <ConfirmActionDialog
+      v-model="restartDialogOpen"
+      :title="$t('waves.control.restartTitle', { wave: wave.id })"
+      :lines="[$t('waves.control.restartEffect'), $t('waves.control.restartHistory')]"
+      :keep-label="$t('waves.control.back')"
+      :confirm-label="$t('waves.control.restartConfirm')"
+      confirm-color="primary"
+      test-id="restart-dialog"
+      :submit="submitRestart"
+    />
+    <div v-if="controlNotice" role="status" class="note" data-testid="control-notice">
+      <span class="note-icon"><CanvasIcon name="bolt" /></span>
+      <span class="note-body">{{ controlNotice }}</span>
+    </div>
+    <ProblemAlert v-if="controlFailure" :error="controlFailure" data-testid="control-failure" />
+    <div v-if="pausingTooLong" class="note n-warn" role="alert" data-testid="pausing-too-long">
+      <span class="note-icon fg-warn"><CanvasIcon name="alert" :stroke-width="2" /></span>
+      <span class="note-body">{{ $t('waves.control.pausingTooLong') }}</span>
+    </div>
+    <div
+      v-if="wave.state === 'paused' || wave.state === 'pausing'"
+      class="note"
+      role="alert"
+      data-testid="pause-details"
+    >
+      <span class="note-icon"><CanvasIcon name="pause" :stroke-width="2" /></span>
+      <div class="note-body">
         <p>
           {{
             wave.state === 'pausing'
@@ -422,33 +444,18 @@ function callTitle(call: CallRecord): string {
             }}
           </router-link>
         </p>
-      </v-alert>
-      <p class="text-body-1 mb-4">
-        {{ $t(`stages.${wave.stage}`) }} · {{ $t(`agents.${wave.agent}`) }} ·
-        {{ $t(`waves.purpose.${wave.purpose}`) }}
-        <template v-if="wave.task"> · {{ $t('waves.task', { task: wave.task }) }}</template>
-        <template v-if="wave.attempt > 1">
-          · {{ $t('waves.attempt', { n: wave.attempt }) }}</template
-        >
-      </p>
-      <p v-if="wave.git_commit" class="text-body-2 mb-4" data-testid="wave-commit">
-        {{ $t('evidence.commit') }}:
-        <span class="monospace" :title="wave.git_commit">{{ wave.git_commit.slice(0, 12) }}</span>
-      </p>
-      <!-- ESP-18 section 8: state changes announced politely, without moving the focus. -->
-      <div role="status" class="sr-only">{{ live.message.value }}</div>
-      <p v-if="live.status.value === 'reconnecting'" class="text-body-2 mb-2">
-        {{ $t('live.staleData') }}
-      </p>
+      </div>
+    </div>
+    <!-- ESP-18 section 8: state changes announced politely, without moving the focus. -->
+    <div role="status" class="sr-only">{{ live.message.value }}</div>
+    <p v-if="live.status.value === 'reconnecting'" class="t2 head-text">
+      {{ $t('live.staleData') }}
+    </p>
 
-      <!-- US-11: resumption from the last checkpoint after the platform restarted. -->
-      <v-alert
-        v-if="live.resumeNotice.value"
-        type="info"
-        variant="tonal"
-        class="mb-4"
-        data-testid="resume-notice"
-      >
+    <!-- US-11: resumption from the last checkpoint after the platform restarted. -->
+    <div v-if="live.resumeNotice.value" class="note" role="alert" data-testid="resume-notice">
+      <span class="note-icon"><CanvasIcon name="play" :stroke-width="2" /></span>
+      <span class="note-body">
         {{ $t('waves.resumedAfterCrash', { checkpoint: live.resumeNotice.value.checkpoint }) }}
         <template v-if="live.resumeNotice.value.lostCost">
           {{
@@ -457,36 +464,32 @@ function callTitle(call: CallRecord): string {
             })
           }}
         </template>
-      </v-alert>
-      <v-alert
-        v-if="live.retryInSeconds.value !== undefined"
-        type="info"
-        variant="tonal"
-        class="mb-4"
-      >
+      </span>
+    </div>
+    <div v-if="live.retryInSeconds.value !== undefined" class="note" role="alert">
+      <span class="note-icon"><CanvasIcon name="bolt" /></span>
+      <span class="note-body">
         {{ $t('waves.retryIn', { seconds: live.retryInSeconds.value }) }}
-      </v-alert>
+      </span>
+    </div>
 
-      <!-- ESP-18 section 6: a canceled wave keeps its final and lost cost; partial artifacts stay drafts. -->
-      <v-alert
-        v-if="wave.state === 'canceled'"
-        type="info"
-        variant="tonal"
-        class="mb-4"
-        data-testid="canceled-notice"
-      >
+    <!-- ESP-18 section 6: a canceled wave keeps its final and lost cost; partial artifacts stay drafts. -->
+    <div v-if="wave.state === 'canceled'" class="note" role="alert" data-testid="canceled-notice">
+      <span class="note-icon"><CanvasIcon name="bolt" /></span>
+      <span class="note-body">
         {{ $t('waves.cancel.canceledNotice', { cost: format.money(wave.cost.lost) }) }}
-      </v-alert>
-      <!-- US-29 CA-2: a failed wave shows its cause and the schema errors per artifact. -->
-      <v-alert
-        v-if="wave.state === 'failed'"
-        type="error"
-        variant="tonal"
-        role="alert"
-        class="mb-4"
-        data-testid="failure-cause"
-      >
-        <p class="font-weight-medium">
+      </span>
+    </div>
+    <!-- US-29 CA-2: a failed wave shows its cause and the schema errors per artifact. -->
+    <div
+      v-if="wave.state === 'failed'"
+      class="note n-crit"
+      role="alert"
+      data-testid="failure-cause"
+    >
+      <span class="note-icon fg-crit"><CanvasIcon name="alert" :stroke-width="2" /></span>
+      <div class="note-body">
+        <p class="note-title">
           {{
             $t('waves.failureCause', {
               cause: failureCauseText(wave.failure_cause),
@@ -494,247 +497,528 @@ function callTitle(call: CallRecord): string {
           }}
         </p>
         <template v-if="wave.artifact_errors?.length">
-          <p class="mt-2">{{ $t('waves.schemaErrors') }}</p>
-          <ul class="ml-4">
+          <p>{{ $t('waves.schemaErrors') }}</p>
+          <ul class="note-list">
             <li v-for="(item, index) in wave.artifact_errors" :key="index">
-              <span class="monospace">{{ item.artifact }}</span> ·
-              <span class="monospace">{{ item.path }}</span> · {{ item.message }}
+              <span class="mono">{{ item.artifact }}</span> ·
+              <span class="mono">{{ item.path }}</span> · {{ item.message }}
             </li>
           </ul>
         </template>
-      </v-alert>
-      <v-alert
-        v-else-if="wave.artifact_errors?.length"
-        type="warning"
-        variant="tonal"
-        class="mb-4"
-        data-testid="schema-rejections"
-      >
-        <!-- US-29 CA-1: the platform rejected an artifact; the agent corrects it in the same wave. -->
+      </div>
+    </div>
+    <div
+      v-else-if="wave.artifact_errors?.length"
+      class="note n-warn"
+      role="alert"
+      data-testid="schema-rejections"
+    >
+      <span class="note-icon fg-warn"><CanvasIcon name="alert" :stroke-width="2" /></span>
+      <!-- US-29 CA-1: the platform rejected an artifact; the agent corrects it in the same wave. -->
+      <div class="note-body">
         <p>{{ $t('waves.schemaRejected') }}</p>
-        <ul class="ml-4">
+        <ul class="note-list">
           <li v-for="(item, index) in wave.artifact_errors" :key="index">
-            <span class="monospace">{{ item.artifact }}</span> ·
-            <span class="monospace">{{ item.path }}</span> · {{ item.message }}
+            <span class="mono">{{ item.artifact }}</span> ·
+            <span class="mono">{{ item.path }}</span> · {{ item.message }}
           </li>
         </ul>
-      </v-alert>
+      </div>
+    </div>
 
-      <div v-if="answerNotice" role="status" class="text-body-2 mb-2">{{ answerNotice }}</div>
-      <WaveQuestions
-        :questions="live.questions.value"
-        :can-answer="canAnswer"
-        :focus-on-open="openedWaiting"
-        :submit="submitAnswer"
-      />
+    <div v-if="answerNotice" role="status" class="note">
+      <span class="note-icon"><CanvasIcon name="bolt" /></span>
+      <span class="note-body">{{ answerNotice }}</span>
+    </div>
 
-      <!-- US-36: cost and time of the wave. -->
-      <section aria-labelledby="cost-heading" class="mb-8">
-        <h2 id="cost-heading" class="text-h6 mb-2">{{ $t('waves.cost.title') }}</h2>
-        <dl class="summary-list" data-testid="wave-cost">
-          <dt>{{ $t('waves.cost.reasoningModel') }}</dt>
-          <dd>
-            {{ providerName(wave.models.reasoning.provider) }} ·
-            <span class="monospace">{{ wave.models.reasoning.model }}</span>
-          </dd>
-          <dt>{{ $t('waves.cost.executionModel') }}</dt>
-          <dd>
-            {{ providerName(wave.models.execution.provider) }} ·
-            <span class="monospace">{{ wave.models.execution.model }}</span>
-          </dd>
-          <dt>{{ $t('waves.cost.inputTokens') }}</dt>
-          <dd>{{ format.integer(wave.tokens.input) }}</dd>
-          <dt>{{ $t('waves.cost.outputTokens') }}</dt>
-          <dd>{{ format.integer(wave.tokens.output) }}</dd>
-          <dt>{{ $t('waves.cost.readCacheTokens') }}</dt>
-          <dd>{{ format.integer(wave.tokens.read_cache) }}</dd>
-          <dt>{{ $t('waves.cost.writeCacheTokens') }}</dt>
-          <dd>{{ format.integer(wave.tokens.write_cache) }}</dd>
-          <dt>{{ $t('waves.cost.useful') }}</dt>
-          <dd>{{ format.money(wave.cost.useful) }}</dd>
-          <dt>{{ $t('waves.cost.lost') }}</dt>
-          <dd>
-            {{ format.money(wave.cost.lost) }}
-            <span v-if="hasEstimatedLoss">
-              {{ $t('waves.cost.estimatedPart', { cost: format.money(wave.cost.estimated_lost) }) }}
+    <div class="wave-layout">
+      <div class="wave-main">
+        <WaveQuestions
+          :questions="live.questions.value"
+          :can-answer="canAnswer"
+          :focus-on-open="openedWaiting"
+          :submit="submitAnswer"
+        />
+
+        <section aria-labelledby="calls-heading" class="card main-card">
+          <div class="card-head">
+            <div class="card-head-text">
+              <h2 id="calls-heading">{{ $t('waves.calls.title') }}</h2>
+              <p class="t2 card-subtitle">{{ $t('waves.calls.subtitle') }}</p>
+            </div>
+            <button
+              v-if="!isEnded"
+              type="button"
+              class="btn"
+              :aria-pressed="live.paused.value"
+              @click="live.setPaused(!live.paused.value)"
+            >
+              {{ live.paused.value ? $t('live.resumeUpdates') : $t('live.pauseUpdates') }}
+            </button>
+          </div>
+          <!-- US-30 CA-1, RNF-07: least privilege refused some tool calls; each one is in the record. -->
+          <div v-if="refusedCalls.length > 0" class="note" role="alert" data-testid="refused-calls">
+            <span class="note-icon"><CanvasIcon name="alert" :stroke-width="2" /></span>
+            <span class="note-body">
+              {{ $t('waves.calls.refusedNotice', { count: refusedCalls.length }) }}
             </span>
-          </dd>
-          <dt>{{ $t('waves.cost.total') }}</dt>
-          <dd data-testid="wave-cost-total">{{ format.money(wave.cost.total) }}</dd>
-          <template v-for="item in wave.cost.per_provider ?? []" :key="item.provider">
-            <dt>{{ $t('waves.cost.perProvider', { provider: providerName(item.provider) }) }}</dt>
-            <dd>{{ format.money(item.total) }}</dd>
-          </template>
-          <dt>{{ $t('waves.cost.executionTime') }}</dt>
-          <dd>{{ format.duration(wave.time.execution_ms) }}</dd>
-          <dt>{{ $t('waves.cost.cycleTime') }}</dt>
-          <dd>{{ format.duration(wave.time.cycle_ms) }}</dd>
-          <template v-if="isEnded && wave.result">
-            <dt>{{ $t('waves.cost.result') }}</dt>
-            <dd>{{ $t(`waves.results.${wave.result}`) }}</dd>
-          </template>
-          <template v-if="wave.versions?.price_table">
-            <dt>{{ $t('waves.cost.priceTable') }}</dt>
-            <dd class="monospace">{{ wave.versions.price_table }}</dd>
-          </template>
-        </dl>
-        <p class="text-body-2 text-medium-emphasis mt-2">{{ $t('waves.cost.timeRule') }}</p>
-      </section>
-
-      <section v-if="wave.expected_outputs?.length" aria-labelledby="outputs-heading" class="mb-8">
-        <h2 id="outputs-heading" class="text-h6 mb-2">{{ $t('waves.outputs.title') }}</h2>
-        <ul class="plain-list">
-          <li
-            v-for="output in wave.expected_outputs"
-            :key="`${output.type}-${output.artifact ?? ''}`"
-            class="mb-1"
+          </div>
+          <p
+            v-if="live.paused.value && live.pendingWhilePaused.value.length > 0"
+            class="t2 card-line"
           >
-            {{ output.type }} · {{ $t(`waves.outputs.status.${output.status}`) }}
-            <router-link
-              v-if="output.artifact"
-              :to="{
-                name: ROUTE_NAMES.artifact,
-                params: { projectId, artifactId: output.artifact },
-                query: output.version ? { version: output.version } : {},
-              }"
-              class="monospace"
-            >
-              {{ output.artifact }}
-            </router-link>
-          </li>
-        </ul>
-      </section>
+            {{ $t('live.pendingCount', { count: live.pendingWhilePaused.value.length }) }}
+          </p>
+          <p class="t2 card-line">
+            {{
+              wave.last_checkpoint === null || wave.last_checkpoint === undefined
+                ? $t('waves.checkpoints.none')
+                : $t('waves.checkpoints.last', {
+                    n: wave.last_checkpoint,
+                    count: live.checkpoints.value.length,
+                  })
+            }}
+          </p>
+          <p v-if="live.calls.value.length === 0" class="t2 card-line">
+            {{ $t('waves.calls.none') }}
+          </p>
+          <!-- ESP-18 section 8: the call record is a log; no prompt, answer or tool arguments (ER-18-15). -->
+          <div v-else role="log" :aria-label="$t('waves.calls.title')">
+            <ol class="list">
+              <li
+                v-for="call in live.calls.value"
+                :key="`${call.attempt ?? 1}-${call.number}`"
+                :data-testid="`call-${call.number}`"
+                class="li call-item"
+              >
+                <span class="chip call-number" :class="call.type === 'model' ? 'info' : 'mute'">
+                  {{ $t('waves.calls.number', { n: call.number }) }}
+                </span>
+                <span class="call-body">
+                  <span class="call-title">
+                    {{ callTitle(call) }} · {{ $t(`waves.calls.results.${call.result}`) }}
+                    <template v-if="call.lost">· {{ $t('waves.calls.lostCall') }}</template>
+                  </span>
+                  <span v-if="call.summary">{{ call.summary }}</span>
+                  <span v-if="call.refusal_reason">
+                    {{ $t('waves.calls.refusal', { reason: refusalText(call.refusal_reason) }) }}
+                  </span>
+                  <span class="t2 call-meta">
+                    {{ format.dateTime(call.start) }} · {{ format.duration(call.duration_ms) }}
+                    <template v-if="call.tokens">
+                      ·
+                      {{
+                        $t('waves.calls.tokens', {
+                          input: format.integer(call.tokens.input),
+                          output: format.integer(call.tokens.output),
+                          cache: format.integer(call.tokens.read_cache + call.tokens.write_cache),
+                        })
+                      }}
+                    </template>
+                    <template v-if="call.cost">
+                      · {{ format.money(call.cost) }}
+                      <template v-if="call.estimated_cost"
+                        >({{ $t('waves.calls.estimated') }})</template
+                      >
+                      <template v-if="call.lost_cost">({{ $t('waves.calls.lostCost') }})</template>
+                    </template>
+                  </span>
+                </span>
+              </li>
+            </ol>
+          </div>
+        </section>
 
-      <SandboxEvidence
-        v-if="showEvidence"
-        :wave-id="waveId"
-        :executions="live.executions.value"
-        :error="live.executionsError.value"
-        :download="downloadOutput"
-        @retry="live.refreshLists"
-      />
+        <SandboxEvidence
+          v-if="showEvidence"
+          :wave-id="waveId"
+          :executions="live.executions.value"
+          :error="live.executionsError.value"
+          :download="downloadOutput"
+          @retry="live.refreshLists"
+        />
 
-      <section aria-labelledby="calls-heading" class="mb-8">
-        <div class="d-flex flex-wrap align-center ga-2 mb-2">
-          <h2 id="calls-heading" class="text-h6">{{ $t('waves.calls.title') }}</h2>
-          <v-spacer />
-          <v-btn
-            v-if="!isEnded"
-            variant="outlined"
-            size="small"
-            :aria-pressed="live.paused.value"
-            @click="live.setPaused(!live.paused.value)"
-          >
-            {{ live.paused.value ? $t('live.resumeUpdates') : $t('live.pauseUpdates') }}
-          </v-btn>
-        </div>
-        <!-- US-30 CA-1, RNF-07: least privilege refused some tool calls; each one is in the record. -->
-        <v-alert
-          v-if="refusedCalls.length > 0"
-          type="info"
-          variant="tonal"
-          class="mb-2"
-          data-testid="refused-calls"
+        <section
+          v-if="previousAttempts.length"
+          aria-labelledby="attempts-heading"
+          class="card main-card"
         >
-          {{ $t('waves.calls.refusedNotice', { count: refusedCalls.length }) }}
-        </v-alert>
-        <p v-if="live.paused.value && live.pendingWhilePaused.value.length > 0" class="text-body-2">
-          {{ $t('live.pendingCount', { count: live.pendingWhilePaused.value.length }) }}
-        </p>
-        <p class="text-body-2 mb-2">
-          {{
-            wave.last_checkpoint === null || wave.last_checkpoint === undefined
-              ? $t('waves.checkpoints.none')
-              : $t('waves.checkpoints.last', {
-                  n: wave.last_checkpoint,
-                  count: live.checkpoints.value.length,
-                })
-          }}
-        </p>
-        <p v-if="live.calls.value.length === 0" class="text-body-2">{{ $t('waves.calls.none') }}</p>
-        <!-- ESP-18 section 8: the call record is a log; no prompt, answer or tool arguments (ER-18-15). -->
-        <div v-else role="log" :aria-label="$t('waves.calls.title')">
-          <ol class="call-log">
-            <li
-              v-for="call in live.calls.value"
-              :key="`${call.attempt ?? 1}-${call.number}`"
-              :data-testid="`call-${call.number}`"
-              class="call-item"
-            >
-              <p class="font-weight-medium">
-                {{ $t('waves.calls.number', { n: call.number }) }} · {{ callTitle(call) }} ·
-                {{ $t(`waves.calls.results.${call.result}`) }}
-                <template v-if="call.lost">· {{ $t('waves.calls.lostCall') }}</template>
-              </p>
-              <p v-if="call.summary" class="text-body-2">{{ call.summary }}</p>
-              <p v-if="call.refusal_reason" class="text-body-2">
-                {{ $t('waves.calls.refusal', { reason: refusalText(call.refusal_reason) }) }}
-              </p>
-              <p class="text-body-2 text-medium-emphasis">
-                {{ format.dateTime(call.start) }} · {{ format.duration(call.duration_ms) }}
-                <template v-if="call.tokens">
-                  ·
-                  {{
-                    $t('waves.calls.tokens', {
-                      input: format.integer(call.tokens.input),
-                      output: format.integer(call.tokens.output),
-                      cache: format.integer(call.tokens.read_cache + call.tokens.write_cache),
-                    })
-                  }}
-                </template>
-                <template v-if="call.cost">
-                  · {{ format.money(call.cost) }}
-                  <template v-if="call.estimated_cost"
-                    >({{ $t('waves.calls.estimated') }})</template
-                  >
-                  <template v-if="call.lost_cost">({{ $t('waves.calls.lostCost') }})</template>
-                </template>
-              </p>
+          <h2 id="attempts-heading" class="card-title">{{ $t('waves.control.attempts') }}</h2>
+          <ul class="list" data-testid="wave-attempts">
+            <li v-for="attempt in previousAttempts" :key="attempt.number" class="li wrap-row">
+              <span>{{ $t('waves.attempt', { n: attempt.number }) }}</span>
+              <span class="chip" :class="stateTone('wave', attempt.final_state)">
+                {{
+                  $te(`states.wave.${attempt.final_state}`)
+                    ? $t(`states.wave.${attempt.final_state}`)
+                    : attempt.final_state
+                }}
+              </span>
+              <span v-if="attempt.failure_cause" class="t2 call-meta">
+                {{ $t('waves.failureCause', { cause: failureCauseText(attempt.failure_cause) }) }}
+              </span>
+            </li>
+          </ul>
+        </section>
+
+        <section aria-labelledby="history-heading" class="card main-card">
+          <h2 id="history-heading" class="card-title">{{ $t('waves.history.title') }}</h2>
+          <p v-if="recentHistory.length === 0" class="t2 card-line">
+            {{ $t('waves.history.none') }}
+          </p>
+          <ol v-else class="list" data-testid="wave-history">
+            <li v-for="event in recentHistory" :key="event.id" class="li history-item">
+              <span class="t2 history-time">{{ format.dateTime(event.time) }}</span>
+              <span class="history-text">· {{ describe(event) }}</span>
             </li>
           </ol>
-        </div>
-      </section>
+        </section>
+      </div>
 
-      <section v-if="previousAttempts.length" aria-labelledby="attempts-heading" class="mb-8">
-        <h2 id="attempts-heading" class="text-h6 mb-2">{{ $t('waves.control.attempts') }}</h2>
-        <ul class="plain-list" data-testid="wave-attempts">
-          <li v-for="attempt in previousAttempts" :key="attempt.number" class="text-body-2 mb-1">
-            {{ $t('waves.attempt', { n: attempt.number }) }} ·
-            {{
-              $te(`states.wave.${attempt.final_state}`)
-                ? $t(`states.wave.${attempt.final_state}`)
-                : attempt.final_state
-            }}
-            <template v-if="attempt.failure_cause">
-              · {{ $t('waves.failureCause', { cause: failureCauseText(attempt.failure_cause) }) }}
-            </template>
-          </li>
-        </ul>
-      </section>
+      <div class="wave-side">
+        <!-- US-36: cost and time of the wave. -->
+        <section aria-labelledby="cost-heading" class="card main-card">
+          <h2 id="cost-heading" class="card-title">{{ $t('waves.cost.title') }}</h2>
+          <dl class="kv-list" data-testid="wave-cost">
+            <div class="kv">
+              <dt class="t2">{{ $t('waves.cost.reasoningModel') }}</dt>
+              <dd>
+                {{ providerName(wave.models.reasoning.provider) }} ·
+                <span class="mono">{{ wave.models.reasoning.model }}</span>
+              </dd>
+            </div>
+            <div class="kv">
+              <dt class="t2">{{ $t('waves.cost.executionModel') }}</dt>
+              <dd>
+                {{ providerName(wave.models.execution.provider) }} ·
+                <span class="mono">{{ wave.models.execution.model }}</span>
+              </dd>
+            </div>
+            <div class="kv">
+              <dt class="t2">{{ $t('waves.cost.inputTokens') }}</dt>
+              <dd>{{ format.integer(wave.tokens.input) }}</dd>
+            </div>
+            <div class="kv">
+              <dt class="t2">{{ $t('waves.cost.outputTokens') }}</dt>
+              <dd>{{ format.integer(wave.tokens.output) }}</dd>
+            </div>
+            <div class="kv">
+              <dt class="t2">{{ $t('waves.cost.readCacheTokens') }}</dt>
+              <dd>{{ format.integer(wave.tokens.read_cache) }}</dd>
+            </div>
+            <div class="kv">
+              <dt class="t2">{{ $t('waves.cost.writeCacheTokens') }}</dt>
+              <dd>{{ format.integer(wave.tokens.write_cache) }}</dd>
+            </div>
+            <div class="kv">
+              <dt class="t2">{{ $t('waves.cost.useful') }}</dt>
+              <dd>{{ format.money(wave.cost.useful) }}</dd>
+            </div>
+            <div class="kv">
+              <dt class="t2">{{ $t('waves.cost.lost') }}</dt>
+              <dd>
+                {{ format.money(wave.cost.lost) }}
+                <span v-if="hasEstimatedLoss">
+                  {{
+                    $t('waves.cost.estimatedPart', { cost: format.money(wave.cost.estimated_lost) })
+                  }}
+                </span>
+              </dd>
+            </div>
+            <div class="kv">
+              <dt class="t2">{{ $t('waves.cost.total') }}</dt>
+              <dd data-testid="wave-cost-total">{{ format.money(wave.cost.total) }}</dd>
+            </div>
+            <div v-for="item in wave.cost.per_provider ?? []" :key="item.provider" class="kv">
+              <dt class="t2">
+                {{ $t('waves.cost.perProvider', { provider: providerName(item.provider) }) }}
+              </dt>
+              <dd>{{ format.money(item.total) }}</dd>
+            </div>
+            <div class="kv">
+              <dt class="t2">{{ $t('waves.cost.executionTime') }}</dt>
+              <dd>{{ format.duration(wave.time.execution_ms) }}</dd>
+            </div>
+            <div class="kv">
+              <dt class="t2">{{ $t('waves.cost.cycleTime') }}</dt>
+              <dd>{{ format.duration(wave.time.cycle_ms) }}</dd>
+            </div>
+            <div v-if="isEnded && wave.result" class="kv">
+              <dt class="t2">{{ $t('waves.cost.result') }}</dt>
+              <dd>{{ $t(`waves.results.${wave.result}`) }}</dd>
+            </div>
+            <div v-if="wave.versions?.price_table" class="kv">
+              <dt class="t2">{{ $t('waves.cost.priceTable') }}</dt>
+              <dd class="mono">{{ wave.versions.price_table }}</dd>
+            </div>
+          </dl>
+          <p class="t2 fine-print">{{ $t('waves.cost.timeRule') }}</p>
+        </section>
 
-      <section aria-labelledby="history-heading" class="mb-8">
-        <h2 id="history-heading" class="text-h6 mb-2">{{ $t('waves.history.title') }}</h2>
-        <p v-if="recentHistory.length === 0" class="text-body-2">{{ $t('waves.history.none') }}</p>
-        <ol v-else class="plain-list" data-testid="wave-history">
-          <li v-for="event in recentHistory" :key="event.id" class="text-body-2 mb-1">
-            <span class="text-medium-emphasis">{{ format.dateTime(event.time) }}</span>
-            · {{ describe(event) }}
-          </li>
-        </ol>
-      </section>
-    </template>
-  </v-container>
+        <section
+          v-if="wave.expected_outputs?.length"
+          aria-labelledby="outputs-heading"
+          class="card main-card"
+        >
+          <h2 id="outputs-heading" class="card-title">{{ $t('waves.outputs.title') }}</h2>
+          <ul class="list">
+            <li
+              v-for="output in wave.expected_outputs"
+              :key="`${output.type}-${output.artifact ?? ''}`"
+              class="kv"
+            >
+              <span class="output-name">
+                {{ output.type }}
+                <router-link
+                  v-if="output.artifact"
+                  :to="{
+                    name: ROUTE_NAMES.artifact,
+                    params: { projectId, artifactId: output.artifact },
+                    query: output.version ? { version: output.version } : {},
+                  }"
+                  class="mono"
+                >
+                  {{ output.artifact }}
+                </router-link>
+              </span>
+              <span class="chip" :class="OUTPUT_TONES[output.status] ?? 'mute'">
+                {{ $t(`waves.outputs.status.${output.status}`) }}
+              </span>
+            </li>
+          </ul>
+        </section>
+
+        <section
+          v-if="wave.versions?.skills?.length"
+          aria-labelledby="skills-heading"
+          class="card main-card"
+        >
+          <h2 id="skills-heading" class="card-title">{{ $t('waves.skillsTitle') }}</h2>
+          <ul class="list">
+            <li v-for="item in wave.versions.skills" :key="item.skill" class="kv">
+              <span class="mono">{{ item.skill }}</span>
+              <span class="chip mute">{{
+                $t('artifacts.versionNumber', { n: item.version })
+              }}</span>
+            </li>
+          </ul>
+        </section>
+      </div>
+    </div>
+  </template>
 </template>
 
 <style scoped>
-.call-log {
+/* Values copied from the canvas "Onda" artboard. */
+.wave-head {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 16px;
+}
+
+.page-head {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.head-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.head-text {
+  margin: 0;
+  font-size: 13px;
+}
+
+.head-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.note p {
+  margin: 0;
+}
+
+.note-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  overflow-wrap: anywhere;
+}
+
+.note-title {
+  font-weight: 700;
+}
+
+.note-icon {
+  display: flex;
+  flex: none;
+}
+
+.note-list {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.n-warn {
+  border-color: rgba(234, 179, 8, 0.45);
+  background: rgba(234, 179, 8, 0.12);
+}
+
+.n-crit {
+  border-color: rgba(239, 68, 68, 0.45);
+  background: rgba(239, 68, 68, 0.12);
+}
+
+.fg-warn {
+  color: #fcd34d;
+}
+
+.fg-crit {
+  color: #fca5a5;
+}
+
+.wave-layout {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 20px;
+  align-items: flex-start;
+}
+
+.wave-main {
+  flex: 3 1 520px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.wave-side {
+  flex: 2 1 300px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.main-card {
+  padding: 18px 22px;
+}
+
+.card-title {
+  margin-bottom: 4px;
+}
+
+.card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 6px;
+}
+
+.card-subtitle {
+  margin: 4px 0 0;
+  font-size: 13px;
+}
+
+.card-line {
+  margin: 0 0 6px;
+  font-size: 13px;
+}
+
+.main-card > .note {
+  margin-bottom: 8px;
+}
+
+.list {
   list-style: none;
+  margin: 0;
   padding: 0;
 }
 
+.wrap-row {
+  flex-wrap: wrap;
+}
+
 .call-item {
-  border-left: 3px solid rgb(var(--v-theme-on-surface), 0.2);
-  padding: 0.25rem 0 0.25rem 0.75rem;
-  margin-bottom: 0.75rem;
+  align-items: flex-start;
+}
+
+.call-number {
+  flex: none;
+}
+
+.call-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.call-title {
+  font-weight: 600;
+}
+
+.call-meta {
+  font-size: 12px;
+}
+
+.history-item {
+  align-items: baseline;
+}
+
+.history-time {
+  flex: none;
+  font-size: 12px;
+}
+
+.history-text {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+}
+
+.kv-list {
+  margin: 0;
+}
+
+.kv dt,
+.kv dd {
+  margin: 0;
+}
+
+.kv dd {
+  font-weight: 600;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+.output-name {
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  overflow-wrap: anywhere;
+}
+
+.fine-print {
+  margin: 8px 0 0;
+  font-size: 12px;
+  line-height: 16px;
 }
 </style>

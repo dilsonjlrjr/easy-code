@@ -17,7 +17,8 @@ test('the shell opens in pt-BR and switches to English, keeping the choice', asy
   await expect(page.getByRole('heading', { level: 1, name: 'Projetos' })).toBeVisible()
   await expect(page.locator('html')).toHaveAttribute('lang', 'pt-BR')
 
-  await page.getByRole('button', { name: /Idioma da interface/ }).click()
+  // The interface language lives in the account menu (canvas "Desktop · Início").
+  await page.getByTestId('account-menu').click()
   await page.getByRole('menuitemradio', { name: 'English' }).click()
 
   await expect(page.getByRole('heading', { level: 1, name: 'Projects' })).toBeVisible()

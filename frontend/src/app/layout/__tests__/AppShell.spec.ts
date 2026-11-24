@@ -46,7 +46,7 @@ describe('application shell', { timeout: 20_000 }, () => {
   it('marks the current destination with aria-current', async () => {
     const wrapper = await mountApp()
 
-    const current = wrapper.findAll('nav [aria-current="page"]')
+    const current = wrapper.findAll('nav[aria-label="Principal"] [aria-current="page"]')
     expect(current).toHaveLength(1)
     expect(current[0]?.text()).toContain('Projetos')
 

@@ -7,6 +7,7 @@ import { isApiError } from '@/shared/api/problemDetails'
 import { useAnnouncer } from '@/shared/composables/useAnnouncer'
 import { useLoader } from '@/shared/composables/useLoader'
 import { useFormat } from '@/shared/format/useFormat'
+import { useSessionStore } from '@/shared/session/sessionStore'
 import AppBreadcrumbs from '@/shared/ui/AppBreadcrumbs.vue'
 import LoadingState from '@/shared/ui/LoadingState.vue'
 import ProblemAlert from '@/shared/ui/ProblemAlert.vue'
@@ -43,6 +44,7 @@ const { t } = i18n
 const route = useRoute()
 const router = useRouter()
 const format = useFormat()
+const session = useSessionStore()
 const { message, announce } = useAnnouncer()
 const projectId = String(route.params.projectId)
 
@@ -113,6 +115,21 @@ async function choose(value: string): Promise<void> {
 function agentName(item: Pick<ProjectAgent, 'agent' | 'name'>): string {
   const key = `agents.${item.agent}`
   return i18n.te(key) ? t(key) : item.name
+}
+
+/** Canvas "Agentes e skills": each agent button carries a decorative initials badge. */
+const AGENT_BADGES: Record<string, { initials: string; color: string }> = {
+  'requirements-agent': { initials: 'RQ', color: '#2563EB' },
+  'architect-agent': { initials: 'AR', color: '#7C3AED' },
+  'dba-agent': { initials: 'DB', color: '#0B766B' },
+  'designer-agent': { initials: 'DS', color: '#95581A' },
+  'developer-agent': { initials: 'DV', color: '#2563EB' },
+  'qa-agent': { initials: 'QA', color: '#0B766B' },
+  'security-agent': { initials: 'SG', color: '#B91C1C' },
+}
+
+function agentBadge(id: string): { initials: string; color: string } {
+  return AGENT_BADGES[id] ?? { initials: id.slice(0, 2).toUpperCase(), color: '#4F46E5' }
 }
 
 function catalogSkill(id: string): Skill | undefined {
@@ -244,366 +261,618 @@ async function reload(): Promise<void> {
 </script>
 
 <template>
-  <v-container max-width="1200">
-    <LoadingState v-if="loader.loading.value && !project" />
-    <template v-else-if="loader.error.value && !project">
-      <h1 class="text-h4 mb-4">{{ $t('pages.agents.title') }}</h1>
-      <v-alert v-if="notFound" type="warning" variant="tonal" role="alert">
-        <p>{{ $t('problems.not-found') }}</p>
-        <router-link :to="{ name: ROUTE_NAMES.projects }">{{
-          $t('common.goProjects')
-        }}</router-link>
-      </v-alert>
-      <ProblemAlert v-else :error="loader.error.value" retry @retry="loader.run" />
-    </template>
+  <!-- Layout: canvas "Agentes e skills" (Agentes.dc.html). -->
+  <LoadingState v-if="loader.loading.value && !project" />
+  <template v-else-if="loader.error.value && !project">
+    <h1>{{ $t('pages.agents.title') }}</h1>
+    <v-alert v-if="notFound" type="warning" variant="tonal" role="alert">
+      <p>{{ $t('problems.not-found') }}</p>
+      <router-link :to="{ name: ROUTE_NAMES.projects }">{{ $t('common.goProjects') }}</router-link>
+    </v-alert>
+    <ProblemAlert v-else :error="loader.error.value" retry @retry="loader.run" />
+  </template>
 
-    <template v-else-if="project">
-      <AppBreadcrumbs :items="breadcrumbs" />
-      <h1 class="text-h4 mb-1">{{ $t('pages.agents.title') }}</h1>
-      <p class="text-body-1 mb-4">{{ project.name }}</p>
-      <div role="status" class="sr-only">{{ message }}</div>
-      <p v-if="!isLead" class="text-body-2 mb-4" data-testid="read-only-notice">
-        {{ $t('agentsPage.readOnly') }}
-      </p>
+  <template v-else-if="project">
+    <AppBreadcrumbs :items="breadcrumbs" />
+    <div class="page-head">
+      <div>
+        <h1>{{ $t('pages.agents.title') }}</h1>
+        <p class="t2 page-description">{{ project.name }} · {{ $t('agentsPage.description') }}</p>
+      </div>
+      <router-link
+        v-if="session.isAdministrator"
+        class="btn"
+        :to="{ name: ROUTE_NAMES.settings, params: { tab: 'skills' } }"
+      >
+        {{ $t('settings.tabs.skills') }}
+      </router-link>
+    </div>
+    <div role="status" class="sr-only">{{ message }}</div>
+    <p v-if="!isLead" class="note" data-testid="read-only-notice">
+      {{ $t('agentsPage.readOnly') }}
+    </p>
 
-      <div class="agents-layout">
-        <!-- ESP-22 section 8: the agent list is a group of buttons with the pressed state exposed. -->
-        <nav :aria-label="$t('agentsPage.listLabel')">
-          <ul class="plain-list">
-            <li v-for="item in agents" :key="item.agent" class="mb-2">
-              <v-btn
-                block
-                variant="outlined"
-                class="agent-button"
-                :aria-pressed="item.agent === agentId ? 'true' : 'false'"
-                :class="{ 'agent-button--selected': item.agent === agentId }"
-                :data-testid="`agent-${item.agent}`"
-                @click="choose(item.agent)"
-              >
-                <span class="text-left">
-                  <span class="d-block font-weight-medium">{{ agentName(item) }}</span>
-                  <span class="d-block text-body-2">
-                    {{ item.stages.map(stageName).join(', ') }}
-                  </span>
-                  <span v-if="hasSkillUpdate(item)" class="d-block text-body-2 font-weight-bold">
-                    {{ $t('agentsPage.skillUpdateMarker') }}
-                  </span>
-                </span>
-              </v-btn>
-            </li>
-          </ul>
-        </nav>
-
-        <section aria-labelledby="agent-heading">
-          <LoadingState v-if="agentLoader.loading.value && !agent" />
-          <ProblemAlert
-            v-else-if="agentLoader.error.value && !agent"
-            :error="agentLoader.error.value"
-            retry
-            @retry="agentLoader.run"
-          />
-          <template v-else-if="agent && configuration">
-            <h2 id="agent-heading" ref="detailHeading" tabindex="-1" class="text-h5 mb-2">
-              {{ agentName(agent) }}
-            </h2>
-            <!-- CA-22-13: configuration version and instructions version apart. -->
-            <dl class="summary-list mb-6" data-testid="agent-header">
-              <dt>{{ $t('agentsPage.configurationLabel') }}</dt>
-              <dd>{{ $t('agentsPage.configurationVersion', { n: configuration.version }) }}</dd>
-              <dt>{{ $t('agentsPage.instructionsLabel') }}</dt>
-              <dd>
-                {{
-                  $t('agentsPage.instructionsVersion', { v: configuration.instructions_version })
-                }}
-              </dd>
-              <template v-if="agent.role">
-                <dt>{{ $t('agentsPage.role') }}</dt>
-                <dd>{{ agent.role }}</dd>
-              </template>
-              <dt>{{ $t('agentsPage.stages') }}</dt>
-              <dd>{{ agent.stages.map(stageName).join(', ') }}</dd>
-              <template v-for="(pair, stage) in agent.models_by_stage ?? {}" :key="stage">
-                <dt>{{ $t('agentsPage.modelIn', { stage: stageName(String(stage)) }) }}</dt>
-                <dd v-if="pair">
-                  {{ $t('waves.roles.reasoning') }}: {{ modelText(pair.reasoning) }} ·
-                  {{ $t('waves.roles.execution') }}: {{ modelText(pair.execution) }}
-                </dd>
-              </template>
-              <template v-if="configuration.tools.write_file?.length">
-                <dt>{{ $t('agentsPage.writesTo') }}</dt>
-                <dd class="monospace">{{ configuration.tools.write_file.join(', ') }}</dd>
-              </template>
-              <template v-if="agent.delivery?.length">
-                <dt>{{ $t('agentsPage.delivers') }}</dt>
-                <dd>{{ agent.delivery.join(', ') }}</dd>
-              </template>
-              <dt>{{ $t('agentsPage.lastChange') }}</dt>
-              <dd>
-                {{ format.dateTime(configuration.created_at) }}
-                <template v-if="configuration.created_by">
-                  · {{ configuration.created_by.name }}</template
-                >
-              </dd>
-            </dl>
-            <v-btn
-              v-if="isLead && !editing"
-              color="primary"
-              variant="tonal"
-              class="mb-6"
-              :disabled="saving"
-              data-testid="edit-agent"
-              @click="editing = true"
+    <div class="agents-layout">
+      <!-- ESP-22 section 8: the agent list is a group of buttons with the pressed state exposed. -->
+      <nav class="card agent-list" :aria-label="$t('agentsPage.listLabel')">
+        <ul class="plain-list">
+          <li v-for="item in agents" :key="item.agent">
+            <button
+              type="button"
+              class="agb"
+              :class="{ on: item.agent === agentId }"
+              :aria-pressed="item.agent === agentId ? 'true' : 'false'"
+              :data-testid="`agent-${item.agent}`"
+              @click="choose(item.agent)"
             >
-              {{ $t('agentsPage.edit.action') }}
-            </v-btn>
-            <section v-if="editing" aria-labelledby="edit-heading" class="mb-6">
-              <h3 id="edit-heading" class="text-h6 mb-2">{{ $t('agentsPage.edit.title') }}</h3>
-              <AgentConfigurationEditor
-                :key="configuration.version"
-                :agent="agent"
-                :submit="saveEdition"
-                @cancel="editing = false"
-                @dirty="editorDirty = $event"
-              />
-            </section>
+              <span
+                class="av agb-badge"
+                :style="{ background: agentBadge(item.agent).color }"
+                aria-hidden="true"
+                >{{ agentBadge(item.agent).initials }}</span
+              >
+              <span class="agb-text">
+                <span class="agb-name">{{ agentName(item) }}</span>
+                <span class="t2 agb-stages">{{ item.stages.map(stageName).join(', ') }}</span>
+                <span v-if="hasSkillUpdate(item)" class="agb-update">
+                  {{ $t('agentsPage.skillUpdateMarker') }}
+                </span>
+              </span>
+            </button>
+          </li>
+        </ul>
+      </nav>
 
-            <section aria-labelledby="skills-heading" class="mb-6">
-              <div class="d-flex flex-wrap align-center ga-2 mb-2">
-                <h3 id="skills-heading" class="text-h6">{{ $t('agentsPage.skills.title') }}</h3>
-                <v-spacer />
-                <v-btn
-                  v-if="isLead"
-                  color="primary"
-                  variant="tonal"
-                  :disabled="saving"
-                  @click="pickerOpen = true"
-                >
-                  {{ $t('agentsPage.skills.associate') }}
-                </v-btn>
+      <section class="agent-detail" aria-labelledby="agent-heading">
+        <LoadingState v-if="agentLoader.loading.value && !agent" />
+        <ProblemAlert
+          v-else-if="agentLoader.error.value && !agent"
+          :error="agentLoader.error.value"
+          retry
+          @retry="agentLoader.run"
+        />
+        <template v-else-if="agent && configuration">
+          <!-- CA-22-13: configuration version and instructions version apart. -->
+          <div class="card detail-card" data-testid="agent-header">
+            <div class="detail-head">
+              <h2 id="agent-heading" ref="detailHeading" tabindex="-1" class="detail-title">
+                {{ agentName(agent) }}
+              </h2>
+              <span class="detail-chips">
+                <span class="chip mute">
+                  {{ $t('agentsPage.configurationVersion', { n: configuration.version }) }}
+                </span>
+                <span class="chip mute">
+                  {{
+                    $t('agentsPage.instructionsVersion', { v: configuration.instructions_version })
+                  }}
+                </span>
+              </span>
+            </div>
+            <p v-if="agent.role" class="detail-role">
+              <span class="sr-only">{{ $t('agentsPage.role') }}: </span>{{ agent.role }}
+            </p>
+            <div class="kv-grid">
+              <div class="kv">
+                <span class="t2">{{ $t('agentsPage.stages') }}</span>
+                <span class="kv-value">{{ agent.stages.map(stageName).join(', ') }}</span>
               </div>
-              <p class="text-body-2 text-medium-emphasis mb-2">
-                {{ $t('agentsPage.skills.loadingRule') }}
+              <template v-for="(pair, stage) in agent.models_by_stage ?? {}" :key="stage">
+                <div v-if="pair" class="kv">
+                  <span class="t2">
+                    {{ $t('agentsPage.modelIn', { stage: stageName(String(stage)) }) }}
+                  </span>
+                  <span class="kv-value">
+                    {{ $t('waves.roles.reasoning') }}: {{ modelText(pair.reasoning) }} ·
+                    {{ $t('waves.roles.execution') }}: {{ modelText(pair.execution) }}
+                  </span>
+                </div>
+              </template>
+              <div v-if="configuration.tools.write_file?.length" class="kv">
+                <span class="t2">{{ $t('agentsPage.writesTo') }}</span>
+                <span class="mono kv-value">{{ configuration.tools.write_file.join(', ') }}</span>
+              </div>
+              <div v-if="agent.delivery?.length" class="kv">
+                <span class="t2">{{ $t('agentsPage.delivers') }}</span>
+                <span class="kv-value">{{ agent.delivery.join(', ') }}</span>
+              </div>
+              <div class="kv">
+                <span class="t2">{{ $t('agentsPage.lastChange') }}</span>
+                <span class="kv-value">
+                  {{ format.dateTime(configuration.created_at) }}
+                  <template v-if="configuration.created_by">
+                    · {{ configuration.created_by.name }}</template
+                  >
+                </span>
+              </div>
+            </div>
+            <div v-if="configuration.adjustment_instructions">
+              <span class="lb">{{ $t('agentsPage.edit.instructionsTitle') }}</span>
+              <p class="adjustment-text" data-testid="agent-adjustment-text">
+                {{ configuration.adjustment_instructions }}
               </p>
-              <ProblemAlert v-if="saveFailure" :error="saveFailure" class="mb-2" />
-              <v-btn
+            </div>
+            <div v-if="isLead && !editing">
+              <button
+                type="button"
+                class="btn"
+                :disabled="saving"
+                data-testid="edit-agent"
+                @click="editing = true"
+              >
+                {{ $t('agentsPage.edit.action') }}
+              </button>
+            </div>
+          </div>
+
+          <section v-if="editing" class="card panel" aria-labelledby="edit-heading">
+            <h2 id="edit-heading" class="panel-title">{{ $t('agentsPage.edit.title') }}</h2>
+            <AgentConfigurationEditor
+              :key="configuration.version"
+              :agent="agent"
+              :submit="saveEdition"
+              @cancel="editing = false"
+              @dirty="editorDirty = $event"
+            />
+          </section>
+
+          <div class="card-pair">
+            <section class="card panel skills-card" aria-labelledby="skills-heading">
+              <h2 id="skills-heading" class="panel-title">{{ $t('agentsPage.skills.title') }}</h2>
+              <p class="t2 panel-help">{{ $t('agentsPage.skills.loadingRule') }}</p>
+              <ProblemAlert v-if="saveFailure" :error="saveFailure" class="panel-alert" />
+              <button
                 v-if="conflict"
-                variant="outlined"
-                size="small"
-                class="mb-2"
+                type="button"
+                class="btn panel-reload"
                 data-testid="reload-agent"
                 @click="reload"
               >
                 {{ $t('agentsPage.reload') }}
-              </v-btn>
-              <p v-if="configuration.skills.length === 0" class="text-body-2">
+              </button>
+              <p v-if="configuration.skills.length === 0" class="kv">
                 {{ $t('agentsPage.skills.none') }}
               </p>
-              <div v-else class="table-scroll">
-                <v-table density="comfortable" data-testid="agent-skills">
-                  <thead>
-                    <tr>
-                      <th scope="col">{{ $t('agentsPage.skills.name') }}</th>
-                      <th scope="col">{{ $t('agentsPage.skills.originLabel') }}</th>
-                      <th scope="col">{{ $t('agentsPage.skills.pinned') }}</th>
-                      <th scope="col">{{ $t('agentsPage.skills.estimatedTokens') }}</th>
-                      <th v-if="isLead" scope="col">
-                        <span class="sr-only">{{ $t('common.actions') }}</span>
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr
-                      v-for="item in configuration.skills"
-                      :key="item.skill"
-                      :data-testid="`pinned-${item.skill}`"
+              <ul v-else class="plain-list" data-testid="agent-skills">
+                <li
+                  v-for="item in configuration.skills"
+                  :key="item.skill"
+                  class="kv skill-row"
+                  :data-testid="`pinned-${item.skill}`"
+                >
+                  <span class="skill-main">
+                    <button type="button" class="skill-name" @click="openDetail(item.skill)">
+                      {{ catalogSkill(item.skill)?.name ?? item.skill }}
+                    </button>
+                    <span class="t2 skill-meta">
+                      {{ $t('agentsPage.skills.pinned') }}:
+                      {{ $t('agentsPage.skills.versionNumber', { n: item.version }) }} ·
+                      {{
+                        $t('agentsPage.skills.tokens', {
+                          n: format.integer(catalogSkill(item.skill)?.estimated_tokens ?? 0),
+                        })
+                      }}
+                    </span>
+                    <span v-if="item.available_version" class="skill-update">
+                      {{ $t('agentsPage.skills.versionAvailable', { n: item.available_version }) }}
+                    </span>
+                  </span>
+                  <span class="skill-side">
+                    <span
+                      v-if="catalogSkill(item.skill)"
+                      class="chip"
+                      :class="catalogSkill(item.skill)?.origin === 'organization' ? 'vio' : 'mute'"
                     >
-                      <td>
-                        <v-btn
-                          variant="text"
-                          size="small"
-                          class="px-1"
-                          @click="openDetail(item.skill)"
-                        >
-                          {{ catalogSkill(item.skill)?.name ?? item.skill }}
-                        </v-btn>
-                      </td>
-                      <td>
-                        <template v-if="catalogSkill(item.skill)">
-                          {{ $t(`agentsPage.skills.origin.${catalogSkill(item.skill)?.origin}`) }}
-                        </template>
-                      </td>
-                      <td>
-                        {{ $t('agentsPage.skills.versionNumber', { n: item.version }) }}
-                        <span v-if="item.available_version" class="d-block font-weight-bold">
-                          {{
-                            $t('agentsPage.skills.versionAvailable', { n: item.available_version })
-                          }}
-                        </span>
-                      </td>
-                      <td>{{ format.integer(catalogSkill(item.skill)?.estimated_tokens ?? 0) }}</td>
-                      <td v-if="isLead">
-                        <div class="d-flex flex-wrap ga-1">
-                          <v-btn
-                            v-if="item.available_version"
-                            variant="tonal"
-                            size="small"
-                            :disabled="saving"
-                            @click="askAccept(item)"
-                          >
-                            {{ $t('agentsPage.skills.accept') }}
-                          </v-btn>
-                          <v-btn
-                            variant="text"
-                            size="small"
-                            color="error"
-                            :disabled="saving"
-                            :aria-label="
-                              $t('agentsPage.skills.removeNamed', {
-                                skill: catalogSkill(item.skill)?.name ?? item.skill,
-                              })
-                            "
-                            @click="remove(item)"
-                          >
-                            {{ $t('common.remove') }}
-                          </v-btn>
-                        </div>
-                      </td>
-                    </tr>
-                  </tbody>
-                </v-table>
-              </div>
+                      {{ $t(`agentsPage.skills.origin.${catalogSkill(item.skill)?.origin}`) }}
+                    </span>
+                    <template v-if="isLead">
+                      <button
+                        v-if="item.available_version"
+                        type="button"
+                        class="btn"
+                        :disabled="saving"
+                        @click="askAccept(item)"
+                      >
+                        {{ $t('agentsPage.skills.accept') }}
+                      </button>
+                      <button
+                        type="button"
+                        class="btn btn-d"
+                        :disabled="saving"
+                        :aria-label="
+                          $t('agentsPage.skills.removeNamed', {
+                            skill: catalogSkill(item.skill)?.name ?? item.skill,
+                          })
+                        "
+                        @click="remove(item)"
+                      >
+                        {{ $t('common.remove') }}
+                      </button>
+                    </template>
+                  </span>
+                </li>
+              </ul>
+              <button
+                v-if="isLead"
+                type="button"
+                class="btn panel-action"
+                :disabled="saving"
+                @click="pickerOpen = true"
+              >
+                {{ $t('agentsPage.skills.associate') }}
+              </button>
             </section>
 
-            <section aria-labelledby="tools-heading" class="mb-6">
-              <template v-if="configuration.adjustment_instructions">
-                <h3 class="text-h6 mb-2">{{ $t('agentsPage.edit.instructionsTitle') }}</h3>
-                <p class="adjustment-text text-body-2 mb-4" data-testid="agent-adjustment-text">
-                  {{ configuration.adjustment_instructions }}
-                </p>
-              </template>
-              <h3 id="tools-heading" class="text-h6 mb-2">{{ $t('agentsPage.tools.title') }}</h3>
-              <p v-if="toolLines(configuration.tools).length === 0" class="text-body-2">
+            <section class="card panel tools-card" aria-labelledby="tools-heading">
+              <h2 id="tools-heading" class="panel-title">{{ $t('agentsPage.tools.title') }}</h2>
+              <p class="t2 panel-help">{{ $t('agentsPage.tools.help') }}</p>
+              <p v-if="toolLines(configuration.tools).length === 0" class="kv">
                 {{ $t('agentsPage.tools.none') }}
               </p>
-              <dl v-else class="summary-list" data-testid="agent-tools">
-                <template v-for="line in toolLines(configuration.tools)" :key="line.key">
-                  <dt>{{ $t(`agentsPage.tools.${line.key}`) }}</dt>
+              <dl v-else class="tool-list" data-testid="agent-tools">
+                <div v-for="line in toolLines(configuration.tools)" :key="line.key" class="kv">
+                  <dt>
+                    {{ $t(`agentsPage.tools.${line.key}`) }}
+                    <span class="mono t2 tool-value">{{ line.value }}</span>
+                  </dt>
                   <dd>
-                    <span class="monospace">{{ line.value }}</span> ·
-                    {{ $t('agentsPage.tools.allowed') }}
+                    <span class="chip ok">{{ $t('agentsPage.tools.allowed') }}</span>
                   </dd>
-                </template>
+                </div>
               </dl>
               <template v-if="agent.limits?.length">
-                <h4 class="text-subtitle-1 font-weight-medium mt-4 mb-1">
-                  {{ $t('agentsPage.limits') }}
-                </h4>
-                <ul class="ml-4">
-                  <li v-for="(limit, index) in agent.limits" :key="index" class="text-body-2">
-                    {{ limit }}
-                  </li>
+                <h3 class="lb sub-label">{{ $t('agentsPage.limits') }}</h3>
+                <ul class="bullet-list">
+                  <li v-for="(limit, index) in agent.limits" :key="index">{{ limit }}</li>
                 </ul>
               </template>
-              <h4 class="text-subtitle-1 font-weight-medium mt-4 mb-1">
-                {{ $t('agentsPage.outputCriteria') }}
-              </h4>
-              <p v-if="configuration.output_criteria.length === 0" class="text-body-2">
+              <h3 class="lb sub-label">{{ $t('agentsPage.outputCriteria') }}</h3>
+              <p v-if="configuration.output_criteria.length === 0" class="sub-text">
                 {{ $t('agentsPage.noOutputCriteria') }}
               </p>
-              <ul v-else class="ml-4">
-                <li
-                  v-for="check in configuration.output_criteria"
-                  :key="check"
-                  class="text-body-2 monospace"
-                >
+              <ul v-else class="bullet-list">
+                <li v-for="check in configuration.output_criteria" :key="check" class="mono">
                   {{ check }}
                 </li>
               </ul>
             </section>
+          </div>
 
-            <AgentHistory
-              :project-id="projectId"
-              :agent="agent.agent"
-              :revision="historyRevision"
-            />
-          </template>
-        </section>
-      </div>
+          <AgentHistory :project-id="projectId" :agent="agent.agent" :revision="historyRevision" />
+        </template>
+      </section>
+    </div>
 
-      <SkillPickerDialog
-        v-if="agent && configuration"
-        v-model="pickerOpen"
-        :agent="agent.agent"
-        :agent-name="agentName(agent)"
-        :pinned="configuration.skills"
-        :list="agentsApi.listSkills"
-        :submit="associate"
-      />
-      <SkillDetailDialog v-model="detailOpen" :skill-id="detailSkill" :read="agentsApi.getSkill" />
-      <v-dialog v-model="acceptOpen" max-width="480" aria-labelledby="accept-skill-title">
-        <v-card data-testid="accept-skill-dialog">
-          <v-card-title>
-            <h2 id="accept-skill-title" class="text-h6">
-              {{
-                $t('agentsPage.skills.acceptTitle', {
-                  skill: catalogSkill(acceptTarget?.skill ?? '')?.name ?? acceptTarget?.skill,
-                })
-              }}
-            </h2>
-          </v-card-title>
-          <v-card-text>
-            <p>
-              {{
-                $t('agentsPage.skills.acceptCompare', {
-                  current: acceptTarget?.version,
-                  next: acceptTarget?.available_version,
-                })
-              }}
-            </p>
-            <p class="text-body-2 mt-2">{{ $t('agentsPage.skills.acceptRule') }}</p>
-          </v-card-text>
-          <v-card-actions>
-            <v-spacer />
-            <v-btn variant="text" :disabled="saving" @click="acceptOpen = false">
-              {{ $t('common.cancel') }}
-            </v-btn>
-            <v-btn color="primary" variant="flat" :loading="saving" @click="confirmAccept">
-              {{ $t('agentsPage.skills.accept') }}
-            </v-btn>
-          </v-card-actions>
-        </v-card>
-      </v-dialog>
-    </template>
-  </v-container>
+    <SkillPickerDialog
+      v-if="agent && configuration"
+      v-model="pickerOpen"
+      :agent="agent.agent"
+      :agent-name="agentName(agent)"
+      :pinned="configuration.skills"
+      :list="agentsApi.listSkills"
+      :submit="associate"
+    />
+    <SkillDetailDialog v-model="detailOpen" :skill-id="detailSkill" :read="agentsApi.getSkill" />
+    <v-dialog v-model="acceptOpen" max-width="480" aria-labelledby="accept-skill-title">
+      <v-card data-testid="accept-skill-dialog">
+        <div class="dialog-body">
+          <h2 id="accept-skill-title">
+            {{
+              $t('agentsPage.skills.acceptTitle', {
+                skill: catalogSkill(acceptTarget?.skill ?? '')?.name ?? acceptTarget?.skill,
+              })
+            }}
+          </h2>
+          <p>
+            {{
+              $t('agentsPage.skills.acceptCompare', {
+                current: acceptTarget?.version,
+                next: acceptTarget?.available_version,
+              })
+            }}
+          </p>
+          <p class="t2">{{ $t('agentsPage.skills.acceptRule') }}</p>
+        </div>
+        <div class="dialog-actions">
+          <button type="button" class="btn" :disabled="saving" @click="acceptOpen = false">
+            {{ $t('common.cancel') }}
+          </button>
+          <button
+            type="button"
+            class="btn btn-p"
+            :disabled="saving"
+            :aria-busy="saving ? 'true' : undefined"
+            @click="confirmAccept"
+          >
+            {{ $t('agentsPage.skills.accept') }}
+          </button>
+        </div>
+      </v-card>
+    </v-dialog>
+  </template>
 </template>
 
 <style scoped>
+.page-head {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 16px;
+}
+
+.page-description {
+  margin: 4px 0 0;
+}
+
+.note {
+  margin: 0;
+}
+
 .agents-layout {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 20px;
+  align-items: flex-start;
+}
+
+.agent-list {
+  flex: 1 1 260px;
+  min-width: 0;
+  padding: 12px;
+}
+
+.plain-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.agb {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 56px;
+  padding: 10px 12px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: transparent;
+  color: #f1f3ff;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  box-sizing: border-box;
+}
+
+.agb:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.agb.on {
+  background: rgba(99, 102, 241, 0.16);
+  border-color: rgba(129, 140, 248, 0.45);
+}
+
+.agb-badge {
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+}
+
+.agb-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.agb-name {
+  font-weight: 600;
+}
+
+.agb-stages {
+  font-size: 12px;
+}
+
+.agb-update {
+  font-size: 12px;
+  font-weight: 700;
+  color: #fcd34d;
+}
+
+.agent-detail {
+  flex: 3 1 560px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.detail-card {
+  padding: 22px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.detail-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.detail-title {
+  font-size: 20px;
+}
+
+.detail-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.detail-role {
+  margin: 0;
+}
+
+.kv-grid {
   display: grid;
-  gap: 2rem;
-  grid-template-columns: minmax(0, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 0 24px;
 }
 
-@media (min-width: 960px) {
-  .agents-layout {
-    grid-template-columns: minmax(220px, 1fr) minmax(0, 3fr);
-  }
-}
-
-.agent-button {
-  height: auto !important;
-  justify-content: flex-start;
-  padding: 0.5rem 0.75rem;
-  text-transform: none;
-  white-space: normal;
+.kv-value {
+  text-align: right;
 }
 
 .adjustment-text {
+  margin: 4px 0 0;
   white-space: pre-wrap;
 }
 
-.agent-button--selected {
-  border-width: 2px;
-  font-weight: 600;
+.card-pair {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 20px;
+  align-items: flex-start;
+}
+
+.panel {
+  padding: 18px 22px;
+}
+
+.skills-card {
+  flex: 1 1 320px;
+  min-width: 0;
+}
+
+.tools-card {
+  flex: 1 1 280px;
+  min-width: 0;
+}
+
+.panel-title {
+  margin-bottom: 4px;
+}
+
+.panel-help {
+  margin: 0 0 6px;
+  font-size: 13px;
+}
+
+.panel-alert,
+.panel-reload {
+  margin-bottom: 8px;
+}
+
+.panel-action {
+  margin-top: 12px;
+}
+
+p.kv {
+  margin: 0;
+}
+
+.skill-row {
+  align-items: center;
+}
+
+.skill-main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.skill-name {
+  min-height: 32px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #f1f3ff;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-color: rgba(167, 139, 250, 0.55);
+  text-underline-offset: 3px;
+}
+
+.skill-name:hover {
+  color: #ffffff;
+}
+
+.skill-meta {
+  font-size: 12px;
+}
+
+.skill-update {
+  font-size: 12px;
+  font-weight: 700;
+  color: #fcd34d;
+}
+
+.skill-side {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.tool-list {
+  margin: 0;
+}
+
+.tool-list dt {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.tool-list dd {
+  margin: 0;
+}
+
+.tool-value {
+  word-break: break-all;
+}
+
+.sub-label {
+  display: block;
+  margin: 14px 0 0;
+}
+
+.sub-text {
+  margin: 4px 0 0;
+  font-size: 13px;
+}
+
+.bullet-list {
+  margin: 4px 0 0;
+  padding-left: 18px;
+  font-size: 13px;
+}
+
+.dialog-body {
+  padding: 22px 24px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.dialog-body p {
+  margin: 0;
+}
+
+.dialog-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 24px 22px;
 }
 </style>

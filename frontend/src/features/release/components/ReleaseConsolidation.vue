@@ -48,143 +48,149 @@ function findingLine(finding: FindingSummary): string {
 </script>
 
 <template>
-  <div>
-    <section aria-labelledby="release-gates-heading" class="mb-6">
-      <h3 id="release-gates-heading" class="text-subtitle-1 font-weight-medium mb-2">
-        {{ $t('release.consolidation.gates') }}
-      </h3>
-      <v-table density="compact" data-testid="release-gates">
-        <caption class="sr-only">
-          {{
-            $t('release.consolidation.gates')
-          }}
-        </caption>
-        <thead>
-          <tr>
-            <th scope="col">{{ $t('release.consolidation.gate') }}</th>
-            <th scope="col">{{ $t('release.consolidation.state') }}</th>
-            <th scope="col">{{ $t('release.consolidation.decidedBy') }}</th>
-            <th scope="col">{{ $t('release.consolidation.when') }}</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="gate in summary.gates" :key="gate.gate">
-            <th scope="row" class="font-weight-regular">{{ gateName(gate.gate) }}</th>
-            <td>
-              <StateLabel v-if="gate.state" machine="gate" :state="gate.state" />
-              <span v-else>{{ $t('release.consolidation.notEvaluated') }}</span>
-            </td>
-            <td>{{ gate.decision ? who(gate.decision.record) : '' }}</td>
-            <td>{{ gate.decision ? format.dateTime(gate.decision.record.when) : '' }}</td>
-          </tr>
-        </tbody>
-      </v-table>
+  <!-- Layout: canvas EtapaRelease, "O que a Release consolida" (cards with .tbl and .li rows). -->
+  <div class="consolidation">
+    <section aria-labelledby="release-gates-heading" class="card rc-card">
+      <h3 id="release-gates-heading">{{ $t('release.consolidation.gates') }}</h3>
+      <div class="table-scroll">
+        <table class="tbl" data-testid="release-gates">
+          <caption class="sr-only">
+            {{
+              $t('release.consolidation.gates')
+            }}
+          </caption>
+          <thead>
+            <tr>
+              <th scope="col">{{ $t('release.consolidation.gate') }}</th>
+              <th scope="col">{{ $t('release.consolidation.state') }}</th>
+              <th scope="col">{{ $t('release.consolidation.decidedBy') }}</th>
+              <th scope="col">{{ $t('release.consolidation.when') }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="gate in summary.gates" :key="gate.gate">
+              <th scope="row" class="row-head">{{ gateName(gate.gate) }}</th>
+              <td>
+                <StateLabel v-if="gate.state" machine="gate" :state="gate.state" />
+                <span v-else class="chip mute">{{ $t('release.consolidation.notEvaluated') }}</span>
+              </td>
+              <td>{{ gate.decision ? who(gate.decision.record) : '' }}</td>
+              <td>{{ gate.decision ? format.dateTime(gate.decision.record.when) : '' }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
     </section>
 
-    <section aria-labelledby="release-tests-heading" class="mb-6">
-      <h3 id="release-tests-heading" class="text-subtitle-1 font-weight-medium mb-2">
-        {{ $t('release.consolidation.tests') }}
-      </h3>
-      <p v-if="summary.tests" class="text-body-2" data-testid="release-tests">
-        {{
-          $t('release.consolidation.testCounts', {
-            total: format.integer(summary.tests.ct_total ?? 0),
-            passed: format.integer(summary.tests.passed ?? 0),
-            failed: format.integer(summary.tests.failed ?? 0),
-          })
-        }}
+    <section aria-labelledby="release-tests-heading" class="card rc-card">
+      <h3 id="release-tests-heading">{{ $t('release.consolidation.tests') }}</h3>
+      <p v-if="summary.tests" class="li" data-testid="release-tests">
+        <span class="rc-text">
+          {{
+            $t('release.consolidation.testCounts', {
+              total: format.integer(summary.tests.ct_total ?? 0),
+              passed: format.integer(summary.tests.passed ?? 0),
+              failed: format.integer(summary.tests.failed ?? 0),
+            })
+          }}
+        </span>
         <template v-if="summary.tests.report">
-          ·
+          <span class="sr-only">·</span>
           <router-link
             :to="{
               name: ROUTE_NAMES.artifact,
               params: { projectId, artifactId: summary.tests.report },
             }"
-            class="monospace"
+            class="chip mute mono"
             >{{ summary.tests.report }}</router-link
           >
         </template>
       </p>
-      <p v-else class="text-body-2">{{ $t('release.consolidation.noTests') }}</p>
-      <p class="text-body-2 mt-1" data-testid="release-security">
-        {{ $t('release.consolidation.security') }}:
-        {{
-          security?.state
-            ? $t(`states.gate.${security.state}`)
-            : $t('release.consolidation.notEvaluated')
-        }}
+      <p v-else class="li t2">{{ $t('release.consolidation.noTests') }}</p>
+      <p class="li" data-testid="release-security">
+        <span class="rc-text">{{ $t('release.consolidation.security') }}:</span>
+        <StateLabel v-if="security?.state" machine="gate" :state="security.state" />
+        <span v-else class="chip mute">{{ $t('release.consolidation.notEvaluated') }}</span>
       </p>
     </section>
 
-    <section aria-labelledby="release-findings-heading" class="mb-6">
-      <h3 id="release-findings-heading" class="text-subtitle-1 font-weight-medium mb-2">
-        {{ $t('release.consolidation.openFindings') }}
-      </h3>
-      <p v-if="summary.open_findings.length === 0" class="text-body-2">
+    <section aria-labelledby="release-findings-heading" class="card rc-card">
+      <h3 id="release-findings-heading">{{ $t('release.consolidation.openFindings') }}</h3>
+      <p v-if="summary.open_findings.length === 0" class="li t2">
         {{ $t('release.consolidation.noOpenFindings') }}
       </p>
       <template v-else>
-        <p v-if="findings.blocking.length" class="text-body-2 font-weight-medium">
+        <p v-if="findings.blocking.length" class="lb rc-sub">
           {{ $t('release.consolidation.blockingFindings') }}
         </p>
-        <ul class="plain-list mb-2" data-testid="release-blocking-findings">
-          <li v-for="finding in findings.blocking" :key="finding.id" class="text-body-2 mb-1">
+        <ul class="plain-list rc-list" data-testid="release-blocking-findings">
+          <li v-for="finding in findings.blocking" :key="finding.id" class="li">
             <router-link
               :to="{ name: ROUTE_NAMES.finding, params: { projectId, findingId: finding.id } }"
-              class="monospace"
+              class="chip mute mono"
               >{{ finding.id }}</router-link
             >
-            · {{ findingLine(finding) }} · {{ $t('projects.stage.blocking') }}
+            <span class="rc-text">· {{ findingLine(finding) }}</span>
+            <span class="chip crit">{{ $t('projects.stage.blocking') }}</span>
           </li>
         </ul>
-        <p v-if="findings.other.length" class="text-body-2 font-weight-medium">
+        <p v-if="findings.other.length" class="lb rc-sub">
           {{ $t('release.consolidation.nonBlockingFindings') }}
         </p>
-        <ul class="plain-list" data-testid="release-other-findings">
-          <li v-for="finding in findings.other" :key="finding.id" class="text-body-2 mb-1">
+        <ul class="plain-list rc-list" data-testid="release-other-findings">
+          <li v-for="finding in findings.other" :key="finding.id" class="li">
             <router-link
               :to="{ name: ROUTE_NAMES.finding, params: { projectId, findingId: finding.id } }"
-              class="monospace"
+              class="chip mute mono"
               >{{ finding.id }}</router-link
             >
-            · {{ findingLine(finding) }}
+            <span class="rc-text">· {{ findingLine(finding) }}</span>
           </li>
         </ul>
       </template>
     </section>
 
     <!-- US-33 CA-4, CA-17-3: each accepted risk with who, when, justification and validity. -->
-    <section aria-labelledby="release-risks-heading" class="mb-6">
-      <h3 id="release-risks-heading" class="text-subtitle-1 font-weight-medium mb-2">
-        {{ $t('release.consolidation.acceptedRisks') }}
-      </h3>
-      <p v-if="summary.accepted_risks.length === 0" class="text-body-2">
+    <section aria-labelledby="release-risks-heading" class="card rc-card">
+      <h3 id="release-risks-heading">{{ $t('release.consolidation.acceptedRisks') }}</h3>
+      <p v-if="summary.accepted_risks.length === 0" class="li t2">
         {{ $t('release.consolidation.noAcceptedRisks') }}
       </p>
-      <ul v-else class="plain-list" data-testid="release-accepted-risks">
+      <ul v-else class="plain-list rc-list" data-testid="release-accepted-risks">
         <li
           v-for="risk in summary.accepted_risks"
           :key="risk.finding.id"
-          class="risk-item mb-3"
+          class="li risk-item"
           :data-testid="`accepted-risk-${risk.finding.id}`"
         >
-          <p class="text-body-2 font-weight-medium">
+          <p class="risk-line risk-title">
             <router-link
               :to="{
                 name: ROUTE_NAMES.finding,
                 params: { projectId, findingId: risk.finding.id },
               }"
-              class="monospace"
+              class="chip mute mono"
               >{{ risk.finding.id }}</router-link
             >
-            · {{ risk.finding.title }} · {{ $t(`findings.severity.${risk.finding.severity}`) }} ·
-            {{
-              risk.finding.acceptance_expired || acceptanceExpired(risk.acceptance, today)
-                ? $t('release.consolidation.acceptedExpired')
-                : $t('release.consolidation.accepted')
-            }}
+            <span>
+              · {{ risk.finding.title }} · {{ $t(`findings.severity.${risk.finding.severity}`) }} ·
+            </span>
+            <span
+              class="chip"
+              :class="
+                risk.finding.acceptance_expired || acceptanceExpired(risk.acceptance, today)
+                  ? 'crit'
+                  : 'warn'
+              "
+            >
+              {{
+                risk.finding.acceptance_expired || acceptanceExpired(risk.acceptance, today)
+                  ? $t('release.consolidation.acceptedExpired')
+                  : $t('release.consolidation.accepted')
+              }}
+            </span>
           </p>
-          <p class="text-body-2">
+          <p class="risk-line t2">
             {{
               $t('release.consolidation.acceptedBy', {
                 who: risk.acceptance.per.name,
@@ -200,28 +206,28 @@ function findingLine(finding: FindingSummary): string {
                 : $t('release.consolidation.noExpiry')
             }}
           </p>
-          <p class="text-body-2">
-            {{ $t('release.consolidation.justification') }}:
+          <p class="risk-line">
+            <span class="t2">{{ $t('release.consolidation.justification') }}:</span>
             <span class="pre-wrap">{{ risk.acceptance.justification }}</span>
           </p>
         </li>
       </ul>
     </section>
 
-    <section aria-labelledby="release-cost-heading" class="mb-6">
-      <h3 id="release-cost-heading" class="text-subtitle-1 font-weight-medium mb-2">
-        {{ $t('release.consolidation.cost') }}
-      </h3>
-      <p class="text-body-2" data-testid="release-cost">
-        {{ format.money(summary.cost_total.total) }}
+    <section aria-labelledby="release-cost-heading" class="card rc-card">
+      <h3 id="release-cost-heading">{{ $t('release.consolidation.cost') }}</h3>
+      <p class="li" data-testid="release-cost">
+        <span class="rc-text">{{ format.money(summary.cost_total.total) }}</span>
         <template v-if="budgetShare !== undefined">
-          ·
-          {{
-            $t('release.consolidation.costShare', {
-              percentage: format.percent(budgetShare),
-              limit: format.money(costs?.budget?.stop_limit),
-            })
-          }}
+          <span class="t2">
+            ·
+            {{
+              $t('release.consolidation.costShare', {
+                percentage: format.percent(budgetShare),
+                limit: format.money(costs?.budget?.stop_limit),
+              })
+            }}
+          </span>
         </template>
       </p>
     </section>
@@ -229,12 +235,66 @@ function findingLine(finding: FindingSummary): string {
 </template>
 
 <style scoped>
-.pre-wrap {
-  white-space: pre-wrap;
+.consolidation {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.rc-card {
+  padding: 18px 22px;
+}
+
+.rc-card h3 {
+  margin: 0 0 4px;
+  font-size: 18px;
+  line-height: 24px;
+  font-weight: 700;
+}
+
+.rc-card p.li {
+  margin: 0;
+}
+
+.rc-text {
+  flex: 1 1 240px;
+  min-width: 0;
+}
+
+.row-head {
+  font-weight: 400;
+  color: #f1f3ff;
+}
+
+.rc-sub {
+  margin: 10px 0 4px;
+}
+
+.rc-list {
+  margin: 0;
 }
 
 .risk-item {
-  border-left: 3px solid rgb(var(--v-theme-on-surface), 0.2);
-  padding-left: 0.75rem;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.risk-line {
+  margin: 0;
+  font-size: 13px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.risk-title {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.pre-wrap {
+  white-space: pre-wrap;
 }
 </style>

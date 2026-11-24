@@ -55,20 +55,19 @@ async function save(): Promise<void> {
 </script>
 
 <template>
-  <v-dialog v-model="open" max-width="520" :persistent="testing">
+  <!-- Look: canvas "Configurações" (Configuracoes.dc.html) primitives inside the dialog. -->
+  <v-dialog v-model="open" max-width="520" :persistent="testing" aria-labelledby="key-dialog-title">
     <v-card>
-      <v-card-title>
-        <h2 class="text-h6">
-          {{
-            isReplacement
-              ? $t('settings.providers.replaceKeyTitle', { provider: providerName })
-              : $t('settings.providers.addKeyTitle', { provider: providerName })
-          }}
-        </h2>
-      </v-card-title>
-      <v-form @submit.prevent="save">
-        <v-card-text>
-          <p class="text-body-2 mb-4">{{ $t('settings.providers.keyHelp') }}</p>
+      <form @submit.prevent="save">
+        <div class="dialog-body">
+          <h2 id="key-dialog-title">
+            {{
+              isReplacement
+                ? $t('settings.providers.replaceKeyTitle', { provider: providerName })
+                : $t('settings.providers.addKeyTitle', { provider: providerName })
+            }}
+          </h2>
+          <p class="t2 help">{{ $t('settings.providers.keyHelp') }}</p>
           <v-text-field
             v-model="key"
             type="password"
@@ -81,37 +80,69 @@ async function save(): Promise<void> {
                 value.length >= MIN_KEY_LENGTH || $t('settings.providers.keyTooShort'),
             ]"
           />
-          <div role="status" class="text-body-2">
+          <div role="status" class="t2 testing">
             <template v-if="testing">
-              <v-progress-linear indeterminate class="mb-2" />
+              <v-progress-linear indeterminate color="#7C3AED" class="progress" />
               {{ $t('settings.providers.testingKey') }}
             </template>
           </div>
           <v-alert v-if="invalidKeyMessage !== undefined" type="error" variant="tonal" role="alert">
             {{ $t('settings.providers.keyInvalid', { message: invalidKeyMessage }) }}
-            <p class="mt-1">{{ $t('settings.providers.previousKeyKept') }}</p>
+            <p class="kept">{{ $t('settings.providers.previousKeyKept') }}</p>
           </v-alert>
           <v-alert v-else-if="providerDidNotAnswer" type="error" variant="tonal" role="alert">
             {{ $t('settings.providers.keyNoAnswer') }}
           </v-alert>
           <ProblemAlert v-else-if="otherFailure" :error="failure" />
-        </v-card-text>
-        <v-card-actions>
-          <v-spacer />
-          <v-btn variant="text" :disabled="testing" @click="open = false">
+        </div>
+        <div class="dialog-actions">
+          <button type="button" class="btn" :disabled="testing" @click="open = false">
             {{ $t('common.cancel') }}
-          </v-btn>
-          <v-btn
+          </button>
+          <button
             type="submit"
-            color="primary"
-            variant="flat"
-            :loading="testing"
-            :disabled="key.length < MIN_KEY_LENGTH"
+            class="btn btn-p"
+            :disabled="testing || key.length < MIN_KEY_LENGTH"
+            :aria-busy="testing ? 'true' : undefined"
           >
             {{ $t('settings.providers.saveKey') }}
-          </v-btn>
-        </v-card-actions>
-      </v-form>
+          </button>
+        </div>
+      </form>
     </v-card>
   </v-dialog>
 </template>
+
+<style scoped>
+.dialog-body {
+  padding: 22px 24px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.help {
+  margin: 0;
+  font-size: 13px;
+}
+
+.testing {
+  font-size: 13px;
+}
+
+.progress {
+  margin-bottom: 8px;
+}
+
+.kept {
+  margin: 4px 0 0;
+}
+
+.dialog-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 24px 22px;
+}
+</style>

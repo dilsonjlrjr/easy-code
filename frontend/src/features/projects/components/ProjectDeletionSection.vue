@@ -41,23 +41,24 @@ async function submit(idempotencyKey: string): Promise<void> {
 </script>
 
 <template>
+  <!-- Layout: canvas primitives of Projeto.dc.html (no own artboard): .card, h2, .t2, .btn-d. -->
   <section
     v-if="isLead"
     aria-labelledby="deletion-heading"
-    class="mt-8"
+    class="card deletion"
     data-testid="project-deletion"
   >
-    <h3 id="deletion-heading" class="text-subtitle-1 font-weight-medium mb-1">
-      {{ $t('projects.deletion.title') }}
-    </h3>
+    <h2 id="deletion-heading">{{ $t('projects.deletion.title') }}</h2>
     <template v-if="ended">
-      <p class="text-body-2 mb-2">{{ $t('projects.deletion.help') }}</p>
-      <v-btn color="error" variant="outlined" data-testid="delete-project" @click="openDialog">
-        {{ $t('projects.deletion.action') }}
-      </v-btn>
+      <p class="t2 help">{{ $t('projects.deletion.help') }}</p>
+      <div>
+        <button type="button" class="btn btn-d" data-testid="delete-project" @click="openDialog">
+          {{ $t('projects.deletion.action') }}
+        </button>
+      </div>
     </template>
     <!-- CA-2 / CA-29-15: the action does not show; the screen says to cancel first. -->
-    <p v-else class="text-body-2" data-testid="deletion-cancel-first">
+    <p v-else class="t2 help" data-testid="deletion-cancel-first">
       {{ $t('projects.deletion.cancelFirst') }}
     </p>
     <ConfirmActionDialog
@@ -70,12 +71,44 @@ async function submit(idempotencyKey: string): Promise<void> {
       test-id="project-delete-dialog"
       :submit="submit"
     >
-      <v-text-field
-        v-model="typedName"
-        :label="$t('projects.deletion.typeName', { name: project.name })"
-        autocomplete="off"
-        class="mt-2"
-      />
+      <label for="project-deletion-name" class="field">
+        <span class="field-label">
+          {{ $t('projects.deletion.typeName', { name: project.name }) }}
+        </span>
+        <input
+          id="project-deletion-name"
+          v-model="typedName"
+          class="fld"
+          type="text"
+          autocomplete="off"
+        />
+      </label>
     </ConfirmActionDialog>
   </section>
 </template>
+
+<style scoped>
+.deletion {
+  padding: 18px 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.help {
+  margin: 0;
+  font-size: 13px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.field-label {
+  font-weight: 600;
+  font-size: 13px;
+}
+</style>

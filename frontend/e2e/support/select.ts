@@ -1,8 +1,9 @@
 import type { Locator, Page } from '@playwright/test'
 
 /**
- * Opens a Vuetify select by its accessible name and picks an option. Vuetify lays its field wrapper
- * over the combobox input, so the click goes to the wrapper, which is what opens the menu.
+ * Picks an option of a select found by its accessible name. A native `<select>` (canvas `.fld`)
+ * takes the option directly; a Vuetify select is opened through its field wrapper, which Vuetify
+ * lays over the combobox input, and the option is clicked in its menu.
  */
 export async function chooseOption(
   page: Page,
@@ -10,6 +11,14 @@ export async function chooseOption(
   label: string,
   option: RegExp,
 ): Promise<void> {
+  const combobox = scope.getByRole('combobox', { name: label })
+  if ((await combobox.evaluate((element) => element.tagName)) === 'SELECT') {
+    const labels = await combobox.locator('option').allTextContents()
+    const match = labels.map((text) => text.trim()).find((text) => option.test(text))
+    if (match === undefined) throw new Error(`No option matching ${String(option)} in ${label}`)
+    await combobox.selectOption({ label: match })
+    return
+  }
   await openSelect(scope, label)
   await page.getByRole('option', { name: option }).click()
 }

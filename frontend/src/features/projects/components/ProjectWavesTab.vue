@@ -9,11 +9,12 @@ const store = useCurrentProjectStore()
 </script>
 
 <template>
-  <section aria-labelledby="waves-heading">
-    <h2 id="waves-heading" class="text-h6 mb-4">{{ $t('pages.project.waves') }}</h2>
-    <p v-if="store.waves.length === 0">{{ $t('projects.waves.empty') }}</p>
+  <!-- Layout: "Ondas" card of canvas "Projeto" (Projeto.dc.html). -->
+  <section class="card waves-card" aria-labelledby="waves-heading">
+    <h2 id="waves-heading">{{ $t('pages.project.waves') }}</h2>
+    <p v-if="store.waves.length === 0" class="t2 waves-empty">{{ $t('projects.waves.empty') }}</p>
     <div v-else class="table-scroll">
-      <v-table density="comfortable">
+      <table class="tbl">
         <thead>
           <tr>
             <th scope="col">{{ $t('projects.waves.wave') }}</th>
@@ -25,29 +26,46 @@ const store = useCurrentProjectStore()
         </thead>
         <tbody>
           <tr v-for="wave in store.waves" :key="wave.id">
-            <td>
+            <td class="mono">
               <router-link
                 :to="{
                   name: ROUTE_NAMES.wave,
                   params: { projectId: store.project?.id ?? '', waveId: wave.id },
                 }"
-                class="monospace"
               >
                 {{ wave.id }}
               </router-link>
             </td>
             <td>
               {{ $t(`stages.${wave.stage}`) }}
-              <span v-if="wave.purpose !== 'execution'" class="text-body-2">
-                ({{ $t(`waves.purpose.${wave.purpose}`) }})
-              </span>
+              <template v-if="wave.purpose !== 'execution'">
+                · {{ $t(`waves.purpose.${wave.purpose}`) }}
+              </template>
             </td>
             <td><StateLabel machine="wave" :state="wave.state" /></td>
             <td>{{ format.money(wave.cost_total) }}</td>
             <td>{{ format.dateTime(wave.created_at) }}</td>
           </tr>
         </tbody>
-      </v-table>
+      </table>
     </div>
   </section>
 </template>
+
+<style scoped>
+.waves-card {
+  padding: 18px 22px;
+}
+
+.waves-card h2 {
+  margin-bottom: 8px;
+}
+
+.waves-empty {
+  margin: 0;
+}
+
+.tbl a {
+  text-decoration: none;
+}
+</style>

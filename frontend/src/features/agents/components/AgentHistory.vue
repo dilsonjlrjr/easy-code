@@ -63,8 +63,9 @@ function stageName(id: string): string {
 </script>
 
 <template>
-  <section aria-labelledby="history-heading" class="mb-6" data-testid="agent-history">
-    <h3 id="history-heading" class="text-h6 mb-2">{{ $t('agentsPage.history.title') }}</h3>
+  <!-- Look: canvas "Agentes e skills" (Agentes.dc.html) card, with the canvas `.kv` rows and `.tbl`. -->
+  <section class="card panel" aria-labelledby="history-heading" data-testid="agent-history">
+    <h2 id="history-heading" class="panel-title">{{ $t('agentsPage.history.title') }}</h2>
     <LoadingState v-if="loader.loading.value && !loader.loaded.value" type="list-item@2" />
     <ProblemAlert
       v-else-if="loader.error.value"
@@ -73,24 +74,24 @@ function stageName(id: string): string {
       @retry="loader.run"
     />
     <template v-else>
-      <h4 class="text-subtitle-1 font-weight-medium mb-1">
-        {{ $t('agentsPage.history.versions') }}
-      </h4>
-      <ol class="plain-list mb-4" data-testid="agent-versions">
-        <li v-for="item in versions" :key="item.version" class="text-body-2 mb-1">
-          <span class="font-weight-medium">
-            {{ $t('agentsPage.configurationVersion', { n: item.version }) }}
+      <h3 class="lb sub-label">{{ $t('agentsPage.history.versions') }}</h3>
+      <ol class="version-list" data-testid="agent-versions">
+        <li v-for="item in versions" :key="item.version" class="kv">
+          <span>
+            <strong>{{ $t('agentsPage.configurationVersion', { n: item.version }) }}</strong>
+            · {{ $t('agentsPage.instructionsVersion', { v: item.instructions_version }) }}
           </span>
-          · {{ $t('agentsPage.instructionsVersion', { v: item.instructions_version }) }} ·
-          {{ format.dateTime(item.created_at) }}
-          <template v-if="item.created_by"> · {{ item.created_by.name }}</template>
+          <span class="t2 kv-value">
+            {{ format.dateTime(item.created_at) }}
+            <template v-if="item.created_by"> · {{ item.created_by.name }}</template>
+          </span>
         </li>
       </ol>
 
-      <h4 class="text-subtitle-1 font-weight-medium mb-1">{{ $t('agentsPage.history.waves') }}</h4>
-      <p v-if="waves.length === 0" class="text-body-2">{{ $t('agentsPage.history.noWaves') }}</p>
+      <h3 class="lb sub-label">{{ $t('agentsPage.history.waves') }}</h3>
+      <p v-if="waves.length === 0" class="empty">{{ $t('agentsPage.history.noWaves') }}</p>
       <div v-else class="table-scroll">
-        <v-table density="compact" data-testid="agent-waves">
+        <table class="tbl" data-testid="agent-waves">
           <thead>
             <tr>
               <th scope="col">{{ $t('agentsPage.history.wave') }}</th>
@@ -104,7 +105,7 @@ function stageName(id: string): string {
               <td>
                 <router-link
                   :to="{ name: ROUTE_NAMES.wave, params: { projectId, waveId: wave.id } }"
-                  class="monospace"
+                  class="mono"
                 >
                   {{ wave.id }}
                 </router-link>
@@ -121,19 +122,52 @@ function stageName(id: string): string {
               </td>
             </tr>
           </tbody>
-        </v-table>
+        </table>
       </div>
-      <v-btn
+      <button
         v-if="nextCursor"
-        variant="outlined"
-        size="small"
-        class="mt-2"
-        :loading="loadingMore"
+        type="button"
+        class="btn more"
+        :disabled="loadingMore"
+        :aria-busy="loadingMore ? 'true' : undefined"
         @click="loadMore"
       >
         {{ $t('agentsPage.history.loadMore') }}
-      </v-btn>
-      <ProblemAlert v-if="moreFailure" :error="moreFailure" class="mt-2" />
+      </button>
+      <ProblemAlert v-if="moreFailure" :error="moreFailure" class="more" />
     </template>
   </section>
 </template>
+
+<style scoped>
+.panel {
+  padding: 18px 22px;
+}
+
+.panel-title {
+  margin-bottom: 4px;
+}
+
+.sub-label {
+  display: block;
+  margin: 14px 0 6px;
+}
+
+.version-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.kv-value {
+  text-align: right;
+}
+
+.empty {
+  margin: 0;
+}
+
+.more {
+  margin-top: 12px;
+}
+</style>

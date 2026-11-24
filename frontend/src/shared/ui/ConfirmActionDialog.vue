@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { nextTick, ref, useId, watch } from 'vue'
+import { computed, nextTick, ref, useId, watch } from 'vue'
 import { newIdempotencyKey } from '@/shared/api/idempotencyKey'
 import ProblemAlert from './ProblemAlert.vue'
 
@@ -29,7 +29,9 @@ const open = defineModel<boolean>({ required: true })
 const id = useId()
 const sending = ref(false)
 const failure = ref<unknown>()
-const keepButton = ref<{ $el: HTMLElement }>()
+const keepButton = ref<HTMLButtonElement>()
+/** Canvas buttons: a destructive confirmation reads in red (`.btn-d`); the others are primary. */
+const confirmClass = computed(() => (props.confirmColor === 'error' ? 'btn btn-d' : 'btn btn-p'))
 let key = newIdempotencyKey()
 let opener: HTMLElement | undefined
 
@@ -49,7 +51,7 @@ function restoreFocus(): void {
 
 async function focusKeep(): Promise<void> {
   await nextTick()
-  keepButton.value?.$el.focus()
+  keepButton.value?.focus()
 }
 
 async function confirm(): Promise<void> {
@@ -68,43 +70,78 @@ async function confirm(): Promise<void> {
 </script>
 
 <template>
+  <!-- Look: canvas `.dlg` (Onda.dc.html). -->
   <v-dialog
     v-model="open"
-    max-width="520"
+    max-width="460"
     :persistent="sending"
     :aria-labelledby="`${id}-title`"
     :aria-describedby="`${id}-description`"
     @after-enter="focusKeep"
     @after-leave="restoreFocus"
   >
-    <v-card :data-testid="props.testId">
-      <v-card-title>
-        <h2 :id="`${id}-title`" class="text-h6 text-wrap">{{ props.title }}</h2>
-      </v-card-title>
-      <v-form @submit.prevent="confirm">
-        <v-card-text>
-          <div :id="`${id}-description`">
-            <p v-for="(line, index) in props.lines" :key="index" class="mb-2">{{ line }}</p>
-          </div>
-          <slot :failure="failure" />
-          <ProblemAlert v-if="failure" :error="failure" class="mt-3" />
-        </v-card-text>
-        <v-card-actions>
-          <v-spacer />
-          <v-btn ref="keepButton" variant="text" :disabled="sending" @click="open = false">
-            {{ props.keepLabel }}
-          </v-btn>
-          <v-btn
-            type="submit"
-            :color="props.confirmColor"
-            variant="flat"
-            :loading="sending"
-            :disabled="props.confirmDisabled"
+    <v-card class="dlg-card" :data-testid="props.testId">
+      <h2 :id="`${id}-title`">{{ props.title }}</h2>
+      <form class="dlg-form" @submit.prevent="confirm">
+        <div :id="`${id}-description`" class="dlg-description">
+          <p v-for="(line, index) in props.lines" :key="index">{{ line }}</p>
+        </div>
+        <slot :failure="failure" />
+        <ProblemAlert v-if="failure" :error="failure" />
+        <div class="dlg-actions">
+          <button
+            ref="keepButton"
+            type="button"
+            class="btn"
+            :disabled="sending"
+            @click="open = false"
           >
+            {{ props.keepLabel }}
+          </button>
+          <button
+            type="submit"
+            :class="confirmClass"
+            :disabled="sending || props.confirmDisabled"
+            :aria-busy="sending || undefined"
+          >
+            <v-progress-circular v-if="sending" indeterminate size="16" width="2" />
             {{ props.confirmLabel }}
-          </v-btn>
-        </v-card-actions>
-      </v-form>
+          </button>
+        </div>
+      </form>
     </v-card>
   </v-dialog>
 </template>
+
+<style scoped>
+.dlg-card {
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  background: #151b45;
+}
+
+.dlg-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.dlg-description {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.dlg-description p {
+  margin: 0;
+}
+
+.dlg-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+</style>

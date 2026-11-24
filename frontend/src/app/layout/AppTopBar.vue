@@ -1,28 +1,52 @@
 <script setup lang="ts">
-import { mdiMenu } from '@mdi/js'
-import LanguageSwitcher from '@/shared/ui/LanguageSwitcher.vue'
-import ThemeSwitcher from '@/shared/ui/ThemeSwitcher.vue'
+import { ROUTE_NAMES } from '@/app/router/routeNames'
+import CanvasIcon from '@/shared/ui/CanvasIcon.vue'
 import AccountMenu from './AccountMenu.vue'
 
-defineProps<{ showMenuToggle: boolean; menuExpanded: boolean }>()
-defineEmits<{ toggleMenu: [] }>()
+defineProps<{ pendingCount: number }>()
 </script>
 
 <template>
-  <v-app-bar color="surface" elevation="1" density="comfortable">
-    <template v-if="showMenuToggle" #prepend>
-      <v-app-bar-nav-icon
-        :icon="mdiMenu"
-        :aria-label="$t('navigation.toggleMenu')"
-        :aria-expanded="menuExpanded"
-        @click="$emit('toggleMenu')"
-      />
-    </template>
-    <v-app-bar-title class="font-weight-medium">{{ $t('app.name') }}</v-app-bar-title>
-    <template #append>
-      <LanguageSwitcher />
-      <ThemeSwitcher />
-      <AccountMenu />
-    </template>
-  </v-app-bar>
+  <!-- Canvas top row: the bell leads to Pendências (violet dot when something waits) and the account. -->
+  <header class="top-bar">
+    <div class="top-actions">
+      <router-link
+        class="ibtn"
+        :to="{ name: ROUTE_NAMES.pendingItems }"
+        :aria-label="$t('navigation.pendingCount', { n: pendingCount })"
+        data-testid="top-bar-pending"
+      >
+        <CanvasIcon name="bell" />
+        <span v-if="pendingCount > 0" class="bell-dot" />
+      </router-link>
+      <AccountMenu :pending-count="pendingCount" />
+    </div>
+  </header>
 </template>
+
+<style scoped>
+.top-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  min-height: 44px;
+}
+
+.top-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.bell-dot {
+  position: absolute;
+  top: 10px;
+  right: 11px;
+  width: 8px;
+  height: 8px;
+  border-radius: 4px;
+  background: #a855f7;
+}
+</style>

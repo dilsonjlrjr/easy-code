@@ -46,8 +46,14 @@ watch(
 </script>
 
 <template>
-  <section v-if="!absent" class="mb-6" data-testid="stage-estimate" :aria-labelledby="headingId">
-    <component :is="headingTag" :id="headingId" class="text-subtitle-1 font-weight-medium mb-2">
+  <!-- Look: canvas primitives (block title and label/value grid as in "Novo projeto", `.tbl`, `.note`). -->
+  <section
+    v-if="!absent"
+    class="estimate"
+    data-testid="stage-estimate"
+    :aria-labelledby="headingId"
+  >
+    <component :is="headingTag" :id="headingId" class="estimate-title">
       {{ $t('estimate.title') }}
     </component>
     <LoadingState v-if="loader.loading.value && !estimate" type="paragraph" />
@@ -58,26 +64,26 @@ watch(
       @retry="loader.run"
     />
     <template v-else-if="estimate">
-      <p class="text-body-1 mb-1">
+      <p class="estimate-value">
         <strong>{{ $t('estimate.estimated', { value: format.money(estimate.estimated) }) }}</strong>
-        <span v-if="estimate.no_history" class="ml-2 no-history" data-testid="estimate-no-history">
-          ({{ $t('estimate.noHistory') }})
+        <span v-if="estimate.no_history" class="chip mute" data-testid="estimate-no-history">
+          {{ $t('estimate.noHistory') }}
         </span>
       </p>
-      <p class="text-body-2 text-medium-emphasis mb-2">
+      <p class="t2 estimate-formula">
         {{ estimate.no_history ? $t('estimate.formulaNoHistory') : $t('estimate.formula') }}
       </p>
-      <dl class="summary-list" data-testid="estimate-basis">
-        <dt>{{ $t('estimate.inputSize') }}</dt>
+      <dl class="estimate-basis" data-testid="estimate-basis">
+        <dt class="t2">{{ $t('estimate.inputSize') }}</dt>
         <dd>
           {{ $t('estimate.tokens', { n: format.integer(estimate.basis.input_size_tokens) }) }}
         </dd>
-        <dt>{{ $t('estimate.priceTable') }}</dt>
+        <dt class="t2">{{ $t('estimate.priceTable') }}</dt>
         <dd>
           {{ $t('estimate.priceTableVersion', { version: estimate.basis.price_table_version }) }}
         </dd>
         <template v-if="estimate.basis.input_price_per_million">
-          <dt>{{ $t('estimate.inputPrice') }}</dt>
+          <dt class="t2">{{ $t('estimate.inputPrice') }}</dt>
           <dd>
             {{
               $t('estimate.perMillion', {
@@ -87,7 +93,7 @@ watch(
           </dd>
         </template>
         <template v-if="!estimate.no_history && estimate.basis.historical_average">
-          <dt>{{ $t('estimate.historicalAverage') }}</dt>
+          <dt class="t2">{{ $t('estimate.historicalAverage') }}</dt>
           <dd>
             {{ format.money(estimate.basis.historical_average) }}
             <template v-if="estimate.basis.considered_waves !== undefined">
@@ -100,7 +106,7 @@ watch(
       <!-- CA-3: estimated × performed side by side once a wave of the stage concluded. -->
       <table
         v-if="estimate.performed"
-        class="estimate-comparison mt-3"
+        class="tbl estimate-comparison"
         data-testid="estimate-performed"
       >
         <caption class="sr-only">
@@ -121,36 +127,73 @@ watch(
           </tr>
         </tbody>
       </table>
-      <v-alert
-        v-if="exceeds"
-        type="warning"
-        variant="tonal"
-        class="mt-3"
-        data-testid="estimate-exceeds-balance"
-      >
+      <p v-if="exceeds" class="note note-warn" data-testid="estimate-exceeds-balance">
         {{
           $t('estimate.exceedsBalance', {
             estimate: format.money(estimate.estimated),
             balance: format.money(balance),
           })
         }}
-      </v-alert>
+      </p>
     </template>
   </section>
 </template>
 
 <style scoped>
-.no-history {
-  font-weight: 500;
+.estimate {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.estimate-title {
+  margin: 0;
+  font-size: 16px;
+  line-height: 24px;
+  font-weight: 700;
+}
+
+.estimate-value {
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.estimate-formula {
+  margin: 0;
+  font-size: 13px;
+}
+
+.estimate-basis {
+  margin: 0;
+  display: grid;
+  grid-template-columns: minmax(160px, 220px) 1fr;
+  gap: 10px 16px;
+  font-size: 13px;
+}
+
+.estimate-basis dd {
+  margin: 0;
 }
 
 .estimate-comparison {
-  border-collapse: collapse;
+  width: auto;
+  font-size: 13px;
 }
 
 .estimate-comparison th,
 .estimate-comparison td {
-  padding: 0.25rem 1rem 0.25rem 0;
-  text-align: left;
+  padding-right: 24px;
+}
+
+.note {
+  margin: 0;
+}
+
+.note-warn {
+  border-color: rgba(234, 179, 8, 0.45);
+  background: rgba(234, 179, 8, 0.1);
 }
 </style>

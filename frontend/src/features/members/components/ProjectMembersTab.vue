@@ -45,6 +45,16 @@ function rolesText(member: Member): string {
     .join(', ')
 }
 
+/** The avatar of a person in the canvas: up to two initials. */
+function initials(name: string): string {
+  return name
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase() ?? '')
+    .join('')
+}
+
 function isCurrentLead(member: Member): boolean {
   return member.roles.includes('lead')
 }
@@ -208,17 +218,17 @@ watch([rolesDialog, addDialog, removeDialog, transferDialog], (open, wasOpen) =>
 </script>
 
 <template>
-  <section aria-labelledby="members-heading">
-    <div class="d-flex flex-wrap align-center ga-2 mb-2">
-      <h2 id="members-heading" class="text-h6">{{ $t('members.title') }}</h2>
-      <v-spacer />
-      <v-btn v-if="isLead" color="primary" variant="flat" @click="openAdd">
+  <!-- Layout: canvas primitives of Projeto.dc.html (no own artboard): .card, h2, .tbl, .btn. -->
+  <section aria-labelledby="members-heading" class="card members">
+    <div class="members-head">
+      <h2 id="members-heading">{{ $t('members.title') }}</h2>
+      <button v-if="isLead" type="button" class="btn btn-p" @click="openAdd">
         {{ $t('members.add') }}
-      </v-btn>
+      </button>
     </div>
-    <p class="text-body-2 text-medium-emphasis mb-4">{{ $t('members.help') }}</p>
+    <p class="t2 help">{{ $t('members.help') }}</p>
     <div role="status" class="sr-only">{{ message }}</div>
-    <ProblemAlert v-if="failure" :error="failure" class="mb-4" data-testid="members-failure" />
+    <ProblemAlert v-if="failure" :error="failure" data-testid="members-failure" />
 
     <LoadingState v-if="loader.loading.value && members.length === 0" />
     <ProblemAlert
@@ -227,96 +237,102 @@ watch([rolesDialog, addDialog, removeDialog, transferDialog], (open, wasOpen) =>
       retry
       @retry="loader.run"
     />
-    <v-table v-else>
-      <caption class="sr-only">
-        {{
-          $t('members.caption')
-        }}
-      </caption>
-      <thead>
-        <tr>
-          <th scope="col">{{ $t('members.person') }}</th>
-          <th scope="col">{{ $t('members.rolesColumn') }}</th>
-          <th scope="col">{{ $t('members.assigned') }}</th>
-          <th v-if="isLead || canTransfer" scope="col">{{ $t('common.actions') }}</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr
-          v-for="member in members"
-          :key="member.user.id"
-          :data-testid="`member-${member.user.id}`"
-        >
-          <th scope="row" class="font-weight-regular">{{ member.user.name }}</th>
-          <td>
-            {{ rolesText(member) }}
-            <!-- CA-26-8: a self-assigned approver does not decide gates for 24 h. -->
-            <p v-if="approverGraceUntil(member)" class="text-body-2 text-medium-emphasis">
-              {{
-                $t('members.grace', {
-                  when: format.dateTime(approverGraceUntil(member)?.toISOString()),
-                })
-              }}
-            </p>
-          </td>
-          <td>
-            <template v-if="member.assigned_by && member.assigned_at">
-              {{
-                $t('members.assignedBy', {
-                  who: member.assigned_by.name,
-                  when: format.dateTime(member.assigned_at),
-                })
-              }}
-            </template>
-          </td>
-          <td v-if="isLead || canTransfer">
-            <div class="d-flex flex-wrap ga-1">
-              <v-btn
-                v-if="isLead"
-                size="small"
-                variant="text"
-                :aria-label="$t('members.changeRolesOf', { name: member.user.name })"
-                @click="openRoles(member)"
-              >
-                {{ $t('members.changeRoles') }}
-              </v-btn>
-              <v-btn
-                v-if="isLead"
-                size="small"
-                variant="text"
-                color="error"
-                :aria-label="$t('members.removeNamed', { name: member.user.name })"
-                @click="openRemove(member)"
-              >
-                {{ $t('common.remove') }}
-              </v-btn>
-              <v-btn
-                v-if="canTransfer && !isCurrentLead(member) && member.user.id !== session.user?.id"
-                size="small"
-                variant="text"
-                :aria-label="$t('members.transferTo', { name: member.user.name })"
-                @click="openTransfer(member)"
-              >
-                {{ $t('members.transfer') }}
-              </v-btn>
-            </div>
-          </td>
-        </tr>
-      </tbody>
-    </v-table>
+    <div v-else class="table-wrap">
+      <table class="tbl">
+        <caption class="sr-only">
+          {{
+            $t('members.caption')
+          }}
+        </caption>
+        <thead>
+          <tr>
+            <th scope="col">{{ $t('members.person') }}</th>
+            <th scope="col">{{ $t('members.rolesColumn') }}</th>
+            <th scope="col">{{ $t('members.assigned') }}</th>
+            <th v-if="isLead || canTransfer" scope="col">{{ $t('common.actions') }}</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr
+            v-for="member in members"
+            :key="member.user.id"
+            :data-testid="`member-${member.user.id}`"
+          >
+            <th scope="row" class="person">
+              <span class="av" aria-hidden="true">{{ initials(member.user.name) }}</span>
+              <span>{{ member.user.name }}</span>
+            </th>
+            <td>
+              {{ rolesText(member) }}
+              <!-- CA-26-8: a self-assigned approver does not decide gates for 24 h. -->
+              <p v-if="approverGraceUntil(member)" class="t2 grace">
+                {{
+                  $t('members.grace', {
+                    when: format.dateTime(approverGraceUntil(member)?.toISOString()),
+                  })
+                }}
+              </p>
+            </td>
+            <td class="t2">
+              <template v-if="member.assigned_by && member.assigned_at">
+                {{
+                  $t('members.assignedBy', {
+                    who: member.assigned_by.name,
+                    when: format.dateTime(member.assigned_at),
+                  })
+                }}
+              </template>
+            </td>
+            <td v-if="isLead || canTransfer">
+              <div class="row-actions">
+                <button
+                  v-if="isLead"
+                  type="button"
+                  class="btn"
+                  :aria-label="$t('members.changeRolesOf', { name: member.user.name })"
+                  @click="openRoles(member)"
+                >
+                  {{ $t('members.changeRoles') }}
+                </button>
+                <button
+                  v-if="isLead"
+                  type="button"
+                  class="btn btn-d"
+                  :aria-label="$t('members.removeNamed', { name: member.user.name })"
+                  @click="openRemove(member)"
+                >
+                  {{ $t('common.remove') }}
+                </button>
+                <button
+                  v-if="
+                    canTransfer && !isCurrentLead(member) && member.user.id !== session.user?.id
+                  "
+                  type="button"
+                  class="btn"
+                  :aria-label="$t('members.transferTo', { name: member.user.name })"
+                  @click="openTransfer(member)"
+                >
+                  {{ $t('members.transfer') }}
+                </button>
+              </div>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
 
     <!-- Change roles: one checkbox per role, never only an icon or color (ESP-26 section 8). -->
     <v-dialog v-model="rolesDialog" max-width="480">
       <v-card>
         <v-card-title>
-          <h2 class="text-h6">
+          <h2>
             {{ $t('members.changeRolesOf', { name: rolesTarget?.name ?? '' }) }}
           </h2>
         </v-card-title>
-        <v-form @submit.prevent="saveRoles">
+        <form @submit.prevent="saveRoles">
           <v-card-text>
             <fieldset class="roles-fieldset">
-              <legend class="text-body-2 mb-1">{{ $t('members.rolesColumn') }}</legend>
+              <legend class="lb legend">{{ $t('members.rolesColumn') }}</legend>
               <v-checkbox
                 v-for="role in ASSIGNABLE_ROLES"
                 :key="role"
@@ -327,33 +343,33 @@ watch([rolesDialog, addDialog, removeDialog, transferDialog], (open, wasOpen) =>
                 hide-details
               />
             </fieldset>
-            <p v-if="rolesForm.length === 0" class="text-body-2 text-error mt-2" role="alert">
+            <p v-if="rolesForm.length === 0" class="error-text" role="alert">
               {{ $t('members.oneRoleRequired') }}
             </p>
           </v-card-text>
           <v-card-actions>
-            <v-spacer />
-            <v-btn variant="text" @click="rolesDialog = false">{{ $t('common.cancel') }}</v-btn>
-            <v-btn
+            <button type="button" class="btn" @click="rolesDialog = false">
+              {{ $t('common.cancel') }}
+            </button>
+            <button
               type="submit"
-              color="primary"
-              variant="flat"
-              :loading="busy"
-              :disabled="rolesForm.length === 0"
+              class="btn btn-p"
+              :disabled="busy || rolesForm.length === 0"
+              :aria-busy="busy"
             >
               {{ $t('common.save') }}
-            </v-btn>
+            </button>
           </v-card-actions>
-        </v-form>
+        </form>
       </v-card>
     </v-dialog>
 
     <v-dialog v-model="addDialog" max-width="560">
       <v-card>
         <v-card-title>
-          <h2 class="text-h6">{{ $t('members.add') }}</h2>
+          <h2>{{ $t('members.add') }}</h2>
         </v-card-title>
-        <v-form @submit.prevent="addPerson">
+        <form @submit.prevent="addPerson">
           <v-card-text>
             <v-text-field
               v-model="search"
@@ -363,11 +379,11 @@ watch([rolesDialog, addDialog, removeDialog, transferDialog], (open, wasOpen) =>
               :loading="searching"
               autocomplete="off"
             />
-            <p v-if="searched && results.length === 0" class="text-body-2 mt-2" role="status">
+            <p v-if="searched && results.length === 0" class="t2 small" role="status">
               {{ $t('members.noResults') }}
             </p>
-            <fieldset v-else-if="results.length > 0" class="roles-fieldset mt-2">
-              <legend class="text-body-2 mb-1">{{ $t('members.person') }}</legend>
+            <fieldset v-else-if="results.length > 0" class="roles-fieldset spaced">
+              <legend class="lb legend">{{ $t('members.person') }}</legend>
               <v-radio-group v-model="chosen" hide-details>
                 <v-radio
                   v-for="person in results"
@@ -382,8 +398,8 @@ watch([rolesDialog, addDialog, removeDialog, transferDialog], (open, wasOpen) =>
                 />
               </v-radio-group>
             </fieldset>
-            <fieldset class="roles-fieldset mt-2">
-              <legend class="text-body-2 mb-1">{{ $t('members.rolesColumn') }}</legend>
+            <fieldset class="roles-fieldset spaced">
+              <legend class="lb legend">{{ $t('members.rolesColumn') }}</legend>
               <v-checkbox
                 v-for="role in ASSIGNABLE_ROLES"
                 :key="role"
@@ -396,19 +412,19 @@ watch([rolesDialog, addDialog, removeDialog, transferDialog], (open, wasOpen) =>
             </fieldset>
           </v-card-text>
           <v-card-actions>
-            <v-spacer />
-            <v-btn variant="text" @click="addDialog = false">{{ $t('common.cancel') }}</v-btn>
-            <v-btn
+            <button type="button" class="btn" @click="addDialog = false">
+              {{ $t('common.cancel') }}
+            </button>
+            <button
               type="submit"
-              color="primary"
-              variant="flat"
-              :loading="busy"
-              :disabled="!chosen || addRoles.length === 0"
+              class="btn btn-p"
+              :disabled="busy || !chosen || addRoles.length === 0"
+              :aria-busy="busy"
             >
               {{ $t('members.addConfirm') }}
-            </v-btn>
+            </button>
           </v-card-actions>
-        </v-form>
+        </form>
       </v-card>
     </v-dialog>
 
@@ -416,19 +432,24 @@ watch([rolesDialog, addDialog, removeDialog, transferDialog], (open, wasOpen) =>
     <v-dialog v-model="removeDialog" max-width="480">
       <v-card>
         <v-card-title>
-          <h2 class="text-h6">
+          <h2>
             {{ $t('members.removeTitle', { name: removeTarget?.name ?? '' }) }}
           </h2>
         </v-card-title>
         <v-card-text>{{ $t('members.removeWarning') }}</v-card-text>
         <v-card-actions>
-          <v-spacer />
-          <v-btn variant="text" @click="removeDialog = false">
+          <button type="button" class="btn" @click="removeDialog = false">
             {{ $t('common.cancel') }}
-          </v-btn>
-          <v-btn color="error" variant="flat" :loading="busy" @click="confirmRemove">
+          </button>
+          <button
+            type="button"
+            class="btn btn-d"
+            :disabled="busy"
+            :aria-busy="busy"
+            @click="confirmRemove"
+          >
             {{ $t('common.remove') }}
-          </v-btn>
+          </button>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -436,7 +457,7 @@ watch([rolesDialog, addDialog, removeDialog, transferDialog], (open, wasOpen) =>
     <v-dialog v-model="transferDialog" max-width="520">
       <v-card>
         <v-card-title>
-          <h2 class="text-h6">{{ $t('members.transferTitle') }}</h2>
+          <h2>{{ $t('members.transferTitle') }}</h2>
         </v-card-title>
         <v-card-text>
           {{
@@ -447,13 +468,18 @@ watch([rolesDialog, addDialog, removeDialog, transferDialog], (open, wasOpen) =>
           }}
         </v-card-text>
         <v-card-actions>
-          <v-spacer />
-          <v-btn variant="text" @click="transferDialog = false">
+          <button type="button" class="btn" @click="transferDialog = false">
             {{ $t('common.cancel') }}
-          </v-btn>
-          <v-btn color="primary" variant="flat" :loading="busy" @click="confirmTransfer">
+          </button>
+          <button
+            type="button"
+            class="btn btn-p"
+            :disabled="busy"
+            :aria-busy="busy"
+            @click="confirmTransfer"
+          >
             {{ $t('members.transfer') }}
-          </v-btn>
+          </button>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -461,9 +487,88 @@ watch([rolesDialog, addDialog, removeDialog, transferDialog], (open, wasOpen) =>
 </template>
 
 <style scoped>
+.members {
+  padding: 18px 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.members-head {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.help {
+  margin: 0;
+  font-size: 13px;
+}
+
+.small {
+  margin: 8px 0 0;
+  font-size: 13px;
+}
+
+.table-wrap {
+  overflow-x: auto;
+}
+
+.tbl th[scope='row'] {
+  font-weight: 400;
+  text-align: left;
+  padding: 10px 12px 10px 0;
+  border-bottom: 1px solid rgba(140, 150, 255, 0.08);
+}
+
+.tbl td {
+  vertical-align: middle;
+}
+
+.person {
+  white-space: nowrap;
+}
+
+.person > span + span {
+  margin-left: 10px;
+  font-weight: 600;
+}
+
+.av {
+  background: linear-gradient(135deg, #4f46e5, #7c3aed);
+  vertical-align: middle;
+}
+
+.grace {
+  margin: 2px 0 0;
+  font-size: 12px;
+}
+
+.row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
 .roles-fieldset {
   border: 0;
   margin: 0;
   padding: 0;
+}
+
+.spaced {
+  margin-top: 12px;
+}
+
+.legend {
+  margin-bottom: 4px;
+}
+
+.error-text {
+  margin: 8px 0 0;
+  font-size: 13px;
+  color: #fca5a5;
 }
 </style>

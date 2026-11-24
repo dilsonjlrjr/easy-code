@@ -12,10 +12,11 @@ const summary = computed(() => props.project.summary)
 </script>
 
 <template>
-  <p v-if="project.state === 'created'" class="text-body-2">
+  <!-- Look: canvas "Projetos", the "Agora" line of a project card (13px, joined by " · "). -->
+  <p v-if="project.state === 'created'" class="situation">
     {{ $t('projects.list.notStarted') }}
   </p>
-  <ul v-else-if="summary" class="plain-list text-body-2" data-testid="project-situation">
+  <ul v-else-if="summary" class="situation situation-list" data-testid="project-situation">
     <li v-for="item in summary.current_stages ?? []" :key="item.stage">
       {{
         $t('dashboard.currentStage', {
@@ -40,3 +41,24 @@ const summary = computed(() => props.project.summary)
     </li>
   </ul>
 </template>
+
+<style scoped>
+.situation {
+  margin: 0;
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.situation-list {
+  list-style: none;
+  padding: 0;
+}
+
+.situation-list li {
+  display: inline;
+}
+
+.situation-list li + li::before {
+  content: ' · ';
+}
+</style>

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { FAMILY_COLORS, FAMILY_ICONS, stateFamily, type StateMachine } from './stateFamilies'
+import { stateFamily, stateTone, type StateMachine } from './stateFamilies'
 
 const props = defineProps<{
   machine: StateMachine
@@ -10,21 +10,18 @@ const props = defineProps<{
 }>()
 
 const family = computed(() => stateFamily(props.machine, props.state))
+const tone = computed(() => stateTone(props.machine, props.state))
 </script>
 
 <template>
-  <!-- ESP-00 ER-00-6: the state is text; color and icon only reinforce it. -->
-  <v-chip
-    :color="FAMILY_COLORS[family]"
-    variant="tonal"
-    size="small"
-    label
-    class="state-label"
+  <!-- ESP-00 ER-00-6: the state is text; the color only reinforces it (canvas "Estados"). -->
+  <span
+    class="chip state-label"
+    :class="tone"
+    :data-machine="machine"
     :data-state="state"
     :data-family="family"
   >
-    <v-icon :icon="FAMILY_ICONS[family]" start aria-hidden="true" />
-    <span>{{ $t(`states.${machine}.${state}`) }}</span>
-    <span v-if="detail">&nbsp;({{ detail }})</span>
-  </v-chip>
+    {{ $t(`states.${machine}.${state}`) }}<template v-if="detail">&nbsp;({{ detail }})</template>
+  </span>
 </template>

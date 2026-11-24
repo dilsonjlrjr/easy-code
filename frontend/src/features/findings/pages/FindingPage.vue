@@ -21,6 +21,7 @@ import type { CloudEvent, EventClass } from '@/shared/events/eventStream'
 import { useProjectEventStream } from '@/shared/events/useProjectEventStream'
 import { useFormat } from '@/shared/format/useFormat'
 import AppBreadcrumbs from '@/shared/ui/AppBreadcrumbs.vue'
+import CanvasIcon from '@/shared/ui/CanvasIcon.vue'
 import LiveConnectionStatus from '@/shared/ui/LiveConnectionStatus.vue'
 import LoadingState from '@/shared/ui/LoadingState.vue'
 import ProblemAlert from '@/shared/ui/ProblemAlert.vue'
@@ -186,6 +187,15 @@ function stageName(stage: string): string {
   return i18n.te(key) ? t(key) : stage
 }
 
+/** Canvas "Achado": a blocking finding shows its effect in the critical note tone. */
+const blocks = computed(() => (finding.value ? blockingText(finding.value) !== undefined : false))
+const SEVERITY_TONES: Record<string, string> = {
+  critical: 'crit',
+  high: 'crit',
+  medium: 'warn',
+  low: 'mute',
+}
+
 const blocking = computed(() => {
   if (!finding.value) return ''
   const text = blockingText(finding.value)
@@ -235,375 +245,566 @@ const scopeEscalation = computed(() =>
 </script>
 
 <template>
-  <v-container max-width="1200">
-    <LoadingState v-if="loader.loading.value && !finding" />
-    <template v-else-if="loader.error.value && !finding">
-      <h1 class="text-h4 mb-4">{{ $t('pages.finding.title') }}</h1>
-      <!-- RNF-04: same message for missing and without access. -->
-      <v-alert v-if="notFound" type="warning" variant="tonal" role="alert">
-        {{ $t('findings.detail.notFound') }}
-      </v-alert>
-      <ProblemAlert v-else :error="loader.error.value" retry @retry="loader.run" />
-    </template>
-    <template v-else-if="project && finding">
-      <AppBreadcrumbs :items="breadcrumbs" />
-      <div role="status" class="sr-only">{{ message }}</div>
+  <!-- Layout: canvas "Achado" (Achado.dc.html). -->
+  <LoadingState v-if="loader.loading.value && !finding" />
+  <template v-else-if="loader.error.value && !finding">
+    <h1>{{ $t('pages.finding.title') }}</h1>
+    <!-- RNF-04: same message for missing and without access. -->
+    <p v-if="notFound" class="note note-warn" role="alert">
+      {{ $t('findings.detail.notFound') }}
+    </p>
+    <ProblemAlert v-else :error="loader.error.value" retry @retry="loader.run" />
+  </template>
+  <template v-else-if="project && finding">
+    <AppBreadcrumbs :items="breadcrumbs" />
+    <div role="status" class="sr-only">{{ message }}</div>
 
-      <div class="d-flex flex-wrap align-center ga-3 mb-2">
-        <h1 class="text-h4">
-          <span class="monospace">{{ finding.id }}</span> · {{ finding.title }}
+    <div class="finding-head">
+      <div class="finding-title">
+        <h1>
+          <span class="mono finding-id">{{ finding.id }}</span> · {{ finding.title }}
         </h1>
-        <StateLabel
-          machine="finding"
-          :state="finding.status"
-          :detail="
-            finding.status === 'accepted' && acceptanceExpired ? $t('findings.expired') : undefined
-          "
-        />
-        <v-spacer />
-        <LiveConnectionStatus :status="live.status.value" />
-      </div>
-
-      <v-alert v-if="conflict" type="warning" variant="tonal" role="alert" class="my-4">
-        {{ $t('findings.detail.conflict') }}
-      </v-alert>
-
-      <dl class="summary-list mb-6" data-testid="finding-summary">
-        <dt>{{ $t('findings.columns.severity') }}</dt>
-        <dd>{{ $t(`findings.severity.${finding.severity}`) }}</dd>
-        <dt>{{ $t('findings.columns.category') }}</dt>
-        <dd>{{ finding.category }}</dd>
-        <dt>{{ $t('findings.detail.author') }}</dt>
-        <dd>{{ $t(`agents.${finding.author}`) }}</dd>
-        <template v-if="finding.origin_wave">
-          <dt>{{ $t('findings.detail.originWave') }}</dt>
-          <dd>
-            <router-link
-              :to="{ name: ROUTE_NAMES.wave, params: { projectId, waveId: finding.origin_wave } }"
-              class="monospace"
-            >
-              {{ finding.origin_wave }}
-            </router-link>
-          </dd>
-        </template>
-        <template v-if="finding.origin_stage">
-          <dt>{{ $t('findings.columns.origin') }}</dt>
-          <dd>
-            <router-link
-              :to="{
-                name: ROUTE_NAMES.stage,
-                params: { projectId, stageId: finding.origin_stage },
-              }"
-            >
-              {{ stageName(finding.origin_stage) }}
-            </router-link>
-          </dd>
-        </template>
-        <dt>{{ $t('findings.columns.destination') }}</dt>
-        <dd>
-          <router-link
-            :to="{
-              name: ROUTE_NAMES.stage,
-              params: { projectId, stageId: finding.destination_stage },
-            }"
-          >
-            {{ stageName(finding.destination_stage) }}
-          </router-link>
-        </dd>
-        <dt>{{ $t('findings.columns.blocking') }}</dt>
-        <dd data-testid="finding-blocking">{{ blocking }}</dd>
-        <dt>{{ $t('findings.columns.cycles') }}</dt>
-        <dd>
-          {{ $t('findings.cyclesOf', { n: finding.cycles ?? finding.cycle_history.length }) }}
-        </dd>
-      </dl>
-
-      <section aria-labelledby="evidence-heading" class="mb-6">
-        <h2 id="evidence-heading" class="text-h6 mb-2">{{ $t('findings.detail.evidence') }}</h2>
-        <p class="text-body-2 text-medium-emphasis mb-2">
-          {{ $t('artifacts.sanitizedNotice') }}
-        </p>
-        <template v-if="evidence">
-          <h3 class="text-subtitle-2">{{ $t('findings.detail.evidenceText') }}</h3>
-          <pre class="evidence mb-3" data-testid="finding-evidence">{{
-            headerText('evidencia')
-          }}</pre>
-          <h3 class="text-subtitle-2">{{ $t('findings.detail.impact') }}</h3>
-          <p class="pre-wrap text-body-2 mb-3">{{ headerText('impacto') }}</p>
-          <h3 class="text-subtitle-2">{{ $t('findings.detail.suggestedFix') }}</h3>
-          <p class="pre-wrap text-body-2 mb-3">{{ headerText('correcao_sugerida') }}</p>
-        </template>
-        <p v-else class="text-body-2">{{ $t('findings.detail.noEvidence') }}</p>
-        <h3 class="text-subtitle-2">{{ $t('findings.detail.affected') }}</h3>
-        <ul class="plain-list" data-testid="finding-affected">
-          <li v-for="item in finding.affected_artifacts" :key="item.artifact" class="text-body-2">
-            <router-link
-              :to="{
-                name: ROUTE_NAMES.artifact,
-                params: { projectId, artifactId: item.artifact },
-              }"
-              class="monospace"
-            >
-              {{ item.artifact }}
-            </router-link>
-            <template v-if="item.item">
-              · <span class="monospace">{{ item.item }}</span></template
-            >
-          </li>
-        </ul>
-      </section>
-
-      <section aria-labelledby="cycles-heading" class="mb-6">
-        <h2 id="cycles-heading" class="text-h6 mb-2">{{ $t('findings.cycles.heading') }}</h2>
-        <p class="text-body-2 mb-2" data-testid="finding-cycle-type">
-          {{
-            internalCycle
-              ? $t('findings.cycles.internal')
-              : $t('findings.cycles.reopens', { stage: stageName(finding.destination_stage) })
-          }}
-        </p>
-        <p v-if="finding.cycle_history.length === 0" class="text-body-2">
-          {{ $t('findings.cycles.none') }}
-        </p>
-        <ol v-else class="cycles" data-testid="finding-cycles">
-          <li v-for="cycle in finding.cycle_history" :key="cycle.number" class="text-body-2 mb-1">
-            {{ $t('findings.cycles.number', { n: cycle.number }) }}
-            <template v-if="cycle.rework_wave">
-              · {{ $t('findings.cycles.rework') }}
+        <dl class="finding-meta" data-testid="finding-summary">
+          <div>
+            <dt class="sr-only">{{ $t('findings.columns.status') }}</dt>
+            <dd>
+              <StateLabel
+                machine="finding"
+                :state="finding.status"
+                :detail="
+                  finding.status === 'accepted' && acceptanceExpired
+                    ? $t('findings.expired')
+                    : undefined
+                "
+              />
+            </dd>
+          </div>
+          <div>
+            <dt class="sr-only">{{ $t('findings.columns.severity') }}</dt>
+            <dd :class="['chip', SEVERITY_TONES[finding.severity] ?? 'mute']">
+              {{ $t(`findings.severity.${finding.severity}`) }}
+            </dd>
+          </div>
+          <div>
+            <dt class="sr-only">{{ $t('findings.columns.category') }}</dt>
+            <dd class="chip mute">{{ finding.category }}</dd>
+          </div>
+          <div class="t2 meta-text">
+            <dt>{{ $t('findings.detail.author') }}</dt>
+            <dd>{{ $t(`agents.${finding.author}`) }}</dd>
+          </div>
+          <div v-if="finding.origin_wave" class="t2 meta-text">
+            <dt>{{ $t('findings.detail.originWave') }}</dt>
+            <dd>
               <router-link
-                :to="{ name: ROUTE_NAMES.wave, params: { projectId, waveId: cycle.rework_wave } }"
-                class="monospace"
+                :to="{ name: ROUTE_NAMES.wave, params: { projectId, waveId: finding.origin_wave } }"
+                class="mono"
               >
-                {{ cycle.rework_wave }}
+                {{ finding.origin_wave }}
               </router-link>
-            </template>
-            <template v-if="cycle.commit_or_version">
-              · <span class="monospace">{{ cycle.commit_or_version }}</span>
-            </template>
-            <template v-if="cycle.revalidation_wave">
-              · {{ $t('findings.cycles.revalidation') }}
+            </dd>
+          </div>
+          <div v-if="finding.origin_stage" class="t2 meta-text">
+            <dt>{{ $t('findings.columns.origin') }}</dt>
+            <dd>
               <router-link
                 :to="{
-                  name: ROUTE_NAMES.wave,
-                  params: { projectId, waveId: cycle.revalidation_wave },
+                  name: ROUTE_NAMES.stage,
+                  params: { projectId, stageId: finding.origin_stage },
                 }"
-                class="monospace"
               >
-                {{ cycle.revalidation_wave }}
+                {{ stageName(finding.origin_stage) }}
               </router-link>
-            </template>
-            · {{ cycleResult(cycle) }}
-          </li>
-        </ol>
-      </section>
-
-      <section
-        v-if="reopening || reevaluation.length > 0"
-        aria-labelledby="reopening-heading"
-        class="mb-6"
-        data-testid="finding-reopening"
-      >
-        <h2 id="reopening-heading" class="text-h6 mb-2">{{ $t('findings.reopening.heading') }}</h2>
-        <template v-if="reopening">
-          <p class="text-body-2 mb-1">
-            {{ $t('findings.reopening.reopened') }}
-            <router-link
-              :to="{ name: ROUTE_NAMES.stage, params: { projectId, stageId: reopening.stage.id } }"
-            >
-              {{ stageName(reopening.stage.id) }}
-            </router-link>
-          </p>
-          <p v-if="reopening.blocked.length === 0" class="text-body-2">
-            {{ $t('findings.reopening.noneBlocked') }}
-          </p>
-          <p v-else class="text-body-2">
-            {{ $t('findings.reopening.blocked') }}
-            <template v-for="(stage, index) in reopening.blocked" :key="stage.id">
+            </dd>
+          </div>
+          <div class="t2 meta-text">
+            <dt>{{ $t('findings.columns.destination') }}</dt>
+            <dd>
               <router-link
-                :to="{ name: ROUTE_NAMES.stage, params: { projectId, stageId: stage.id } }"
+                :to="{
+                  name: ROUTE_NAMES.stage,
+                  params: { projectId, stageId: finding.destination_stage },
+                }"
               >
-                {{ stageName(stage.id) }}</router-link><span
-                v-if="index < reopening.blocked.length - 1"
-                >,
-              </span>
-            </template>
+                {{ stageName(finding.destination_stage) }}
+              </router-link>
+            </dd>
+          </div>
+          <div class="t2 meta-text">
+            <dt>{{ $t('findings.columns.cycles') }}</dt>
+            <dd>
+              {{ $t('findings.cyclesOf', { n: finding.cycles ?? finding.cycle_history.length }) }}
+            </dd>
+          </div>
+        </dl>
+      </div>
+      <LiveConnectionStatus :status="live.status.value" />
+    </div>
+
+    <div :class="['note', blocks ? 'note-crit' : 'note-ok']">
+      <CanvasIcon :name="blocks ? 'alert' : 'check'" :size="20" />
+      <span>
+        {{ $t('findings.columns.blocking') }}:
+        <strong data-testid="finding-blocking">{{ blocking }}</strong>
+      </span>
+    </div>
+
+    <p v-if="conflict" class="note note-warn" role="alert">
+      {{ $t('findings.detail.conflict') }}
+    </p>
+
+    <div class="finding-layout">
+      <div class="finding-main">
+        <section aria-labelledby="evidence-heading" class="card finding-card finding-evidence">
+          <h2 id="evidence-heading">{{ $t('findings.detail.evidence') }}</h2>
+          <p class="t2 card-note">{{ $t('artifacts.sanitizedNotice') }}</p>
+          <template v-if="evidence">
+            <h3 class="sr-only">{{ $t('findings.detail.evidenceText') }}</h3>
+            <pre class="ev mono" data-testid="finding-evidence">{{ headerText('evidencia') }}</pre>
+            <div class="kv">
+              <h3 class="t2 kv-label">{{ $t('findings.detail.impact') }}</h3>
+              <p class="kv-value pre-wrap">{{ headerText('impacto') }}</p>
+            </div>
+            <div class="kv">
+              <h3 class="t2 kv-label">{{ $t('findings.detail.suggestedFix') }}</h3>
+              <p class="kv-value pre-wrap">{{ headerText('correcao_sugerida') }}</p>
+            </div>
+          </template>
+          <p v-else class="card-text">{{ $t('findings.detail.noEvidence') }}</p>
+          <div class="kv">
+            <h3 class="t2 kv-label">{{ $t('findings.detail.affected') }}</h3>
+            <ul class="plain-list kv-value" data-testid="finding-affected">
+              <li v-for="item in finding.affected_artifacts" :key="item.artifact">
+                <router-link
+                  :to="{
+                    name: ROUTE_NAMES.artifact,
+                    params: { projectId, artifactId: item.artifact },
+                  }"
+                  class="mono"
+                >
+                  {{ item.artifact }}
+                </router-link>
+                <template v-if="item.item">
+                  · <span class="mono">{{ item.item }}</span></template
+                >
+              </li>
+            </ul>
+          </div>
+        </section>
+
+        <section aria-labelledby="cycles-heading" class="card finding-card">
+          <h2 id="cycles-heading" class="card-heading">{{ $t('findings.cycles.heading') }}</h2>
+          <p class="t2 cycles-type" data-testid="finding-cycle-type">
+            {{
+              internalCycle
+                ? $t('findings.cycles.internal')
+                : $t('findings.cycles.reopens', { stage: stageName(finding.destination_stage) })
+            }}
           </p>
-        </template>
-        <p v-else class="text-body-2">
-          {{ $t('findings.reopening.reevaluation') }}
-          <template v-for="(stage, index) in reevaluation" :key="stage.id">
-            <router-link
-              :to="{ name: ROUTE_NAMES.stage, params: { projectId, stageId: stage.id } }"
-            >
-              {{ stageName(stage.id) }}</router-link><span v-if="index < reevaluation.length - 1"
-              >,
-            </span>
-          </template>
-        </p>
-      </section>
+          <p v-if="finding.cycle_history.length === 0" class="li row-text">
+            {{ $t('findings.cycles.none') }}
+          </p>
+          <ol v-else class="plain-list" data-testid="finding-cycles">
+            <li v-for="cycle in finding.cycle_history" :key="cycle.number" class="li">
+              <span class="chip mute">{{ $t('findings.cycles.number', { n: cycle.number }) }}</span>
+              <span class="row-text">
+                <template v-if="cycle.rework_wave">
+                  {{ $t('findings.cycles.rework') }}
+                  <router-link
+                    :to="{
+                      name: ROUTE_NAMES.wave,
+                      params: { projectId, waveId: cycle.rework_wave },
+                    }"
+                    class="mono"
+                  >
+                    {{ cycle.rework_wave }}
+                  </router-link>
+                  ·
+                </template>
+                <template v-if="cycle.commit_or_version">
+                  <span class="mono">{{ cycle.commit_or_version }}</span> ·
+                </template>
+                <template v-if="cycle.revalidation_wave">
+                  {{ $t('findings.cycles.revalidation') }}
+                  <router-link
+                    :to="{
+                      name: ROUTE_NAMES.wave,
+                      params: { projectId, waveId: cycle.revalidation_wave },
+                    }"
+                    class="mono"
+                  >
+                    {{ cycle.revalidation_wave }}
+                  </router-link>
+                  ·
+                </template>
+                {{ cycleResult(cycle) }}
+              </span>
+            </li>
+          </ol>
+        </section>
 
-      <section
-        v-if="finding.escalations.length > 0"
-        aria-labelledby="escalations-heading"
-        class="mb-6"
-      >
-        <h2 id="escalations-heading" class="text-h6 mb-2">
-          {{ $t('findings.escalations.heading') }}
-        </h2>
-        <ol class="cycles" data-testid="finding-escalations">
-          <li v-for="(item, index) in finding.escalations" :key="index" class="text-body-2 mb-2">
-            {{ format.dateTime(item.when) }} · {{ item.reason }}
-            <template v-if="item.decision">
-              · {{ $t(`findings.escalations.decisions.${item.decision}`) }}
-              <template v-if="item.authorized_by">
-                ·
-                {{
-                  $t('findings.escalations.by', {
-                    who: item.authorized_by.name,
-                    when: item.decided_at ? format.dateTime(item.decided_at) : '',
-                  })
-                }}
-              </template>
-            </template>
-            <template v-else> · {{ $t('findings.escalations.waiting') }}</template>
-            <p v-if="item.justification" class="pre-wrap">{{ item.justification }}</p>
-          </li>
-        </ol>
-      </section>
-
-      <section
-        v-if="finding.status === 'awaiting_scope'"
-        aria-labelledby="scope-heading"
-        class="mb-6"
-        data-testid="finding-scope"
-      >
-        <h2 id="scope-heading" class="text-h6 mb-2">{{ $t('findings.scope.heading') }}</h2>
-        <dl class="summary-list">
-          <template v-if="scopeEscalation?.modified_by">
-            <dt>{{ $t('findings.decision.modifiedBy') }}</dt>
-            <dd>{{ $t(`findings.modifiedBy.${scopeEscalation.modified_by}`) }}</dd>
-          </template>
-          <template v-if="scopeEscalation?.starting_point_artifacts?.length">
-            <dt>{{ $t('findings.decision.startingPoints') }}</dt>
-            <dd>
-              <template v-for="(id, index) in scopeEscalation.starting_point_artifacts" :key="id">
-                <router-link
-                  :to="{ name: ROUTE_NAMES.artifact, params: { projectId, artifactId: id } }"
-                  class="monospace"
-                  >{{ id }}</router-link><span
-                  v-if="index < scopeEscalation.starting_point_artifacts.length - 1"
-                  >,
-                </span>
-              </template>
-            </dd>
-          </template>
-          <template v-if="requirementsStage?.gate_state">
-            <dt>{{ $t('findings.scope.gate') }}</dt>
-            <dd>{{ $t(`states.gate.${requirementsStage.gate_state}`) }}</dd>
-          </template>
-        </dl>
-        <p class="text-body-2 mt-2">{{ $t('findings.scope.closesWhen') }}</p>
-        <p v-if="scopeEscalation?.modified_by === 'human'" class="text-body-2 mt-2">
-          {{ $t('findings.scope.humanEdit') }}
-        </p>
-        <router-link
-          :to="{ name: ROUTE_NAMES.stage, params: { projectId, stageId: 'requirements' } }"
-          class="text-body-2"
+        <section
+          v-if="reopening || reevaluation.length > 0"
+          aria-labelledby="reopening-heading"
+          class="card finding-card"
+          data-testid="finding-reopening"
         >
-          {{ $t('findings.scope.openRequirements') }}
-        </router-link>
-      </section>
-
-      <section
-        v-if="finding.acceptance || finding.resolution || finding.discard_reason"
-        aria-labelledby="result-heading"
-        class="mb-6"
-        data-testid="finding-result"
-      >
-        <h2 id="result-heading" class="text-h6 mb-2">{{ $t('findings.result.heading') }}</h2>
-        <dl class="summary-list">
-          <template v-if="finding.acceptance">
-            <dt>{{ $t('findings.result.acceptedBy') }}</dt>
-            <dd>{{ finding.acceptance.per.name }}</dd>
-            <dt>{{ $t('gates.when') }}</dt>
-            <dd>{{ format.dateTime(finding.acceptance.when) }}</dd>
-            <template v-if="finding.acceptance.origin">
-              <dt>{{ $t('gates.from') }}</dt>
-              <dd>{{ $t(`waves.origin.${finding.acceptance.origin}`) }}</dd>
-            </template>
-            <dt>{{ $t('findings.decision.justification') }}</dt>
-            <dd class="pre-wrap">{{ finding.acceptance.justification }}</dd>
-            <dt>{{ $t('findings.decision.validUntil') }}</dt>
-            <dd>
-              {{
-                finding.acceptance.valid_until
-                  ? format.date(finding.acceptance.valid_until)
-                  : $t('findings.noDeadline')
-              }}
-              <template v-if="acceptanceExpired"> · {{ $t('findings.result.expired') }}</template>
-            </dd>
-          </template>
-          <template v-if="finding.resolution">
-            <dt>{{ $t('findings.result.resolution') }}</dt>
-            <dd>{{ $t(`findings.resolution.${finding.resolution}`) }}</dd>
-          </template>
-          <template v-if="finding.modified_artifacts?.length">
-            <dt>{{ $t('findings.result.modified') }}</dt>
-            <dd>
-              <template v-for="(id, index) in finding.modified_artifacts" :key="id">
+          <h2 id="reopening-heading" class="card-heading">
+            {{ $t('findings.reopening.heading') }}
+          </h2>
+          <template v-if="reopening">
+            <p class="li row-text">
+              <span>
+                {{ $t('findings.reopening.reopened') }}
                 <router-link
-                  :to="{ name: ROUTE_NAMES.artifact, params: { projectId, artifactId: id } }"
-                  class="monospace"
-                  >{{ id }}</router-link><span v-if="index < finding.modified_artifacts.length - 1"
+                  :to="{
+                    name: ROUTE_NAMES.stage,
+                    params: { projectId, stageId: reopening.stage.id },
+                  }"
+                >
+                  {{ stageName(reopening.stage.id) }}
+                </router-link>
+              </span>
+            </p>
+            <p v-if="reopening.blocked.length === 0" class="li row-text">
+              {{ $t('findings.reopening.noneBlocked') }}
+            </p>
+            <p v-else class="li row-text">
+              <span>
+                {{ $t('findings.reopening.blocked') }}
+                <template v-for="(stage, index) in reopening.blocked" :key="stage.id">
+                  <router-link
+                    :to="{ name: ROUTE_NAMES.stage, params: { projectId, stageId: stage.id } }"
+                  >
+                    {{ stageName(stage.id) }}</router-link><span
+                    v-if="index < reopening.blocked.length - 1"
+                    >,
+                  </span>
+                </template>
+              </span>
+            </p>
+          </template>
+          <p v-else class="li row-text">
+            <span>
+              {{ $t('findings.reopening.reevaluation') }}
+              <template v-for="(stage, index) in reevaluation" :key="stage.id">
+                <router-link
+                  :to="{ name: ROUTE_NAMES.stage, params: { projectId, stageId: stage.id } }"
+                >
+                  {{ stageName(stage.id) }}</router-link><span
+                  v-if="index < reevaluation.length - 1"
                   >,
                 </span>
               </template>
-            </dd>
-          </template>
-          <template v-if="finding.discard_reason">
-            <dt>{{ $t('findings.decision.discardReason') }}</dt>
-            <dd class="pre-wrap">{{ finding.discard_reason }}</dd>
-          </template>
-        </dl>
-      </section>
+            </span>
+          </p>
+        </section>
 
-      <FindingDecisionForm
-        v-if="showDecision"
-        ref="decisionForm"
-        :project-id="projectId"
-        :finding="finding"
-        :requirements-artifacts="requirementsArtifacts"
-        @decided="onDecided"
-        @conflict="onConflict"
-      />
-      <p
-        v-else-if="!isApprover && decidable && !projectClosed"
-        class="text-body-2 mb-6"
-        data-testid="finding-approver-only"
+        <section
+          v-if="finding.escalations.length > 0"
+          aria-labelledby="escalations-heading"
+          class="card finding-card"
+        >
+          <h2 id="escalations-heading" class="card-heading">
+            {{ $t('findings.escalations.heading') }}
+          </h2>
+          <ol class="plain-list" data-testid="finding-escalations">
+            <li v-for="(item, index) in finding.escalations" :key="index" class="li escalation">
+              <span class="row-text">
+                {{ format.dateTime(item.when) }} · {{ item.reason }}
+                <template v-if="item.decision">
+                  · {{ $t(`findings.escalations.decisions.${item.decision}`) }}
+                  <template v-if="item.authorized_by">
+                    ·
+                    {{
+                      $t('findings.escalations.by', {
+                        who: item.authorized_by.name,
+                        when: item.decided_at ? format.dateTime(item.decided_at) : '',
+                      })
+                    }}
+                  </template>
+                </template>
+                <template v-else> · {{ $t('findings.escalations.waiting') }}</template>
+              </span>
+              <p v-if="item.justification" class="t2 row-text pre-wrap">
+                {{ item.justification }}
+              </p>
+            </li>
+          </ol>
+        </section>
+
+        <section
+          v-if="finding.status === 'awaiting_scope'"
+          aria-labelledby="scope-heading"
+          class="card finding-card"
+          data-testid="finding-scope"
+        >
+          <h2 id="scope-heading" class="card-heading">{{ $t('findings.scope.heading') }}</h2>
+          <dl class="kv-list">
+            <div v-if="scopeEscalation?.modified_by" class="kv">
+              <dt class="t2">{{ $t('findings.decision.modifiedBy') }}</dt>
+              <dd class="kv-value">
+                {{ $t(`findings.modifiedBy.${scopeEscalation.modified_by}`) }}
+              </dd>
+            </div>
+            <div v-if="scopeEscalation?.starting_point_artifacts?.length" class="kv">
+              <dt class="t2">{{ $t('findings.decision.startingPoints') }}</dt>
+              <dd class="kv-value">
+                <template v-for="(id, index) in scopeEscalation.starting_point_artifacts" :key="id">
+                  <router-link
+                    :to="{ name: ROUTE_NAMES.artifact, params: { projectId, artifactId: id } }"
+                    class="mono"
+                    >{{ id }}</router-link><span
+                    v-if="index < scopeEscalation.starting_point_artifacts.length - 1"
+                    >,
+                  </span>
+                </template>
+              </dd>
+            </div>
+            <div v-if="requirementsStage?.gate_state" class="kv">
+              <dt class="t2">{{ $t('findings.scope.gate') }}</dt>
+              <dd class="kv-value">{{ $t(`states.gate.${requirementsStage.gate_state}`) }}</dd>
+            </div>
+          </dl>
+          <p class="t2 card-note">{{ $t('findings.scope.closesWhen') }}</p>
+          <p v-if="scopeEscalation?.modified_by === 'human'" class="t2 card-note">
+            {{ $t('findings.scope.humanEdit') }}
+          </p>
+          <router-link
+            :to="{ name: ROUTE_NAMES.stage, params: { projectId, stageId: 'requirements' } }"
+            class="btn scope-link"
+          >
+            {{ $t('findings.scope.openRequirements') }}
+          </router-link>
+        </section>
+
+        <section
+          v-if="finding.acceptance || finding.resolution || finding.discard_reason"
+          aria-labelledby="result-heading"
+          class="card finding-card"
+          data-testid="finding-result"
+        >
+          <h2 id="result-heading" class="card-heading">{{ $t('findings.result.heading') }}</h2>
+          <dl class="kv-list">
+            <template v-if="finding.acceptance">
+              <div class="kv">
+                <dt class="t2">{{ $t('findings.result.acceptedBy') }}</dt>
+                <dd class="kv-value">{{ finding.acceptance.per.name }}</dd>
+              </div>
+              <div class="kv">
+                <dt class="t2">{{ $t('gates.when') }}</dt>
+                <dd class="kv-value">{{ format.dateTime(finding.acceptance.when) }}</dd>
+              </div>
+              <div v-if="finding.acceptance.origin" class="kv">
+                <dt class="t2">{{ $t('gates.from') }}</dt>
+                <dd class="kv-value">{{ $t(`waves.origin.${finding.acceptance.origin}`) }}</dd>
+              </div>
+              <div class="kv">
+                <dt class="t2">{{ $t('findings.decision.justification') }}</dt>
+                <dd class="kv-value pre-wrap">{{ finding.acceptance.justification }}</dd>
+              </div>
+              <div class="kv">
+                <dt class="t2">{{ $t('findings.decision.validUntil') }}</dt>
+                <dd class="kv-value">
+                  {{
+                    finding.acceptance.valid_until
+                      ? format.date(finding.acceptance.valid_until)
+                      : $t('findings.noDeadline')
+                  }}
+                  <template v-if="acceptanceExpired">
+                    · {{ $t('findings.result.expired') }}</template
+                  >
+                </dd>
+              </div>
+            </template>
+            <div v-if="finding.resolution" class="kv">
+              <dt class="t2">{{ $t('findings.result.resolution') }}</dt>
+              <dd class="kv-value">{{ $t(`findings.resolution.${finding.resolution}`) }}</dd>
+            </div>
+            <div v-if="finding.modified_artifacts?.length" class="kv">
+              <dt class="t2">{{ $t('findings.result.modified') }}</dt>
+              <dd class="kv-value">
+                <template v-for="(id, index) in finding.modified_artifacts" :key="id">
+                  <router-link
+                    :to="{ name: ROUTE_NAMES.artifact, params: { projectId, artifactId: id } }"
+                    class="mono"
+                    >{{ id }}</router-link><span
+                    v-if="index < finding.modified_artifacts.length - 1"
+                    >,
+                  </span>
+                </template>
+              </dd>
+            </div>
+            <div v-if="finding.discard_reason" class="kv">
+              <dt class="t2">{{ $t('findings.decision.discardReason') }}</dt>
+              <dd class="kv-value pre-wrap">{{ finding.discard_reason }}</dd>
+            </div>
+          </dl>
+        </section>
+      </div>
+
+      <aside
+        v-if="showDecision || (!isApprover && decidable && !projectClosed)"
+        class="finding-aside"
       >
-        {{ $t('findings.decision.approverOnly') }}
-      </p>
-    </template>
-  </v-container>
+        <FindingDecisionForm
+          v-if="showDecision"
+          ref="decisionForm"
+          :project-id="projectId"
+          :finding="finding"
+          :requirements-artifacts="requirementsArtifacts"
+          @decided="onDecided"
+          @conflict="onConflict"
+        />
+        <section v-else class="card decision-member" aria-labelledby="decision-member-heading">
+          <h2 id="decision-member-heading">{{ $t('findings.decision.heading') }}</h2>
+          <p class="t2 card-note" data-testid="finding-approver-only">
+            {{ $t('findings.decision.approverOnly') }}
+          </p>
+        </section>
+      </aside>
+    </div>
+  </template>
 </template>
 
 <style scoped>
 .pre-wrap {
   white-space: pre-wrap;
 }
-
-.evidence {
-  white-space: pre;
-  overflow-x: auto;
-  max-width: 100%;
-  padding: 8px 12px;
-  border-radius: 4px;
-  background: rgba(var(--v-theme-on-surface), 0.05);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 0.875rem;
+.plain-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
 }
-
-.cycles {
-  padding-left: 1.5rem;
+.finding-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.finding-title {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.finding-id {
+  font-size: inherit;
+}
+.finding-meta {
+  margin: 0;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.finding-meta > div {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.finding-meta dd {
+  margin: 0;
+}
+.meta-text {
+  font-size: 13px;
+}
+.meta-text + .meta-text::before {
+  content: '·';
+  margin-right: 4px;
+}
+.meta-text dt::after {
+  content: ':';
+}
+.note-crit {
+  border-color: rgba(239, 68, 68, 0.45);
+  background: rgba(239, 68, 68, 0.1);
+}
+.note-ok {
+  border-color: rgba(34, 197, 94, 0.45);
+  background: rgba(34, 197, 94, 0.12);
+}
+.note-warn {
+  margin: 0;
+  border-color: rgba(234, 179, 8, 0.45);
+  background: rgba(234, 179, 8, 0.12);
+}
+.finding-layout {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 20px;
+  align-items: flex-start;
+}
+.finding-main {
+  flex: 3 1 520px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+.finding-aside {
+  flex: 2 1 320px;
+  min-width: 0;
+}
+.finding-card {
+  padding: 18px 22px;
+}
+.finding-evidence {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.card-heading {
+  margin-bottom: 4px;
+}
+.card-note {
+  margin: 0;
+  font-size: 13px;
+}
+.card-text {
+  margin: 0;
+}
+.ev {
+  overflow-wrap: anywhere;
+}
+.kv-label {
+  margin: 0;
+  font-size: inherit;
+  font-weight: 400;
+  line-height: inherit;
+}
+.kv-value {
+  margin: 0;
+  text-align: right;
+}
+.kv-list {
+  margin: 0 0 10px;
+}
+.kv-list dt {
+  font-weight: 400;
+}
+.cycles-type {
+  margin: 0 0 6px;
+  font-size: 13px;
+}
+.row-text {
+  flex: 1;
+  margin: 0;
+  font-size: 13px;
+}
+.escalation {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+}
+.scope-link {
+  align-self: flex-start;
+}
+.decision-member {
+  padding: 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
 </style>

@@ -111,20 +111,21 @@ async function confirm(): Promise<void> {
 </script>
 
 <template>
-  <v-dialog v-model="open" max-width="600">
+  <!-- Look: canvas "Configurações" (Configuracoes.dc.html) primitives inside the dialog. -->
+  <v-dialog v-model="open" max-width="600" aria-labelledby="price-dialog-title">
     <v-card>
-      <v-card-title>
-        <h2 class="text-h6">
+      <div class="dialog-head">
+        <h2 id="price-dialog-title">
           {{
             isCorrection
               ? $t('settings.prices.correctTitle', { model: model?.display_name ?? '' })
               : $t('settings.prices.newTitle', { model: model?.display_name ?? '' })
           }}
         </h2>
-      </v-card-title>
+      </div>
 
-      <v-form v-if="step === 'form'" @submit.prevent="step = 'confirm'">
-        <v-card-text>
+      <form v-if="step === 'form'" @submit.prevent="step = 'confirm'">
+        <div class="dialog-body">
           <v-text-field
             v-model="form.effectiveSince"
             type="datetime-local"
@@ -137,10 +138,9 @@ async function confirm(): Promise<void> {
             :disabled="isCorrection"
             :hint="$t('settings.prices.currencyHint')"
             persistent-hint
-            class="mb-2"
           />
           <fieldset class="price-fields">
-            <legend class="text-subtitle-2 mb-2">{{ $t('settings.prices.perMillion') }}</legend>
+            <legend class="lb">{{ $t('settings.prices.perMillion') }}</legend>
             <v-text-field
               v-for="priceType in PRICE_TYPES"
               :key="priceType"
@@ -157,60 +157,115 @@ async function confirm(): Promise<void> {
             persistent-hint
             maxlength="500"
           />
-        </v-card-text>
-        <v-card-actions>
-          <v-spacer />
-          <v-btn variant="text" @click="open = false">{{ $t('common.cancel') }}</v-btn>
-          <v-btn type="submit" color="primary" variant="flat" :disabled="!valid">
+        </div>
+        <div class="dialog-actions">
+          <button type="button" class="btn" @click="open = false">{{ $t('common.cancel') }}</button>
+          <button type="submit" class="btn btn-p" :disabled="!valid">
             {{ $t('common.continue') }}
-          </v-btn>
-        </v-card-actions>
-      </v-form>
+          </button>
+        </div>
+      </form>
 
       <template v-else>
-        <v-card-text>
+        <div class="dialog-body">
           <!-- ESP-23 section 4: confirmation shows model, date and values. -->
-          <p class="mb-2">{{ $t('settings.prices.confirmIntro') }}</p>
-          <dl class="summary-list">
-            <dt>{{ $t('settings.models.model') }}</dt>
-            <dd>{{ model?.display_name }}</dd>
-            <dt>{{ $t('settings.prices.effectiveSince') }}</dt>
-            <dd>{{ format.dateTime(effectiveSinceIso) }}</dd>
-            <template v-for="priceType in PRICE_TYPES" :key="priceType">
-              <dt>{{ $t(`settings.prices.types.${priceType}`) }}</dt>
+          <p class="intro">{{ $t('settings.prices.confirmIntro') }}</p>
+          <dl class="summary">
+            <div class="kv">
+              <dt class="t2">{{ $t('settings.models.model') }}</dt>
+              <dd>{{ model?.display_name }}</dd>
+            </div>
+            <div class="kv">
+              <dt class="t2">{{ $t('settings.prices.effectiveSince') }}</dt>
+              <dd>{{ format.dateTime(effectiveSinceIso) }}</dd>
+            </div>
+            <div v-for="priceType in PRICE_TYPES" :key="priceType" class="kv">
+              <dt class="t2">{{ $t(`settings.prices.types.${priceType}`) }}</dt>
               <dd>{{ format.amount(form.prices[priceType], form.currency) }}</dd>
-            </template>
-            <dt>{{ $t('settings.prices.source') }}</dt>
-            <dd>{{ form.source }}</dd>
+            </div>
+            <div class="kv">
+              <dt class="t2">{{ $t('settings.prices.source') }}</dt>
+              <dd>{{ form.source }}</dd>
+            </div>
           </dl>
-          <p class="text-body-2 mt-3">{{ $t('settings.prices.costRule') }}</p>
-          <v-alert v-if="periodInUse" type="error" variant="tonal" role="alert" class="mt-2">
+          <p class="note rule">{{ $t('settings.prices.costRule') }}</p>
+          <v-alert v-if="periodInUse" type="error" variant="tonal" role="alert">
             {{ $t('settings.prices.periodInUse') }}
           </v-alert>
-          <ProblemAlert v-else-if="failure" :error="failure" class="mt-2" />
-        </v-card-text>
-        <v-card-actions>
-          <v-spacer />
-          <v-btn variant="text" :disabled="saving" @click="step = 'form'">
+          <ProblemAlert v-else-if="failure" :error="failure" />
+        </div>
+        <div class="dialog-actions">
+          <button type="button" class="btn" :disabled="saving" @click="step = 'form'">
             {{ $t('common.back') }}
-          </v-btn>
-          <v-btn color="primary" variant="flat" :loading="saving" @click="confirm">
+          </button>
+          <button
+            type="button"
+            class="btn btn-p"
+            :disabled="saving"
+            :aria-busy="saving ? 'true' : undefined"
+            @click="confirm"
+          >
             {{
               isCorrection
                 ? $t('settings.prices.confirmCorrection')
                 : $t('settings.prices.confirmNew')
             }}
-          </v-btn>
-        </v-card-actions>
+          </button>
+        </div>
       </template>
     </v-card>
   </v-dialog>
 </template>
 
 <style scoped>
+.dialog-head {
+  padding: 22px 24px 8px;
+}
+
+.dialog-body {
+  padding: 4px 24px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
 .price-fields {
   border: 0;
   margin: 0;
   padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.price-fields legend {
+  padding: 0;
+  margin-bottom: 8px;
+}
+
+.intro {
+  margin: 0;
+}
+
+.summary {
+  margin: 0;
+}
+
+.summary dd {
+  margin: 0;
+  text-align: right;
+}
+
+.rule {
+  margin: 0;
+  font-size: 13px;
+}
+
+.dialog-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 24px 22px;
 }
 </style>

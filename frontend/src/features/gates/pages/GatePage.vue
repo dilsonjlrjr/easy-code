@@ -14,6 +14,8 @@ import { useFormat } from '@/shared/format/useFormat'
 import { redirectToSso } from '@/shared/session/sessionApi'
 import { useSessionStore } from '@/shared/session/sessionStore'
 import AppBreadcrumbs from '@/shared/ui/AppBreadcrumbs.vue'
+import CanvasIcon from '@/shared/ui/CanvasIcon.vue'
+import { stateTone, type ChipTone } from '@/shared/ui/stateFamilies'
 import LiveConnectionStatus from '@/shared/ui/LiveConnectionStatus.vue'
 import LoadingState from '@/shared/ui/LoadingState.vue'
 import ProblemAlert from '@/shared/ui/ProblemAlert.vue'
@@ -267,7 +269,7 @@ const rejectDialog = ref(false)
 const reason = ref('')
 const reasonError = ref(false)
 const unconfirmedChecks = ref<string[]>([])
-const reasonField = ref<{ focus: () => void }>()
+const reasonField = ref<HTMLTextAreaElement>()
 
 function openReject(): void {
   decisionFailure.value = undefined
@@ -344,75 +346,112 @@ function checkStatus(check: CheckResult): string {
     )
   return t(`gates.checkStatus.${check.status}`)
 }
+
+/** Canvas "Gate": the round marker of a check; the status itself is always in the text. */
+function checkMark(check: CheckResult): { symbol: string; tone: string } {
+  if (check.status === 'passed') return { symbol: '✓', tone: 'mark-ok' }
+  if (check.status === 'pending') return { symbol: '…', tone: 'mark-mute' }
+  if (check.status === 'failed' && check.failure_severity === 'blocks')
+    return { symbol: '!', tone: 'mark-crit' }
+  return { symbol: '!', tone: 'mark-warn' }
+}
+
+function severityTone(severity: string): ChipTone {
+  if (severity === 'critical' || severity === 'high') return 'crit'
+  return severity === 'medium' ? 'warn' : 'mute'
+}
+
+const DECISION_TONES: Record<string, ChipTone> = {
+  approved: 'ok',
+  rejected: 'crit',
+  invalidated: 'mute',
+}
 </script>
 
 <template>
-  <v-container max-width="1200">
-    <LoadingState v-if="loader.loading.value && !round && !noRound" />
-    <template v-else-if="loader.error.value && !project">
-      <h1 class="text-h4 mb-4">{{ $t('pages.gate.title') }}</h1>
-      <!-- ER-00-13 / RNF-04: same message for missing and without access. -->
-      <v-alert v-if="notFound" type="warning" variant="tonal" role="alert">
-        {{ $t('problems.not-found') }}
-      </v-alert>
-      <ProblemAlert v-else :error="loader.error.value" retry @retry="loader.run" />
-    </template>
-    <template v-else-if="project">
-      <AppBreadcrumbs :items="breadcrumbs" />
-      <div role="status" class="sr-only">{{ message }}</div>
+  <!-- Layout: canvas "Gate" (Gate.dc.html). -->
+  <LoadingState v-if="loader.loading.value && !round && !noRound" />
+  <template v-else-if="loader.error.value && !project">
+    <h1>{{ $t('pages.gate.title') }}</h1>
+    <!-- ER-00-13 / RNF-04: same message for missing and without access. -->
+    <div v-if="notFound" class="note n-warn" role="alert">
+      <span class="note-icon fg-warn"><CanvasIcon name="alert" :stroke-width="2" /></span>
+      <span class="note-body">{{ $t('problems.not-found') }}</span>
+    </div>
+    <ProblemAlert v-else :error="loader.error.value" retry @retry="loader.run" />
+  </template>
+  <template v-else-if="project">
+    <AppBreadcrumbs :items="breadcrumbs" />
+    <div role="status" class="sr-only">{{ message }}</div>
 
-      <template v-if="noRound">
-        <h1 class="text-h4 mb-2">{{ $t('pages.gate.title') }}</h1>
-        <p class="mb-2">{{ $t('gates.noRound') }}</p>
-        <router-link :to="{ name: ROUTE_NAMES.project, params: { projectId } }">
+    <template v-if="noRound">
+      <div class="page-head">
+        <h1>{{ $t('pages.gate.title') }}</h1>
+        <p class="t2 head-text">{{ $t('gates.noRound') }}</p>
+      </div>
+      <div>
+        <router-link class="btn" :to="{ name: ROUTE_NAMES.project, params: { projectId } }">
           {{ $t('projects.stage.back') }}
         </router-link>
-      </template>
+      </div>
+    </template>
 
-      <template v-else-if="round">
-        <div class="d-flex flex-wrap align-center ga-3 mb-2">
-          <h1 class="text-h4">{{ $t('gates.heading', { stage: stageName }) }}</h1>
+    <template v-else-if="round">
+      <div class="page-head">
+        <h1>{{ $t('gates.heading', { stage: stageName }) }}</h1>
+        <span class="head-row">
           <StateLabel machine="gate" :state="round.state" />
-          <v-spacer />
-          <LiveConnectionStatus :status="live.status.value" />
-        </div>
-        <p class="text-body-2 mb-1">
-          {{ $t('gates.round', { n: round.round }) }} ·
-          <span :title="format.dateTime(round.opened_at)">
-            {{ $t('gates.openedAge', { age: format.age(round.opened_at) }) }}
+          <span class="t2 head-text">
+            {{ project.name }} · {{ $t('gates.round', { n: round.round }) }} ·
+            <span :title="format.dateTime(round.opened_at)">
+              {{ $t('gates.openedAge', { age: format.age(round.opened_at) }) }}
+            </span>
+            ·
+            {{
+              round.approval_mode === 'automatic'
+                ? $t('gates.modeAutomatic')
+                : $t('gates.modeHuman')
+            }}
           </span>
-          ·
-          {{
-            round.approval_mode === 'automatic' ? $t('gates.modeAutomatic') : $t('gates.modeHuman')
-          }}
-        </p>
-        <router-link
-          :to="{ name: ROUTE_NAMES.stage, params: { projectId, stageId: round.stage } }"
-          class="text-body-2"
-        >
-          {{ $t('gates.openStage', { stage: stageName }) }}
-        </router-link>
+          <LiveConnectionStatus :status="live.status.value" />
+        </span>
+        <span class="t2 head-text">
+          {{ $t('gates.explanation') }}
+          <router-link
+            :to="{ name: ROUTE_NAMES.stage, params: { projectId, stageId: round.stage } }"
+          >
+            {{ $t('gates.openStage', { stage: stageName }) }}
+          </router-link>
+        </span>
+      </div>
 
-        <!-- ESP-12 section 6: who waits for whom, in text. -->
-        <v-alert
-          v-if="awaitingHuman"
-          :type="isApprover ? 'warning' : 'info'"
-          variant="tonal"
-          class="my-4"
-          data-testid="gate-waiting"
-        >
+      <!-- ESP-12 section 6: who waits for whom, in text. -->
+      <div
+        v-if="awaitingHuman"
+        class="note"
+        :class="isApprover ? 'n-warn' : undefined"
+        data-testid="gate-waiting"
+        role="alert"
+      >
+        <span class="note-icon" :class="isApprover ? 'fg-warn' : 'fg-info'">
+          <CanvasIcon name="gate" />
+        </span>
+        <span class="note-body">
           {{ isApprover ? $t('gates.waitingForYou') : $t('gates.waitingForApproval') }}
-        </v-alert>
-        <v-alert v-if="reauthenticating" type="info" variant="tonal" role="status" class="my-4">
-          {{ $t('gates.reauthenticating') }}
-        </v-alert>
-        <v-alert
-          v-if="round.state === 'evaluating'"
-          type="info"
-          variant="tonal"
-          class="my-4"
-          data-testid="gate-evaluating"
-        >
+        </span>
+      </div>
+      <div v-if="reauthenticating" class="note" role="status">
+        <span class="note-icon fg-info"><CanvasIcon name="bolt" /></span>
+        <span class="note-body">{{ $t('gates.reauthenticating') }}</span>
+      </div>
+      <div
+        v-if="round.state === 'evaluating'"
+        class="note"
+        role="alert"
+        data-testid="gate-evaluating"
+      >
+        <span class="note-icon fg-info"><CanvasIcon name="bolt" /></span>
+        <span class="note-body">
           {{ $t('gates.evaluating') }}
           <template v-if="round.reevaluation?.finding">
             {{ $t('gates.reevaluationBy') }}
@@ -421,155 +460,91 @@ function checkStatus(check: CheckResult): string {
                 name: ROUTE_NAMES.finding,
                 params: { projectId, findingId: round.reevaluation.finding },
               }"
-              class="monospace"
+              class="mono"
               data-testid="gate-reevaluation-finding"
               >{{ round.reevaluation.finding }}</router-link
             >
           </template>
-        </v-alert>
-        <!-- US-31 CA-2, CA-3 / ER-12-1: why approval is unavailable, by name and in text. -->
-        <v-alert
-          v-if="approvalBlocked"
-          type="error"
-          variant="tonal"
-          class="my-4"
-          data-testid="gate-blocked"
-        >
-          <p class="font-weight-medium">{{ $t('gates.blocked.title') }}</p>
-          <p v-if="failedBlockingChecks.length > 0" class="mt-1">
+        </span>
+      </div>
+      <!-- US-31 CA-2, CA-3 / ER-12-1: why approval is unavailable, by name and in text. -->
+      <div v-if="approvalBlocked" class="note n-crit" role="alert" data-testid="gate-blocked">
+        <span class="note-icon fg-crit"><CanvasIcon name="alert" :stroke-width="2" /></span>
+        <div class="note-body">
+          <p class="note-title">{{ $t('gates.blocked.title') }}</p>
+          <p v-if="failedBlockingChecks.length > 0">
             {{
               $t('gates.blocked.checks', {
                 checks: failedBlockingChecks.map((check) => check.name).join(', '),
               })
             }}
           </p>
-          <p v-if="blockingFindings.length > 0" class="mt-1">
+          <p v-if="blockingFindings.length > 0">
             {{ $t('gates.blocked.findings') }}
             <template v-for="(finding, index) in blockingFindings" :key="finding.id">
               <router-link
                 :to="{ name: ROUTE_NAMES.finding, params: { projectId, findingId: finding.id } }"
-                class="monospace"
+                class="mono"
                 >{{ finding.id }}</router-link><span v-if="index < blockingFindings.length - 1"
                 >,
               </span>
             </template>
           </p>
-          <p class="mt-1">{{ $t('gates.blocked.noOverride') }}</p>
-        </v-alert>
-        <v-alert
-          v-if="separationOfDuties"
-          type="error"
-          variant="tonal"
-          role="alert"
-          class="my-4"
-          data-testid="decision-failure"
-        >
-          {{ $t(separationOfDuties) }}
-        </v-alert>
-        <ProblemAlert
-          v-else-if="decisionFailure && !approveDialog && !rejectDialog"
-          :error="decisionFailure"
-          class="my-4"
-          data-testid="decision-failure"
-        />
-
-        <div v-if="canApprove || canReject" class="d-flex flex-wrap ga-2 my-4">
-          <v-btn
-            v-if="canApprove"
-            color="primary"
-            variant="flat"
-            :disabled="deciding || reauthenticating"
-            @click="openApprove"
-          >
-            {{ $t('gates.approve') }}
-          </v-btn>
-          <v-btn
-            v-if="canReject"
-            variant="outlined"
-            :disabled="deciding || reauthenticating"
-            @click="openReject"
-          >
-            {{ $t('gates.reject') }}
-          </v-btn>
+          <p>{{ $t('gates.blocked.noOverride') }}</p>
         </div>
+      </div>
+      <div
+        v-if="separationOfDuties"
+        class="note n-crit"
+        role="alert"
+        data-testid="decision-failure"
+      >
+        <span class="note-icon fg-crit"><CanvasIcon name="alert" :stroke-width="2" /></span>
+        <span class="note-body">{{ $t(separationOfDuties) }}</span>
+      </div>
+      <ProblemAlert
+        v-else-if="decisionFailure && !approveDialog && !rejectDialog"
+        :error="decisionFailure"
+        data-testid="decision-failure"
+      />
 
-        <section v-if="round.decision" aria-labelledby="decision-heading" class="my-6">
-          <h2 id="decision-heading" class="text-h6 mb-2">{{ $t('gates.decision') }}</h2>
-          <dl class="summary-list" data-testid="gate-decision">
-            <dt>{{ $t('gates.result') }}</dt>
-            <dd>{{ $t(`gates.results.${round.decision.result}`) }}</dd>
-            <dt>{{ $t('gates.by') }}</dt>
-            <dd>{{ who(round.decision.record) }}</dd>
-            <dt>{{ $t('gates.when') }}</dt>
-            <dd>{{ format.dateTime(round.decision.record.when) }}</dd>
-            <dt>{{ $t('gates.from') }}</dt>
-            <dd>{{ origin(round.decision.record) }}</dd>
-            <template v-if="round.decision.reason">
-              <dt>{{ $t('gates.reason') }}</dt>
-              <dd class="pre-wrap">{{ round.decision.reason }}</dd>
-            </template>
-            <template v-if="failedCheckNames.length">
-              <dt>{{ $t('gates.failedChecks') }}</dt>
-              <dd data-testid="decision-failed-checks">{{ failedCheckNames.join(', ') }}</dd>
-            </template>
-            <template v-if="round.decision.blocking_findings?.length">
-              <dt>{{ $t('gates.blockingFindings') }}</dt>
-              <dd>
-                <template v-for="(id, index) in round.decision.blocking_findings" :key="id">
-                  <router-link
-                    :to="{ name: ROUTE_NAMES.finding, params: { projectId, findingId: id } }"
-                    class="monospace"
-                    >{{ id }}</router-link><span
-                    v-if="index < round.decision.blocking_findings.length - 1"
-                    >,
-                  </span>
-                </template>
-              </dd>
-            </template>
-            <template v-if="round.decision.comment">
-              <dt>{{ $t('gates.comment') }}</dt>
-              <dd class="pre-wrap">{{ round.decision.comment }}</dd>
-            </template>
-          </dl>
-          <p v-if="round.decision.result === 'rejected'" class="text-body-2 mt-2">
-            {{ $t('gates.reworkNotice') }}
-          </p>
-        </section>
-
-        <section aria-labelledby="checks-heading" class="my-6">
-          <h2 id="checks-heading" class="text-h6 mb-2">{{ $t('gates.checks') }}</h2>
-          <p class="text-body-2 mb-2" data-testid="check-counts">
-            {{ $t('gates.counts', counts) }}
-          </p>
-          <p v-if="round.checks.length === 0" class="text-body-2">{{ $t('gates.noChecks') }}</p>
-          <v-table v-else density="compact">
-            <caption class="sr-only">
-              {{
-                $t('gates.checks')
-              }}
-            </caption>
-            <thead>
-              <tr>
-                <th scope="col">{{ $t('gates.check') }}</th>
-                <th scope="col">{{ $t('gates.checkType') }}</th>
-                <th scope="col">{{ $t('gates.severity') }}</th>
-                <th scope="col">{{ $t('gates.status') }}</th>
-                <th scope="col">{{ $t('gates.evidence') }}</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr
+      <div class="gate-layout">
+        <div class="gate-main">
+          <section class="card main-card" aria-labelledby="checks-heading">
+            <div class="card-head">
+              <h2 id="checks-heading">{{ $t('gates.checks') }}</h2>
+              <span class="count-chips" data-testid="check-counts">
+                <span class="chip ok">{{
+                  $t('gates.countChips.passed', { n: counts.passed })
+                }}</span>{{ ' '
+                }}<span class="chip" :class="counts.alerts > 0 ? 'warn' : 'mute'">{{
+                  $t('gates.countChips.alerts', { n: counts.alerts })
+                }}</span
+                >{{ ' '
+                }}<span class="chip" :class="counts.blocking > 0 ? 'crit' : 'mute'">{{
+                  $t('gates.countChips.blocking', { n: counts.blocking })
+                }}</span>
+              </span>
+            </div>
+            <p v-if="round.checks.length === 0" class="t2 card-text">{{ $t('gates.noChecks') }}</p>
+            <ul v-else class="list check-list">
+              <li
                 v-for="check in round.checks"
                 :key="check.check"
+                class="li"
                 :data-testid="`check-${check.check}`"
               >
-                <th scope="row" class="font-weight-regular">{{ check.name }}</th>
-                <td>{{ $t(`gates.checkTypes.${check.type}`) }}</td>
-                <td>{{ $t(`gates.severities.${check.failure_severity}`) }}</td>
-                <td>{{ checkStatus(check) }}</td>
-                <td>
-                  <ul v-if="check.evidence?.length" class="plain-list">
-                    <li v-for="(item, index) in check.evidence" :key="index" class="text-body-2">
+                <span class="mark" :class="checkMark(check).tone" aria-hidden="true">{{
+                  checkMark(check).symbol
+                }}</span>
+                <span class="item-text">
+                  <span>{{ check.name }}</span>
+                  <span class="t2 item-detail">
+                    {{ $t('gates.checkType') }}: {{ $t(`gates.checkTypes.${check.type}`) }} ·
+                    {{ $t('gates.status') }}: {{ checkStatus(check) }}
+                  </span>
+                  <ul v-if="check.evidence?.length" class="list">
+                    <li v-for="(item, index) in check.evidence" :key="index" class="t2 item-detail">
                       <!-- PT-48: a wave reference opens the build and test evidence of that wave. -->
                       <router-link
                         v-if="item.reference && isWaveReference(item.reference)"
@@ -578,202 +553,649 @@ function checkStatus(check: CheckResult): string {
                           params: { projectId, waveId: item.reference },
                           hash: '#evidence',
                         }"
-                        class="monospace"
+                        class="mono"
                         :aria-label="$t('evidence.openOf', { wave: item.reference })"
                       >
                         {{ item.reference }}
                       </router-link>
-                      <span v-else-if="item.reference" class="monospace">{{ item.reference }}</span>
-                      <span v-if="item.path" class="monospace"> {{ item.path }}</span>
+                      <span v-else-if="item.reference" class="mono">{{ item.reference }}</span>
+                      <span v-if="item.path" class="mono"> {{ item.path }}</span>
                       {{ item.message }}
                     </li>
                   </ul>
-                </td>
-              </tr>
-            </tbody>
-          </v-table>
-        </section>
+                </span>
+                <span class="chip" :class="check.failure_severity === 'blocks' ? 'mute' : 'info'">
+                  <span class="sr-only">{{ $t('gates.severity') }}:</span>
+                  {{ $t(`gates.severities.${check.failure_severity}`) }}
+                </span>
+              </li>
+            </ul>
+          </section>
 
-        <section aria-labelledby="outputs-heading" class="my-6">
-          <h2 id="outputs-heading" class="text-h6 mb-2">{{ $t('gates.outputs') }}</h2>
-          <p v-if="round.outputs.length === 0" class="text-body-2">{{ $t('artifacts.empty') }}</p>
-          <ul v-else class="plain-list">
-            <li v-for="output in round.outputs" :key="output.artifact" class="text-body-2 mb-1">
-              <router-link
-                :to="{
-                  name: ROUTE_NAMES.artifact,
-                  params: { projectId, artifactId: output.artifact },
-                }"
-                class="monospace"
-              >
-                {{ output.artifact }}
-              </router-link>
-              · {{ $t('artifacts.versionNumber', { n: output.version }) }}
-              <template v-if="output.state">
-                · {{ $t(`states.artifact.${output.state}`) }}</template
-              >
-            </li>
-          </ul>
-        </section>
+          <section class="card main-card" aria-labelledby="outputs-heading">
+            <h2 id="outputs-heading" class="card-title">{{ $t('gates.outputs') }}</h2>
+            <p v-if="round.outputs.length === 0" class="t2 card-text">
+              {{ $t('artifacts.empty') }}
+            </p>
+            <ul v-else class="list">
+              <li v-for="output in round.outputs" :key="output.artifact" class="li">
+                <span class="item-text">
+                  <router-link
+                    :to="{
+                      name: ROUTE_NAMES.artifact,
+                      params: { projectId, artifactId: output.artifact },
+                    }"
+                    class="mono item-link"
+                  >
+                    {{ output.artifact }}
+                  </router-link>
+                </span>
+                <span
+                  class="chip"
+                  :class="output.state ? stateTone('artifact', output.state) : 'mute'"
+                >
+                  <template v-if="output.state">
+                    {{ $t(`states.artifact.${output.state}`) }} ·
+                  </template>
+                  {{ $t('artifacts.versionNumber', { n: output.version }) }}
+                </span>
+              </li>
+            </ul>
+          </section>
 
-        <section aria-labelledby="findings-heading" class="my-6">
-          <h2 id="findings-heading" class="text-h6 mb-2">{{ $t('projects.stage.findings') }}</h2>
-          <p
-            v-if="!round.blocking_findings?.length && !round.non_blocking_findings?.length"
-            class="text-body-2"
+          <section class="card main-card" aria-labelledby="findings-heading">
+            <h2 id="findings-heading" class="card-title">{{ $t('projects.stage.findings') }}</h2>
+            <p
+              v-if="!round.blocking_findings?.length && !round.non_blocking_findings?.length"
+              class="t2 card-text"
+            >
+              {{ $t('gates.noFindings') }}
+            </p>
+            <ul v-else class="list">
+              <li
+                v-for="finding in [
+                  ...(round.blocking_findings ?? []),
+                  ...(round.non_blocking_findings ?? []),
+                ]"
+                :key="finding.id"
+                class="li wrap-row"
+              >
+                <router-link
+                  :to="{ name: ROUTE_NAMES.finding, params: { projectId, findingId: finding.id } }"
+                  class="mono"
+                >
+                  {{ finding.id }}
+                </router-link>
+                <span class="item-text">{{ finding.title }}</span>
+                <span class="chip" :class="severityTone(finding.severity)">
+                  {{ $t(`findings.severity.${finding.severity}`) }}
+                </span>
+                <span class="chip" :class="stateTone('finding', finding.status)">
+                  {{ $t(`states.finding.${finding.status}`) }}
+                </span>
+                <span v-if="finding.blocking" class="chip crit">
+                  {{ $t('projects.stage.blocking') }}
+                </span>
+              </li>
+            </ul>
+          </section>
+        </div>
+
+        <div
+          v-if="canApprove || canReject || round.decision || history.length > 1"
+          class="gate-side"
+        >
+          <section
+            v-if="canApprove || canReject"
+            class="card side-card"
+            aria-labelledby="your-decision-heading"
           >
-            {{ $t('gates.noFindings') }}
-          </p>
-          <ul v-else class="plain-list">
-            <li
-              v-for="finding in [
-                ...(round.blocking_findings ?? []),
-                ...(round.non_blocking_findings ?? []),
-              ]"
-              :key="finding.id"
-              class="text-body-2 mb-1"
-            >
-              <router-link
-                :to="{ name: ROUTE_NAMES.finding, params: { projectId, findingId: finding.id } }"
-                class="monospace"
+            <h2 id="your-decision-heading">{{ $t('gates.yourDecision') }}</h2>
+            <div class="decision-buttons">
+              <button
+                v-if="canApprove"
+                type="button"
+                class="btn btn-p"
+                :disabled="deciding || reauthenticating"
+                @click="openApprove"
               >
-                {{ finding.id }}
-              </router-link>
-              · {{ finding.title }} · {{ $t(`findings.severity.${finding.severity}`) }} ·
-              {{ $t(`states.finding.${finding.status}`) }}
-              <template v-if="finding.blocking"> · {{ $t('projects.stage.blocking') }}</template>
-            </li>
-          </ul>
-        </section>
+                {{ $t('gates.approve') }}
+              </button>
+              <button
+                v-if="canReject"
+                type="button"
+                class="btn"
+                :disabled="deciding || reauthenticating"
+                @click="openReject"
+              >
+                {{ $t('gates.reject') }}
+              </button>
+            </div>
+            <p class="t2 fine-print">{{ $t('gates.decisionNote') }}</p>
+          </section>
 
-        <section v-if="history.length > 1" aria-labelledby="history-heading" class="my-6">
-          <h2 id="history-heading" class="text-h6 mb-2">{{ $t('gates.history') }}</h2>
-          <ul class="plain-list">
-            <li v-for="item in history" :key="item.round" class="text-body-2 mb-1">
-              <router-link
-                :to="{ name: ROUTE_NAMES.gate, params: { projectId, gateId, round: item.round } }"
-                :aria-current="item.round === round.round ? 'page' : undefined"
-              >
-                {{ $t('gates.round', { n: item.round }) }}
-              </router-link>
-              · {{ $t(`states.gate.${item.state}`) }}
-            </li>
-          </ul>
-        </section>
-      </template>
+          <section v-if="round.decision" class="card side-card" aria-labelledby="decision-heading">
+            <h2 id="decision-heading">{{ $t('gates.decision') }}</h2>
+            <dl class="kv-list" data-testid="gate-decision">
+              <div class="kv">
+                <dt class="t2">{{ $t('gates.result') }}</dt>
+                <dd>
+                  <span class="chip" :class="DECISION_TONES[round.decision.result] ?? 'mute'">
+                    {{ $t(`gates.results.${round.decision.result}`) }}
+                  </span>
+                </dd>
+              </div>
+              <div class="kv">
+                <dt class="t2">{{ $t('gates.by') }}</dt>
+                <dd>{{ who(round.decision.record) }}</dd>
+              </div>
+              <div class="kv">
+                <dt class="t2">{{ $t('gates.when') }}</dt>
+                <dd>{{ format.dateTime(round.decision.record.when) }}</dd>
+              </div>
+              <div class="kv">
+                <dt class="t2">{{ $t('gates.from') }}</dt>
+                <dd>{{ origin(round.decision.record) }}</dd>
+              </div>
+              <div v-if="round.decision.reason" class="kv kv-stack">
+                <dt class="t2">{{ $t('gates.reason') }}</dt>
+                <dd class="pre-wrap">{{ round.decision.reason }}</dd>
+              </div>
+              <div v-if="failedCheckNames.length" class="kv kv-stack">
+                <dt class="t2">{{ $t('gates.failedChecks') }}</dt>
+                <dd data-testid="decision-failed-checks">{{ failedCheckNames.join(', ') }}</dd>
+              </div>
+              <div v-if="round.decision.blocking_findings?.length" class="kv kv-stack">
+                <dt class="t2">{{ $t('gates.blockingFindings') }}</dt>
+                <dd>
+                  <template v-for="(id, index) in round.decision.blocking_findings" :key="id">
+                    <router-link
+                      :to="{ name: ROUTE_NAMES.finding, params: { projectId, findingId: id } }"
+                      class="mono"
+                      >{{ id }}</router-link><span
+                      v-if="index < round.decision.blocking_findings.length - 1"
+                      >,
+                    </span>
+                  </template>
+                </dd>
+              </div>
+              <div v-if="round.decision.comment" class="kv kv-stack">
+                <dt class="t2">{{ $t('gates.comment') }}</dt>
+                <dd class="pre-wrap">{{ round.decision.comment }}</dd>
+              </div>
+            </dl>
+            <p v-if="round.decision.result === 'rejected'" class="t2 fine-print">
+              {{ $t('gates.reworkNotice') }}
+            </p>
+          </section>
+
+          <section
+            v-if="history.length > 1"
+            class="card side-card"
+            aria-labelledby="history-heading"
+          >
+            <h2 id="history-heading">{{ $t('gates.history') }}</h2>
+            <ul class="list">
+              <li v-for="item in history" :key="item.round" class="li">
+                <span class="item-text">
+                  <router-link
+                    :to="{
+                      name: ROUTE_NAMES.gate,
+                      params: { projectId, gateId, round: item.round },
+                    }"
+                    :aria-current="item.round === round.round ? 'page' : undefined"
+                    class="item-link"
+                  >
+                    {{ $t('gates.round', { n: item.round }) }}
+                  </router-link>
+                </span>
+                <span class="chip" :class="stateTone('gate', item.state)">
+                  {{ $t(`states.gate.${item.state}`) }}
+                </span>
+              </li>
+            </ul>
+          </section>
+        </div>
+      </div>
     </template>
+  </template>
 
-    <!-- PT-31: one approval dialog, one box per human check; Approve waits until all are checked. -->
-    <v-dialog v-model="approveDialog" max-width="560" :persistent="deciding">
-      <v-card>
-        <v-card-title>
-          <h2 class="text-h6">{{ $t('gates.approveTitle', { stage: stageName }) }}</h2>
-        </v-card-title>
-        <v-form @submit.prevent="approve(approvalDecision())">
-          <v-card-text>
-            <fieldset
-              v-if="humanChecks.length > 0"
-              class="plain-fieldset"
-              aria-describedby="human-checks-help"
-            >
-              <legend class="text-body-1 mb-1">{{ $t('gates.humanChecks') }}</legend>
-              <p id="human-checks-help" class="text-body-2 text-medium-emphasis mb-2">
-                {{ $t('gates.humanChecksHelp') }}
-              </p>
-              <v-checkbox
-                v-for="check in humanChecks"
-                :key="check.check"
-                v-model="confirmedChecks"
-                :value="check.check"
-                :label="check.name"
-                density="compact"
-                hide-details
-              />
-            </fieldset>
-            <p v-else class="text-body-2 mb-2">{{ $t('gates.noHumanChecks') }}</p>
-            <v-textarea
-              v-model="comment"
-              :label="$t('gates.commentOptional')"
-              rows="2"
-              auto-grow
-              class="mt-4"
-              :counter="5000"
+  <!-- PT-31: one approval dialog, one box per human check; Approve waits until all are checked. -->
+  <v-dialog
+    v-model="approveDialog"
+    max-width="460"
+    :persistent="deciding"
+    aria-labelledby="approve-dialog-title"
+  >
+    <v-card class="dlg-card">
+      <h2 id="approve-dialog-title">{{ $t('gates.approveTitle', { stage: stageName }) }}</h2>
+      <form class="dlg-form" @submit.prevent="approve(approvalDecision())">
+        <fieldset
+          v-if="humanChecks.length > 0"
+          class="plain-fieldset"
+          aria-describedby="human-checks-help"
+        >
+          <legend class="field-label">{{ $t('gates.humanChecks') }}</legend>
+          <p id="human-checks-help" class="t2 field-help">{{ $t('gates.humanChecksHelp') }}</p>
+          <label
+            v-for="check in humanChecks"
+            :key="check.check"
+            :for="`approve-check-${check.check}`"
+            class="check-option"
+          >
+            <input
+              :id="`approve-check-${check.check}`"
+              v-model="confirmedChecks"
+              type="checkbox"
+              :value="check.check"
             />
-            <ProblemAlert v-if="decisionFailure" :error="decisionFailure" class="mt-2" />
-          </v-card-text>
-          <v-card-actions>
-            <v-spacer />
-            <v-btn variant="text" :disabled="deciding" @click="approveDialog = false">
-              {{ $t('common.cancel') }}
-            </v-btn>
-            <v-btn
-              type="submit"
-              color="primary"
-              variant="flat"
-              :loading="deciding"
-              :disabled="!allChecksConfirmed"
-            >
-              {{ $t('gates.approve') }}
-            </v-btn>
-          </v-card-actions>
-        </v-form>
-      </v-card>
-    </v-dialog>
+            <span>{{ check.name }}</span>
+          </label>
+        </fieldset>
+        <p v-else class="dlg-text">{{ $t('gates.noHumanChecks') }}</p>
+        <div class="field">
+          <label for="gate-comment" class="field">
+            <span class="field-label">{{ $t('gates.commentOptional') }}</span>
+            <textarea id="gate-comment" v-model="comment" class="fld" rows="3" />
+          </label>
+          <span class="t2 field-counter">{{ `${comment.length} / 5000` }}</span>
+        </div>
+        <ProblemAlert v-if="decisionFailure" :error="decisionFailure" />
+        <div class="dlg-actions">
+          <button type="button" class="btn" :disabled="deciding" @click="approveDialog = false">
+            {{ $t('common.cancel') }}
+          </button>
+          <button
+            type="submit"
+            class="btn btn-p"
+            :disabled="deciding || !allChecksConfirmed"
+            :aria-busy="deciding || undefined"
+          >
+            <v-progress-circular v-if="deciding" indeterminate size="16" width="2" />
+            {{ $t('gates.approve') }}
+          </button>
+        </div>
+      </form>
+    </v-card>
+  </v-dialog>
 
-    <v-dialog v-model="rejectDialog" max-width="560" :persistent="deciding">
-      <v-card>
-        <v-card-title>
-          <h2 class="text-h6">{{ $t('gates.rejectTitle', { stage: stageName }) }}</h2>
-        </v-card-title>
-        <v-form @submit.prevent="reject">
-          <v-card-text>
-            <v-textarea
+  <v-dialog
+    v-model="rejectDialog"
+    max-width="460"
+    :persistent="deciding"
+    aria-labelledby="reject-dialog-title"
+  >
+    <v-card class="dlg-card">
+      <h2 id="reject-dialog-title">{{ $t('gates.rejectTitle', { stage: stageName }) }}</h2>
+      <form class="dlg-form" @submit.prevent="reject">
+        <div class="field">
+          <label for="gate-reason" class="field">
+            <span class="field-label">{{ $t('gates.reasonRequired') }}</span>
+            <textarea
+              id="gate-reason"
               ref="reasonField"
               v-model="reason"
-              :label="$t('gates.reasonRequired')"
-              :error-messages="reasonError ? [$t('gates.reasonMissing')] : []"
-              rows="3"
-              auto-grow
-              :counter="10000"
-              @update:model-value="reasonError = false"
+              class="fld"
+              rows="4"
+              aria-required="true"
+              :aria-invalid="reasonError || undefined"
+              :aria-describedby="reasonError ? 'gate-reason-error' : undefined"
+              @input="reasonError = false"
             />
-            <fieldset v-if="humanChecks.length > 0" class="plain-fieldset mt-2">
-              <legend class="text-body-2 mb-1">{{ $t('gates.unconfirmedChecks') }}</legend>
-              <v-checkbox
-                v-for="check in humanChecks"
-                :key="check.check"
-                v-model="unconfirmedChecks"
-                :value="check.check"
-                :label="check.name"
-                density="compact"
-                hide-details
-              />
-            </fieldset>
-            <ProblemAlert v-if="decisionFailure" :error="decisionFailure" class="mt-2" />
-          </v-card-text>
-          <v-card-actions>
-            <v-spacer />
-            <v-btn variant="text" :disabled="deciding" @click="rejectDialog = false">
-              {{ $t('common.cancel') }}
-            </v-btn>
-            <v-btn type="submit" color="error" variant="flat" :loading="deciding">
-              {{ $t('gates.reject') }}
-            </v-btn>
-          </v-card-actions>
-        </v-form>
-      </v-card>
-    </v-dialog>
-  </v-container>
+          </label>
+          <span v-if="reasonError" id="gate-reason-error" class="field-error" role="alert">
+            {{ $t('gates.reasonMissing') }}
+          </span>
+          <span class="t2 field-counter">{{ `${reason.length} / 10000` }}</span>
+        </div>
+        <fieldset v-if="humanChecks.length > 0" class="plain-fieldset">
+          <legend class="field-label">{{ $t('gates.unconfirmedChecks') }}</legend>
+          <label
+            v-for="check in humanChecks"
+            :key="check.check"
+            :for="`reject-check-${check.check}`"
+            class="check-option"
+          >
+            <input
+              :id="`reject-check-${check.check}`"
+              v-model="unconfirmedChecks"
+              type="checkbox"
+              :value="check.check"
+            />
+            <span>{{ check.name }}</span>
+          </label>
+        </fieldset>
+        <ProblemAlert v-if="decisionFailure" :error="decisionFailure" />
+        <div class="dlg-actions">
+          <button type="button" class="btn" :disabled="deciding" @click="rejectDialog = false">
+            {{ $t('common.cancel') }}
+          </button>
+          <button
+            type="submit"
+            class="btn btn-p"
+            :disabled="deciding"
+            :aria-busy="deciding || undefined"
+          >
+            <v-progress-circular v-if="deciding" indeterminate size="16" width="2" />
+            {{ $t('gates.reject') }}
+          </button>
+        </div>
+      </form>
+    </v-card>
+  </v-dialog>
 </template>
 
 <style scoped>
-.plain-fieldset {
-  border: 0;
+/* Values copied from the canvas "Gate" artboard. */
+.page-head {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.head-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.head-text {
+  margin: 0;
+  font-size: 13px;
+}
+
+.note p {
+  margin: 0;
+}
+
+.note-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.note-title {
+  font-weight: 700;
+}
+
+.note-icon {
+  display: flex;
+  flex: none;
+}
+
+.n-ok {
+  border-color: rgba(34, 197, 94, 0.45);
+  background: rgba(34, 197, 94, 0.12);
+}
+
+.n-warn {
+  border-color: rgba(234, 179, 8, 0.45);
+  background: rgba(234, 179, 8, 0.12);
+}
+
+.n-crit {
+  border-color: rgba(239, 68, 68, 0.45);
+  background: rgba(239, 68, 68, 0.12);
+}
+
+.fg-info {
+  color: #c7d2fe;
+}
+
+.fg-warn {
+  color: #fcd34d;
+}
+
+.fg-crit {
+  color: #fca5a5;
+}
+
+.gate-layout {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 20px;
+  align-items: flex-start;
+}
+
+.gate-main {
+  flex: 3 1 520px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.gate-side {
+  flex: 2 1 300px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.main-card {
+  padding: 18px 22px;
+}
+
+.side-card {
+  padding: 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.card-title {
+  margin-bottom: 4px;
+}
+
+.card-text {
+  margin: 0;
+}
+
+.count-chips {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.list {
+  list-style: none;
   margin: 0;
   padding: 0;
 }
 
+.check-list {
+  margin-top: 8px;
+}
+
+.wrap-row {
+  flex-wrap: wrap;
+}
+
+.mark {
+  width: 22px;
+  height: 22px;
+  border-radius: 11px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.mark-ok {
+  background: rgba(34, 197, 94, 0.18);
+  color: #86efac;
+}
+
+.mark-warn {
+  background: rgba(234, 179, 8, 0.18);
+  color: #fcd34d;
+}
+
+.mark-crit {
+  background: rgba(239, 68, 68, 0.18);
+  color: #fca5a5;
+}
+
+.mark-mute {
+  background: rgba(255, 255, 255, 0.1);
+  color: #e5e7f5;
+}
+
+.item-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow-wrap: anywhere;
+}
+
+.item-detail {
+  font-size: 12px;
+}
+
+.item-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  font-weight: 500;
+}
+
+.decision-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.decision-buttons .btn {
+  width: 100%;
+}
+
+.fine-print {
+  margin: 0;
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.kv-list {
+  margin: 0;
+}
+
+.kv dt,
+.kv dd {
+  margin: 0;
+}
+
+.kv dd {
+  font-weight: 600;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+.kv-stack {
+  flex-direction: column;
+  gap: 4px;
+}
+
+.kv-stack dd {
+  text-align: left;
+  font-weight: 400;
+}
+
 .pre-wrap {
   white-space: pre-wrap;
+}
+
+/* Dialog: canvas `.dlg` (Onda.dc.html). */
+.dlg-card {
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  background: #151b45;
+}
+
+.dlg-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.dlg-text {
+  margin: 0;
+}
+
+.dlg-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.plain-fieldset {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.field-label {
+  font-weight: 600;
+  padding: 0;
+}
+
+.field-help {
+  margin: 4px 0 4px;
+  font-size: 13px;
+}
+
+.field-counter {
+  align-self: flex-end;
+  font-size: 12px;
+}
+
+.field-error {
+  color: #fca5a5;
+  font-size: 12px;
+}
+
+.fld[aria-invalid='true'] {
+  border-color: #fca5a5;
+}
+
+.check-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  cursor: pointer;
+}
+
+.check-option input {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  flex: none;
+  accent-color: #7c3aed;
+  cursor: pointer;
 }
 </style>

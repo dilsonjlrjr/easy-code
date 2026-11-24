@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, ref, useId, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useFormat } from '@/shared/format/useFormat'
 import LoadingState from '@/shared/ui/LoadingState.vue'
@@ -30,7 +30,13 @@ const loading = ref(false)
 const loadFailure = ref<unknown>()
 const saving = ref(false)
 const failure = ref<unknown>()
+const fieldId = useId()
 
+const originChoices = computed<Array<{ value: 'all' | Skill['origin']; label: string }>>(() => [
+  { value: 'all', label: t('agentsPage.skills.originAll') },
+  { value: 'native', label: t('agentsPage.skills.origin.native') },
+  { value: 'organization', label: t('agentsPage.skills.origin.organization') },
+])
 const chosenSkill = computed(() => skills.value.find((skill) => skill.id === chosen.value))
 
 async function load(): Promise<void> {
@@ -89,6 +95,7 @@ async function confirm(): Promise<void> {
 </script>
 
 <template>
+  <!-- Look: canvas "Agentes e skills" (Agentes.dc.html) primitives; options use the canvas `.op`. -->
   <v-dialog
     v-model="open"
     max-width="720"
@@ -97,82 +104,219 @@ async function confirm(): Promise<void> {
     aria-labelledby="skill-picker-title"
   >
     <v-card data-testid="skill-picker">
-      <v-card-title>
-        <h2 id="skill-picker-title" class="text-h6">
+      <div class="dialog-head">
+        <h2 id="skill-picker-title">
           {{ $t('agentsPage.skills.pickerTitle', { agent: props.agentName }) }}
         </h2>
-      </v-card-title>
-      <v-card-text>
-        <v-radio-group v-model="origin" inline :label="$t('agentsPage.skills.originFilter')">
-          <v-radio value="all" :label="$t('agentsPage.skills.originAll')" />
-          <v-radio value="native" :label="$t('agentsPage.skills.origin.native')" />
-          <v-radio value="organization" :label="$t('agentsPage.skills.origin.organization')" />
-        </v-radio-group>
+      </div>
+      <v-card-text class="dialog-body">
+        <fieldset class="group">
+          <legend class="lb">{{ $t('agentsPage.skills.originFilter') }}</legend>
+          <div class="origin-row">
+            <label
+              v-for="choice in originChoices"
+              :key="choice.value"
+              :for="`${fieldId}-origin-${choice.value}`"
+              class="radio"
+            >
+              <input
+                :id="`${fieldId}-origin-${choice.value}`"
+                v-model="origin"
+                type="radio"
+                :name="`${fieldId}-origin`"
+                :value="choice.value"
+              />
+              {{ choice.label }}
+            </label>
+          </div>
+        </fieldset>
         <LoadingState v-if="loading" type="list-item-three-line@3" />
         <ProblemAlert v-else-if="loadFailure" :error="loadFailure" retry @retry="load" />
-        <p v-else-if="skills.length === 0" class="text-body-2">
+        <p v-else-if="skills.length === 0" class="empty">
           {{ $t('agentsPage.skills.noneToPick') }}
         </p>
-        <v-radio-group v-else v-model="chosen" :label="$t('agentsPage.skills.choose')">
-          <div
-            v-for="skill in skills"
-            :key="skill.id"
-            class="skill-option"
-            :data-testid="`skill-option-${skill.id}`"
-          >
-            <v-radio
-              :value="skill.id"
-              :label="skill.name"
-              :disabled="!canAssociate(skill, props.pinned)"
-            />
-            <div class="ml-10 text-body-2">
-              <!-- ER-22-6: the description is untrusted data, shown as escaped text. -->
-              <p>{{ skill.description }}</p>
-              <p class="text-medium-emphasis">
-                {{ $t(`agentsPage.skills.origin.${skill.origin}`) }} ·
-                {{ $t('agentsPage.skills.versionNumber', { n: skill.current_version }) }} ·
-                {{
-                  $t('agentsPage.skills.tokens', {
-                    n: format.integer(skill.estimated_tokens ?? 0),
-                  })
-                }}
-              </p>
-              <p v-if="skill.stages?.length" class="text-medium-emphasis">
-                {{ $t('agentsPage.skills.stages', { stages: names(skill.stages, 'stages') }) }}
-              </p>
-              <p v-if="skill.agents?.length" class="text-medium-emphasis">
-                {{ $t('agentsPage.skills.agents', { agents: names(skill.agents, 'agents') }) }}
-              </p>
-              <p v-if="unavailableReason(skill)" class="font-weight-medium">
-                {{ unavailableReason(skill) }}
-              </p>
+        <fieldset v-else class="group">
+          <legend class="lb">{{ $t('agentsPage.skills.choose') }}</legend>
+          <div class="options">
+            <div
+              v-for="skill in skills"
+              :key="skill.id"
+              class="op"
+              :class="{
+                on: chosen === skill.id,
+                off: !canAssociate(skill, props.pinned),
+              }"
+              :data-testid="`skill-option-${skill.id}`"
+            >
+              <div class="op-text">
+                <label :for="`${fieldId}-${skill.id}`" class="op-name">
+                  <input
+                    :id="`${fieldId}-${skill.id}`"
+                    v-model="chosen"
+                    type="radio"
+                    :name="`${fieldId}-skill`"
+                    :value="skill.id"
+                    :disabled="!canAssociate(skill, props.pinned)"
+                    :aria-describedby="`${fieldId}-${skill.id}-about`"
+                  />
+                  {{ skill.name }}
+                </label>
+                <div :id="`${fieldId}-${skill.id}-about`" class="op-about">
+                  <!-- ER-22-6: the description is untrusted data, shown as escaped text. -->
+                  <p>{{ skill.description }}</p>
+                  <p class="t2">
+                    {{ $t(`agentsPage.skills.origin.${skill.origin}`) }} ·
+                    {{ $t('agentsPage.skills.versionNumber', { n: skill.current_version }) }} ·
+                    {{
+                      $t('agentsPage.skills.tokens', {
+                        n: format.integer(skill.estimated_tokens ?? 0),
+                      })
+                    }}
+                  </p>
+                  <p v-if="skill.stages?.length" class="t2">
+                    {{ $t('agentsPage.skills.stages', { stages: names(skill.stages, 'stages') }) }}
+                  </p>
+                  <p v-if="skill.agents?.length" class="t2">
+                    {{ $t('agentsPage.skills.agents', { agents: names(skill.agents, 'agents') }) }}
+                  </p>
+                  <p v-if="unavailableReason(skill)" class="reason">
+                    {{ unavailableReason(skill) }}
+                  </p>
+                </div>
+              </div>
             </div>
           </div>
-        </v-radio-group>
-        <ProblemAlert v-if="failure" :error="failure" class="mt-2" />
+        </fieldset>
+        <ProblemAlert v-if="failure" :error="failure" class="failure" />
       </v-card-text>
-      <v-card-actions>
-        <v-spacer />
-        <v-btn variant="text" :disabled="saving" @click="open = false">
+      <div class="dialog-actions">
+        <button type="button" class="btn" :disabled="saving" @click="open = false">
           {{ $t('common.cancel') }}
-        </v-btn>
-        <v-btn
-          color="primary"
-          variant="flat"
-          :disabled="!chosenSkill"
-          :loading="saving"
+        </button>
+        <button
+          type="button"
+          class="btn btn-p"
+          :disabled="!chosenSkill || saving"
+          :aria-busy="saving ? 'true' : undefined"
           @click="confirm"
         >
           {{ $t('agentsPage.skills.associate') }}
-        </v-btn>
-      </v-card-actions>
+        </button>
+      </div>
     </v-card>
   </v-dialog>
 </template>
 
 <style scoped>
-.skill-option {
-  border-bottom: 1px solid rgb(var(--v-theme-on-surface), 0.12);
-  padding: 0.5rem 0;
+.dialog-head {
+  padding: 22px 24px 8px;
+}
+
+.dialog-body.v-card-text {
+  padding: 4px 24px 8px;
+  font-size: 14px;
+  line-height: 20px;
+  letter-spacing: 0;
+  color: #f1f3ff;
+}
+
+.group {
+  border: 0;
+  margin: 0 0 12px;
+  padding: 0;
+}
+
+.group legend {
+  padding: 0;
+  margin-bottom: 6px;
+}
+
+.origin-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 20px;
+}
+
+.radio {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  cursor: pointer;
+}
+
+input[type='radio'] {
+  width: 18px;
+  height: 18px;
+  margin: 1px 0 0;
+  flex: none;
+  accent-color: #7c3aed;
+  cursor: pointer;
+}
+
+input[type='radio']:disabled {
+  cursor: not-allowed;
+}
+
+.options {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.op {
+  cursor: default;
+}
+
+.op.off {
+  opacity: 0.6;
+}
+
+.op-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.op-name {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 44px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.op.off .op-name {
+  cursor: not-allowed;
+}
+
+.op-about {
+  padding-left: 30px;
+}
+
+.op-about p {
+  margin: 2px 0 0;
+  font-size: 13px;
+}
+
+.op-about .reason {
+  font-weight: 700;
+  color: #fcd34d;
+}
+
+.empty {
+  margin: 0;
+}
+
+.failure {
+  margin-top: 8px;
+}
+
+.dialog-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 24px 22px;
 }
 </style>

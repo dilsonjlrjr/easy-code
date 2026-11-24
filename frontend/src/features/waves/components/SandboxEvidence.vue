@@ -4,6 +4,7 @@ import { useI18n } from 'vue-i18n'
 import { useAnnouncer } from '@/shared/composables/useAnnouncer'
 import { useFormat } from '@/shared/format/useFormat'
 import ProblemAlert from '@/shared/ui/ProblemAlert.vue'
+import type { ChipTone } from '@/shared/ui/stateFamilies'
 import type { SandboxExecution } from '../api/wavesApi'
 import {
   endedByLimit,
@@ -44,6 +45,14 @@ function outcomeText(execution: SandboxExecution): string {
   return t(`evidence.outcome.${outcome}`)
 }
 
+/** Canvas chip tone of the outcome; the outcome is always written next to it. */
+function outcomeTone(execution: SandboxExecution): ChipTone {
+  const outcome = executionOutcome(execution)
+  if (outcome === 'succeeded') return 'ok'
+  if (outcome === 'limit') return 'warn'
+  return outcome === 'aborted' ? 'mute' : 'crit'
+}
+
 async function downloadOutput(execution: SandboxExecution, position: number): Promise<void> {
   downloadFailure.value = undefined
   downloading.value = execution.id
@@ -65,27 +74,22 @@ async function downloadOutput(execution: SandboxExecution, position: number): Pr
 </script>
 
 <template>
-  <section id="evidence" aria-labelledby="evidence-heading" class="mb-8">
-    <h2 id="evidence-heading" class="text-h6 mb-2" tabindex="-1">
+  <!-- Look: a canvas `.card` (Onda.dc.html) with `.li` rows and `.kv` pairs. -->
+  <section id="evidence" aria-labelledby="evidence-heading" class="card evidence-card">
+    <h2 id="evidence-heading" class="card-title" tabindex="-1">
       {{ $t('evidence.title') }}
     </h2>
     <ProblemAlert v-if="error" :error="error" retry @retry="$emit('retry')" />
-    <p v-else-if="executions.length === 0" class="text-body-2" data-testid="evidence-empty">
+    <p v-else-if="executions.length === 0" class="t2 card-text" data-testid="evidence-empty">
       {{ $t('evidence.none') }}
     </p>
     <template v-else>
       <!-- RNF-03: the sandbox stopped some commands at a resource limit. -->
-      <v-alert
-        v-if="limitCount > 0"
-        type="warning"
-        variant="tonal"
-        class="mb-4"
-        data-testid="evidence-limits"
-      >
+      <div v-if="limitCount > 0" class="note n-warn" role="alert" data-testid="evidence-limits">
         {{ $t('evidence.limitsNotice', { count: limitCount }) }}
-      </v-alert>
+      </div>
       <div role="status" class="sr-only">{{ message }}</div>
-      <ProblemAlert v-if="downloadFailure" :error="downloadFailure" class="mb-2" />
+      <ProblemAlert v-if="downloadFailure" :error="downloadFailure" />
       <ol class="execution-list" data-testid="evidence-list">
         <li
           v-for="(execution, index) in executions"
@@ -93,27 +97,40 @@ async function downloadOutput(execution: SandboxExecution, position: number): Pr
           :data-testid="`execution-${index + 1}`"
           class="execution-item"
         >
-          <h3 class="text-subtitle-1 font-weight-medium">
-            {{
-              $t('evidence.commandHeading', {
-                n: index + 1,
-                category: $t(`evidence.categories.${execution.category}`),
-              })
-            }}
-            · <span data-testid="execution-outcome">{{ outcomeText(execution) }}</span>
+          <h3 class="execution-heading">
+            <span>
+              {{
+                $t('evidence.commandHeading', {
+                  n: index + 1,
+                  category: $t(`evidence.categories.${execution.category}`),
+                })
+              }}
+              ·
+            </span>
+            <span class="chip" :class="outcomeTone(execution)" data-testid="execution-outcome">{{
+              outcomeText(execution)
+            }}</span>
           </h3>
-          <p class="monospace command-line">{{ execution.command }}</p>
-          <dl class="summary-list mt-2">
-            <dt>{{ $t('evidence.exitCode') }}</dt>
-            <dd>{{ execution.exit_code ?? $t('evidence.noExitCode') }}</dd>
-            <dt>{{ $t('evidence.duration') }}</dt>
-            <dd>{{ format.duration(execution.duration_ms) }}</dd>
-            <dt>{{ $t('evidence.endReason') }}</dt>
-            <dd>{{ $t(`evidence.endReasons.${execution.end_reason}`) }}</dd>
-            <dt>{{ $t('evidence.started') }}</dt>
-            <dd>{{ format.dateTime(execution.start) }}</dd>
-            <template v-if="execution.tests">
-              <dt>{{ $t('evidence.tests') }}</dt>
+          <p class="mono command-line">{{ execution.command }}</p>
+          <dl class="kv-list">
+            <div class="kv">
+              <dt class="t2">{{ $t('evidence.exitCode') }}</dt>
+              <dd>{{ execution.exit_code ?? $t('evidence.noExitCode') }}</dd>
+            </div>
+            <div class="kv">
+              <dt class="t2">{{ $t('evidence.duration') }}</dt>
+              <dd>{{ format.duration(execution.duration_ms) }}</dd>
+            </div>
+            <div class="kv">
+              <dt class="t2">{{ $t('evidence.endReason') }}</dt>
+              <dd>{{ $t(`evidence.endReasons.${execution.end_reason}`) }}</dd>
+            </div>
+            <div class="kv">
+              <dt class="t2">{{ $t('evidence.started') }}</dt>
+              <dd>{{ format.dateTime(execution.start) }}</dd>
+            </div>
+            <div v-if="execution.tests" class="kv">
+              <dt class="t2">{{ $t('evidence.tests') }}</dt>
               <dd data-testid="execution-tests">
                 {{
                   $t('evidence.testCounts', {
@@ -124,39 +141,46 @@ async function downloadOutput(execution: SandboxExecution, position: number): Pr
                   })
                 }}
               </dd>
-            </template>
-            <template v-if="execution.image_digest">
-              <dt>{{ $t('evidence.image') }}</dt>
-              <dd class="monospace digest">{{ execution.image_digest }}</dd>
-            </template>
+            </div>
+            <div v-if="execution.image_digest" class="kv">
+              <dt class="t2">{{ $t('evidence.image') }}</dt>
+              <dd class="mono digest">{{ execution.image_digest }}</dd>
+            </div>
           </dl>
-          <details v-if="execution.output_start" class="mt-2">
+          <details v-if="execution.output_start" class="output-details">
             <summary>
               {{ $t('evidence.showOutput', { size: format.bytes(execution.output_bytes) }) }}
             </summary>
-            <p v-if="outputIsPartial(execution)" class="text-body-2 mt-1">
+            <p v-if="outputIsPartial(execution)" class="t2 partial">
               {{ $t('evidence.partialOutput') }}
             </p>
             <!-- Scrollable plain text; focusable so it scrolls by keyboard (WCAG 2.1.1). -->
             <pre
-              class="command-output mt-1"
+              class="ev mono command-output"
               role="region"
               tabindex="0"
               :aria-label="$t('evidence.outputLabel', { n: index + 1 })"
               >{{ execution.output_start }}</pre>
           </details>
-          <v-btn
-            v-if="execution.output_bytes > 0"
-            variant="outlined"
-            size="small"
-            class="mt-2"
-            :loading="downloading === execution.id"
-            :aria-label="$t('evidence.downloadLabel', { n: index + 1 })"
-            :data-testid="`download-${index + 1}`"
-            @click="downloadOutput(execution, index + 1)"
-          >
-            {{ $t('evidence.download') }}
-          </v-btn>
+          <div v-if="execution.output_bytes > 0">
+            <button
+              type="button"
+              class="btn"
+              :disabled="downloading === execution.id"
+              :aria-busy="downloading === execution.id || undefined"
+              :aria-label="$t('evidence.downloadLabel', { n: index + 1 })"
+              :data-testid="`download-${index + 1}`"
+              @click="downloadOutput(execution, index + 1)"
+            >
+              <v-progress-circular
+                v-if="downloading === execution.id"
+                indeterminate
+                size="14"
+                width="2"
+              />
+              {{ $t('evidence.download') }}
+            </button>
+          </div>
         </li>
       </ol>
     </template>
@@ -164,33 +188,96 @@ async function downloadOutput(execution: SandboxExecution, position: number): Pr
 </template>
 
 <style scoped>
+.evidence-card {
+  padding: 18px 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.card-text {
+  margin: 0;
+}
+
+.note {
+  margin: 0;
+}
+
+.n-warn {
+  border-color: rgba(234, 179, 8, 0.45);
+  background: rgba(234, 179, 8, 0.12);
+}
+
 .execution-list {
   list-style: none;
+  margin: 0;
   padding: 0;
 }
 
 .execution-item {
-  border-left: 3px solid rgb(var(--v-theme-on-surface), 0.2);
-  padding: 0.25rem 0 0.25rem 0.75rem;
-  margin-bottom: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
 }
 
-.command-line,
+.execution-heading {
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-size: 15px;
+  line-height: 20px;
+  font-weight: 600;
+}
+
+.command-line {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.kv-list {
+  margin: 0;
+}
+
+.kv dt,
+.kv dd {
+  margin: 0;
+}
+
+.kv dd {
+  font-weight: 600;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
 .digest {
   overflow-wrap: anywhere;
+}
+
+.output-details summary {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  color: #a78bfa;
+  font-weight: 500;
+}
+
+.output-details summary:hover {
+  color: #c4b5fd;
+}
+
+.partial {
+  margin: 0 0 6px;
+  font-size: 13px;
 }
 
 .command-output {
   max-height: 20rem;
   overflow: auto;
-  padding: 0.5rem;
-  white-space: pre-wrap;
   overflow-wrap: anywhere;
-  background: rgb(var(--v-theme-on-surface), 0.05);
-  border-radius: 4px;
-}
-
-.command-output:focus-visible {
-  outline: 2px solid rgb(var(--v-theme-primary));
 }
 </style>

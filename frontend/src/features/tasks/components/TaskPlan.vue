@@ -78,6 +78,17 @@ function situationText(task: { situation: TaskView['situation'] }): string {
   return t(`tasks.situation.${task.situation ?? 'unknown'}`)
 }
 
+/** Canvas EtapaImplementacao: the chip tone of each situation (the text always says it). */
+const SITUATION_TONES: Record<string, string> = {
+  concluida: 'ok',
+  em_andamento: 'info',
+  justificada: 'vio',
+}
+
+function situationTone(task: { situation: TaskView['situation'] }): string {
+  return SITUATION_TONES[task.situation ?? ''] ?? 'mute'
+}
+
 function sizeText(task: TaskView): string {
   if (!task.size) return ''
   const key = `tasks.size.${task.size}`
@@ -96,34 +107,41 @@ function artifactLink(artifactId: string) {
 </script>
 
 <template>
-  <section aria-labelledby="tasks-heading" class="mb-6" data-testid="task-plan">
-    <h3 id="tasks-heading" class="text-subtitle-1 font-weight-medium mb-2">
-      {{ $t('tasks.title') }}
-    </h3>
-    <LoadingState v-if="loader.loading.value && tasks.length === 0" />
-    <ProblemAlert
-      v-else-if="loader.error.value && tasks.length === 0"
-      :error="loader.error.value"
-      retry
-      @retry="loader.run"
-    />
-    <p v-else-if="tasks.length === 0" class="text-body-2">{{ $t('tasks.none') }}</p>
-    <template v-else>
-      <ol class="task-list mb-4">
+  <!-- Layout: canvas EtapaImplementacao, "Tarefas" card with the selected task in the side panel (.edp). -->
+  <section aria-labelledby="tasks-heading" class="task-plan" data-testid="task-plan">
+    <div class="card tp-list">
+      <div class="tp-head">
+        <h3 id="tasks-heading">{{ $t('tasks.title') }}</h3>
+        <span v-if="tasks.length" class="chip mute">{{ tasks.length }}</span>
+      </div>
+      <div v-if="loader.loading.value && tasks.length === 0" class="tp-pad">
+        <LoadingState />
+      </div>
+      <div v-else-if="loader.error.value && tasks.length === 0" class="tp-pad">
+        <ProblemAlert :error="loader.error.value" retry @retry="loader.run" />
+      </div>
+      <p v-else-if="tasks.length === 0" class="t2 tp-pad tp-empty">{{ $t('tasks.none') }}</p>
+      <ol v-else class="task-list">
         <li v-for="task in tasks" :key="task.id">
           <button
             type="button"
-            class="task-button text-body-2"
+            class="tk"
+            :class="{ on: task.id === selectedId }"
             :aria-current="task.id === selectedId ? 'true' : undefined"
             :data-testid="`task-${task.id}`"
             @click="selectedId = task.id"
           >
-            <span class="monospace">{{ task.id }}</span> · {{ task.title }}
-            <template v-if="showExecution"> · {{ situationText(task) }}</template>
+            <span class="mono t2 tk-id">{{ task.id }}</span>
+            <span class="tk-main"><span class="sr-only"> · </span>{{ task.title }}</span>
+            <span v-if="showExecution" class="chip" :class="situationTone(task)"
+              ><span class="sr-only"> · </span>{{ situationText(task) }}</span
+            >
           </button>
         </li>
       </ol>
+    </div>
 
+    <div v-if="tasks.length > 0" class="card edp tp-detail">
       <LoadingState v-if="detailLoader.loading.value && !selected" />
       <ProblemAlert
         v-else-if="detailLoader.error.value && !selected"
@@ -137,89 +155,98 @@ function artifactLink(artifactId: string) {
         class="task-detail"
         data-testid="task-detail"
       >
-        <h4 id="task-detail-heading" class="text-subtitle-2 font-weight-medium mb-1">
+        <h4 id="task-detail-heading">
           {{ $t('tasks.selected', { task: selected.id }) }} ·
           <router-link :to="artifactLink(selected.id)">{{ selected.title }}</router-link>
         </h4>
-        <p class="text-body-2 mb-2">
+        <p class="t2 td-line">
           {{ situationText(selected) }}
           <template v-if="selected.nature"> · {{ natureText(selected) }}</template>
           <template v-if="selected.size"> · {{ sizeText(selected) }}</template>
           · {{ $t(`states.artifact.${selected.state}`) }}
         </p>
-        <p v-if="selected.justification" class="text-body-2 mb-2">
+        <p v-if="selected.justification" class="td-line">
           {{ $t('tasks.justification', { text: selected.justification }) }}
         </p>
-        <dl class="summary-list">
-          <dt>{{ $t('tasks.covers') }}</dt>
-          <dd>
-            <template v-if="selected.covers.length">
-              <span v-for="(item, index) in selected.covers" :key="item.us">
-                <template v-if="index > 0">, </template>
-                <router-link :to="artifactLink(item.us)" class="monospace">{{
-                  item.us
-                }}</router-link>
-                <template v-if="item.criteria.length"> ({{ item.criteria.join(', ') }})</template>
-              </span>
-            </template>
-            <template v-else>{{ $t('tasks.nothing') }}</template>
-          </dd>
-          <dt>{{ $t('tasks.follows') }}</dt>
-          <dd>
-            <template v-if="selected.follows.length">
-              <span v-for="(adr, index) in selected.follows" :key="adr">
-                <template v-if="index > 0">, </template>
-                <router-link :to="artifactLink(adr)" class="monospace">{{ adr }}</router-link>
-              </span>
-            </template>
-            <template v-else>{{ $t('tasks.nothing') }}</template>
-          </dd>
-          <dt>{{ $t('tasks.dependsOn') }}</dt>
-          <dd>
-            <template v-if="selected.dependsOn.length">
-              <span class="monospace">{{ selected.dependsOn.join(', ') }}</span>
-            </template>
-            <template v-else>{{ $t('tasks.nothing') }}</template>
-          </dd>
-          <template v-if="showExecution">
-            <dt>{{ $t('tasks.fileScope') }}</dt>
-            <dd class="monospace">{{ selected.fileScope.join(', ') }}</dd>
-            <dt>{{ $t('tasks.commits') }}</dt>
-            <dd data-testid="task-commits">
-              <span v-if="selected.devRecord?.commits.length" class="monospace">{{
-                selected.devRecord.commits.map((sha) => sha.slice(0, 12)).join(', ')
-              }}</span>
-              <template v-else>{{ $t('tasks.notRecorded') }}</template>
-            </dd>
-            <dt>{{ $t('tasks.testsCreated') }}</dt>
+        <dl class="td-list">
+          <div class="kv">
+            <dt class="t2">{{ $t('tasks.covers') }}</dt>
             <dd>
-              <span v-if="selected.devRecord?.tests.length" class="monospace">{{
-                selected.devRecord.tests.join(', ')
-              }}</span>
-              <template v-else>{{ $t('tasks.notRecorded') }}</template>
+              <template v-if="selected.covers.length">
+                <span v-for="(item, index) in selected.covers" :key="item.us">
+                  <template v-if="index > 0">, </template>
+                  <router-link :to="artifactLink(item.us)" class="mono">{{ item.us }}</router-link>
+                  <template v-if="item.criteria.length"> ({{ item.criteria.join(', ') }})</template>
+                </span>
+              </template>
+              <template v-else>{{ $t('tasks.nothing') }}</template>
             </dd>
-            <dt>{{ $t('tasks.deviations') }}</dt>
-            <dd
-              :class="{ 'font-weight-bold': hasDeviation(selected) }"
-              data-testid="task-deviations"
-            >
-              {{
-                selected.devRecord?.deviations && hasDeviation(selected)
-                  ? selected.devRecord.deviations
-                  : $t('tasks.noDeviation')
-              }}
+          </div>
+          <div class="kv">
+            <dt class="t2">{{ $t('tasks.follows') }}</dt>
+            <dd>
+              <template v-if="selected.follows.length">
+                <span v-for="(adr, index) in selected.follows" :key="adr">
+                  <template v-if="index > 0">, </template>
+                  <router-link :to="artifactLink(adr)" class="mono">{{ adr }}</router-link>
+                </span>
+              </template>
+              <template v-else>{{ $t('tasks.nothing') }}</template>
             </dd>
+          </div>
+          <div class="kv">
+            <dt class="t2">{{ $t('tasks.dependsOn') }}</dt>
+            <dd>
+              <template v-if="selected.dependsOn.length">
+                <span class="mono">{{ selected.dependsOn.join(', ') }}</span>
+              </template>
+              <template v-else>{{ $t('tasks.nothing') }}</template>
+            </dd>
+          </div>
+          <template v-if="showExecution">
+            <div class="kv">
+              <dt class="t2">{{ $t('tasks.fileScope') }}</dt>
+              <dd class="mono">{{ selected.fileScope.join(', ') }}</dd>
+            </div>
+            <div class="kv">
+              <dt class="t2">{{ $t('tasks.commits') }}</dt>
+              <dd data-testid="task-commits">
+                <span v-if="selected.devRecord?.commits.length" class="mono">{{
+                  selected.devRecord.commits.map((sha) => sha.slice(0, 12)).join(', ')
+                }}</span>
+                <template v-else>{{ $t('tasks.notRecorded') }}</template>
+              </dd>
+            </div>
+            <div class="kv">
+              <dt class="t2">{{ $t('tasks.testsCreated') }}</dt>
+              <dd>
+                <span v-if="selected.devRecord?.tests.length" class="mono">{{
+                  selected.devRecord.tests.join(', ')
+                }}</span>
+                <template v-else>{{ $t('tasks.notRecorded') }}</template>
+              </dd>
+            </div>
+            <div class="kv">
+              <dt class="t2">{{ $t('tasks.deviations') }}</dt>
+              <dd :class="{ deviation: hasDeviation(selected) }" data-testid="task-deviations">
+                {{
+                  selected.devRecord?.deviations && hasDeviation(selected)
+                    ? selected.devRecord.deviations
+                    : $t('tasks.noDeviation')
+                }}
+              </dd>
+            </div>
           </template>
         </dl>
 
         <template v-if="showExecution">
-          <h5 class="text-subtitle-2 font-weight-medium mt-3 mb-1">{{ $t('tasks.waves') }}</h5>
-          <p v-if="selectedWaves.length === 0" class="text-body-2">{{ $t('tasks.noWaves') }}</p>
-          <ul v-else class="plain-list" data-testid="task-waves">
-            <li v-for="wave in selectedWaves" :key="wave.id" class="text-body-2 mb-1">
+          <h5 class="lb td-sub">{{ $t('tasks.waves') }}</h5>
+          <p v-if="selectedWaves.length === 0" class="t2 td-line">{{ $t('tasks.noWaves') }}</p>
+          <ul v-else class="plain-list td-waves" data-testid="task-waves">
+            <li v-for="wave in selectedWaves" :key="wave.id" class="td-wave">
               <router-link
                 :to="{ name: ROUTE_NAMES.wave, params: { projectId, waveId: wave.id } }"
-                class="monospace"
+                class="mono"
               >
                 {{ wave.id }}
               </router-link>
@@ -233,44 +260,163 @@ function artifactLink(artifactId: string) {
               params: { projectId, waveId: evidenceWave.id },
               hash: '#evidence',
             }"
-            class="d-inline-block mt-2 text-body-2"
+            class="btn td-evidence"
             data-testid="task-evidence-link"
           >
             {{ $t('evidence.openOf', { wave: evidenceWave.id }) }}
           </router-link>
         </template>
       </article>
-    </template>
+    </div>
   </section>
 </template>
 
 <style scoped>
+.task-plan {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 20px;
+  align-items: flex-start;
+}
+
+.tp-list {
+  flex: 3 1 520px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.tp-head {
+  padding: 16px 18px 10px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.tp-head h3 {
+  margin: 0;
+  font-size: 18px;
+  line-height: 24px;
+  font-weight: 700;
+}
+
+.tp-pad {
+  padding: 0 18px 18px;
+}
+
+.tp-empty {
+  margin: 0;
+  font-size: 13px;
+}
+
 .task-list {
   list-style: none;
+  margin: 0;
   padding: 0;
 }
 
-.task-button {
-  display: block;
+.tk {
+  display: flex;
+  align-items: center;
+  gap: 12px;
   width: 100%;
-  min-height: 2rem;
-  text-align: start;
-  padding: 0.25rem 0.5rem;
-  border-left: 3px solid transparent;
+  min-height: 44px;
+  padding: 12px 14px;
+  border: 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+  background: transparent;
+  color: #f1f3ff;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  box-sizing: border-box;
+  flex-wrap: wrap;
 }
 
-.task-button[aria-current='true'] {
-  border-left-color: rgb(var(--v-theme-primary));
+.tk:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+/* The selected task: canvas list selection (.it.on) plus a weight change, not color alone. */
+.tk.on {
+  background: rgba(99, 102, 241, 0.12);
+  box-shadow: inset 3px 0 0 #7c3aed;
+}
+
+.tk.on .tk-main {
+  font-weight: 700;
+}
+
+.tk-id {
+  width: 44px;
+  flex: none;
+}
+
+.tk-main {
+  flex: 1 1 240px;
+  min-width: 0;
   font-weight: 600;
 }
 
-.task-button:focus-visible {
-  outline: 2px solid rgb(var(--v-theme-primary));
+.tp-detail {
+  flex: 2 1 360px;
+  min-width: 0;
+  padding: 20px 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
 
 .task-detail {
-  border: 1px solid rgb(var(--v-theme-on-surface), 0.2);
-  border-radius: 4px;
-  padding: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.task-detail h4 {
+  margin: 0;
+  font-size: 18px;
+  line-height: 24px;
+  font-weight: 700;
+}
+
+.td-line {
+  margin: 0;
+  font-size: 13px;
+}
+
+.td-list {
+  margin: 0;
+}
+
+.td-list dt {
+  flex: none;
+}
+
+.td-list dd {
+  margin: 0;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+.deviation {
+  font-weight: 700;
+}
+
+.td-sub {
+  margin: 6px 0 0;
+}
+
+.td-waves {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+}
+
+.td-evidence {
+  align-self: flex-start;
 }
 </style>

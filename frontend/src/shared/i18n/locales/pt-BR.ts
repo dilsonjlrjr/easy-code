@@ -10,6 +10,8 @@ export const ptBR = {
     name: 'Easy Code',
     documentTitle: '{page} · Easy Code',
     skipToContent: 'Pular para o conteúdo',
+    brand: 'EasyCode',
+    tagline: 'AI Engineering Factory',
   },
   navigation: {
     mainLabel: 'Principal',
@@ -19,12 +21,14 @@ export const ptBR = {
     pendingItems: 'Pendências',
     agents: 'Agentes e skills',
     settings: 'Configurações',
+    pendingCount: 'Pendências, {n}',
   },
   account: {
     menuLabel: 'Conta de {name}',
     myPendingItems: 'Minhas pendências',
     myProjects: 'Meus projetos',
-    localClient: 'Cliente local',
+    localClient: 'Cliente local e dispositivos',
+    organizationSso: '{organization} · login pelo SSO',
     signOut: 'Sair',
   },
   language: {
@@ -56,6 +60,7 @@ export const ptBR = {
     loadMore: 'Carregar mais',
     loading: 'Carregando',
     close: 'Fechar',
+    counter: '{n} / {max}',
     no: 'não',
     remove: 'Remover',
     retry: 'Tentar de novo',
@@ -68,14 +73,17 @@ export const ptBR = {
     },
     home: {
       title: 'Início',
-      description: 'Resumo dos seus projetos, ondas em andamento e pendências.',
+      description: 'O que os agentes estão fazendo, o que espera por você e quanto custou.',
     },
     projects: {
       title: 'Projetos',
-      description: 'Lista de projetos da organização, com etapa atual, gates e custo.',
+      description:
+        'Cada projeto leva uma necessidade de negócio pelo workflow padrão até a Release.',
     },
     newProject: {
       title: 'Novo projeto',
+      description:
+        'O projeto nasce com a necessidade, a configuração e o orçamento. Ao iniciar, a etapa de Requisitos começa e o agente pode fazer perguntas.',
     },
     project: {
       title: 'Projeto',
@@ -112,7 +120,8 @@ export const ptBR = {
     },
     pendingItems: {
       title: 'Pendências',
-      description: 'Gates, perguntas de agentes e achados que esperam a sua decisão.',
+      description:
+        'Tudo que espera uma pessoa: gates para decidir, perguntas de agentes e achados escalados. Enquanto isso fica aqui, a etapa ou a onda espera.',
     },
     agents: {
       title: 'Agentes e skills',
@@ -120,16 +129,16 @@ export const ptBR = {
     },
     settings: {
       title: 'Configurações',
-      description: 'Provedores, modelos e tabela de preços da organização.',
+      description:
+        'Da organização: provedores de IA com chave própria, tabela de preços e biblioteca de skills.',
     },
     login: {
       title: 'Entrar',
       subtitle: 'Fábrica de software com agentes de IA e governança',
-      description:
-        'O acesso é pelo login único (SSO) da sua empresa. A plataforma não pede nem guarda senha.',
+      description: 'Use a conta da empresa. O acesso é pelo login único (SSO).',
       signIn: 'Entrar com a conta da empresa',
       tryAgain: 'Tentar entrar de novo',
-      help: 'Sem conta ou sem acesso? Fale com o administrador da organização.',
+      help: 'Sem conta ou sem acesso? Fale com o administrador do EasyCode na sua organização.',
       signedOut: 'Você saiu da plataforma.',
       sessionExpired: 'Sua sessão expirou. Entre de novo para voltar à página em que estava.',
       loginFailed: 'O login não foi concluído. Tente de novo.',
@@ -357,6 +366,7 @@ export const ptBR = {
     },
   },
   settings: {
+    tabsLabel: 'Seções',
     tabs: {
       providers: 'Provedores e modelos',
       prices: 'Tabela de preços',
@@ -365,6 +375,8 @@ export const ptBR = {
     },
     providers: {
       title: 'Provedores e chaves',
+      description:
+        'Chave própria de cada provedor (BYOK), guardada criptografada e nunca exibida depois de salva. Os agentes não ficam presos a um fornecedor.',
       privacy:
         'O conteúdo dos projetos vai ao provedor escolhido no par de modelos; a retenção segue a política da organização.',
       keyStatusLabel: 'Chave:',
@@ -636,6 +648,14 @@ export const ptBR = {
       openQuestions: 'Perguntas de agente abertas: {count}',
       lead: 'Responsável: {name}',
       cost: 'Custo acumulado: {cost}',
+      stagesOf: '{approved} de {total}',
+      card: {
+        lead: 'Responsável',
+        budgetUsed: 'Orçamento usado',
+        openFindings: 'Achados abertos',
+      },
+      statesHelp:
+        'Estados do projeto: criado, em andamento, pausado (manual ou por orçamento), concluído (Release publicada) e cancelado.',
       notices: {
         access_removed: 'Você perdeu o acesso ao projeto que estava aberto.',
         project_deleted: 'O projeto que estava aberto foi excluído.',
@@ -712,6 +732,11 @@ export const ptBR = {
       parallelWith: 'Em paralelo com: {stages}',
       cost: 'Custo: {cost}',
       activities: 'Atividades paralelas',
+      activity: 'Atividade paralela',
+      between: 'Entre etapas',
+      hint: 'Cada etapa termina num gate: checagens automáticas e aprovação. Clique numa etapa para abrir.',
+      modelPair: 'Par de modelos',
+      agentSkills: 'Skills usadas pelos agentes',
     },
     stage: {
       back: 'Voltar ao workflow',
@@ -811,6 +836,7 @@ export const ptBR = {
   },
   waves: {
     heading: 'Onda',
+    skillsTitle: 'Skills carregadas',
     notFound: 'Onda não encontrada.',
     attempt: 'tentativa {n}',
     task: 'tarefa {task}',
@@ -960,6 +986,7 @@ export const ptBR = {
     },
     calls: {
       title: 'Registro de chamadas',
+      subtitle: 'Cada chamada de modelo e de ferramenta fica registrada e ligada à onda.',
       none: 'Nenhuma chamada ainda.',
       number: 'Chamada {n}',
       model: 'Modelo {model} ({role})',
@@ -993,6 +1020,7 @@ export const ptBR = {
     },
   },
   artifacts: {
+    versionShort: 'v{n}',
     traceabilityLink: 'Ver rastreabilidade completa',
     empty: 'Nenhum artefato ainda.',
     notFound: 'Artefato não encontrado.',
@@ -1010,7 +1038,7 @@ export const ptBR = {
     body: 'Conteúdo',
     sanitizedNotice: 'Conteúdo gerado por agente: exibido sanitizado.',
     download: 'Baixar o arquivo desta versão',
-    versions: 'Versões',
+    versions: 'Histórico',
     singleVersion: 'Este artefato tem uma única versão.',
     versionNumber: 'Versão {n}',
     versionCurrent: 'Versão {n} (atual)',
@@ -1021,6 +1049,7 @@ export const ptBR = {
     draftNotice: 'Rascunho: o agente dono ainda pode editar.',
     editedBy: 'editado por {person}, validado por {agent}',
     drivenBy: 'Motivada pelo achado',
+    approval: 'Aprovação',
   },
   pendingItems: {
     empty: 'Nada esperando você.',
@@ -1097,6 +1126,15 @@ export const ptBR = {
   },
   gates: {
     heading: 'Gate da etapa {stage}',
+    explanation:
+      'O gate é a validação obrigatória no fim da etapa: primeiro as checagens automáticas, depois a aprovação.',
+    countChips: {
+      passed: 'Passaram: {n}.',
+      alerts: 'Alertas: {n}.',
+      blocking: 'Bloqueantes que falharam: {n}.',
+    },
+    yourDecision: 'Sua decisão',
+    decisionNote: 'A decisão registra quem, quando e de onde (web ou cliente local).',
     round: 'Rodada {n}',
     openedAge: 'aberta {age}',
     modeHuman: 'aprovação humana',
@@ -1552,6 +1590,8 @@ export const ptBR = {
       loadMore: 'Carregar mais ondas',
     },
     chooseProject: 'Escolha o projeto para ver a configuração dos agentes e as skills.',
+    description:
+      'Cada agente tem papel, instrução, skills, ferramentas autorizadas, limites e modelo. Aqui você ajusta o que cada um carrega.',
     noProjects: 'Você ainda não participa de nenhum projeto.',
     readOnly: 'Só o responsável do projeto altera a configuração dos agentes.',
     listLabel: 'Agentes do projeto',
@@ -1613,6 +1653,7 @@ export const ptBR = {
     },
     tools: {
       title: 'Ferramentas autorizadas',
+      help: 'Privilégio mínimo: o agente só usa o que está aqui, no sandbox do projeto.',
       none: 'Nenhuma ferramenta autorizada.',
       allowed: 'permitida',
       read_file: 'Ler arquivo',
@@ -1664,6 +1705,7 @@ export const ptBR = {
       },
       severityFilter: 'Severidade',
       destinationFilter: 'Etapa destino',
+      anyDestination: 'Todas as etapas',
       destinationIs: 'destino {stage}',
       activeFilters: 'Filtros: {filters}.',
       clear: 'Limpar filtros',
@@ -1795,6 +1837,8 @@ export const ptBR = {
       },
       renewNotice: 'A renovação grava nova data e validade, sem mudar a situação.',
       confirm: 'Registrar a decisão',
+      footnote:
+        'Descartar só vale para achado sem evidência ou duplicado. Toda decisão registra quem autorizou e quando.',
       approverOnly: 'Só o aprovador do projeto decide este Achado.',
       errors: {
         action: 'Escolha uma decisão.',
@@ -2163,6 +2207,7 @@ export const ptBR = {
       reworkFindings: 'achados de origem: {findings}',
       firstStage: 'Primeira etapa: {stage}',
       nextStage: 'Próxima etapa: {stage}',
+      ofBudget: 'do orçamento ({spend} de {limit})',
     },
   },
   audit: {
@@ -2355,7 +2400,7 @@ export const ptBR = {
     activity: 'Atividade recente',
     noActivity: 'Nenhuma atividade nas últimas 24 horas.',
     aProject: 'projeto',
-    greeting: 'Olá, {name}.',
+    greeting: 'Olá, {name}',
     indicators: 'Indicadores',
     inProgress: 'Projetos em andamento',
     created: '{n} criados, ainda não iniciados',
@@ -2368,17 +2413,19 @@ export const ptBR = {
       name: 'Projeto',
       state: 'Estado',
       stages: 'Etapas',
-      situation: 'Situação atual',
+      situation: 'Agora',
       cost: 'Custo acumulado',
     },
     stagesValue: '{approved} de {total} aprovadas',
     agentsRunning: 'Agentes em execução',
     noAgents: 'Nenhum agente em execução.',
-    openPending: 'Abrir Pendências ({n})',
+    openPending: 'Abrir',
     monthCost: 'Custo de IA no mês',
-    ofYourProjects: 'dos seus projetos',
-    reworkShare: 'Retrabalho: {percentage} do custo',
-    largestSpend: 'Maior gasto: {name} ({cost})',
+    ofYourProjects: 'Soma das ondas dos seus projetos, pela tabela de preços vigente.',
+    rework: 'Retrabalho',
+    reworkShare: '{percentage} do custo',
+    largest: 'Maior gasto',
+    largestSpend: '{name} · {cost}',
   },
   installer: installerPtBR,
 }

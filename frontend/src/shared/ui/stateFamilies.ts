@@ -1,11 +1,3 @@
-import {
-  mdiAccountClockOutline,
-  mdiAlertCircleOutline,
-  mdiCheckCircleOutline,
-  mdiCogSyncOutline,
-  mdiPauseCircleOutline,
-} from '@mdi/js'
-
 /** ESP-00 3.2: each state belongs to one family, which fixes its color; the text is always shown. */
 export type StateFamily = 'working' | 'waiting-person' | 'approved' | 'problem' | 'stopped'
 
@@ -71,20 +63,25 @@ const FAMILIES: Record<StateMachine, Record<string, StateFamily>> = {
   },
 }
 
-export const FAMILY_COLORS: Record<StateFamily, string> = {
+/** Canvas chip classes (easycode.css): indigo working, amber waiting, green approved, red problem, gray stopped. */
+export type ChipTone = 'info' | 'warn' | 'ok' | 'crit' | 'mute' | 'vio'
+
+const FAMILY_TONES: Record<StateFamily, ChipTone> = {
   working: 'info',
-  'waiting-person': 'warning',
-  approved: 'success',
-  problem: 'error',
-  stopped: 'secondary',
+  'waiting-person': 'warn',
+  approved: 'ok',
+  problem: 'crit',
+  stopped: 'mute',
 }
 
-export const FAMILY_ICONS: Record<StateFamily, string> = {
-  working: mdiCogSyncOutline,
-  'waiting-person': mdiAccountClockOutline,
-  approved: mdiCheckCircleOutline,
-  problem: mdiAlertCircleOutline,
-  stopped: mdiPauseCircleOutline,
+/** Where the canvas "Estados" board paints a state apart from its family. */
+const TONE_EXCEPTIONS: Partial<Record<StateMachine, Record<string, ChipTone>>> = {
+  wave: { awaiting_user: 'vio' },
+  finding: { open: 'mute', escalated: 'crit', awaiting_scope: 'crit' },
+}
+
+export function stateTone(machine: StateMachine, state: string): ChipTone {
+  return TONE_EXCEPTIONS[machine]?.[state] ?? FAMILY_TONES[stateFamily(machine, state)]
 }
 
 export function stateFamily(machine: StateMachine, state: string): StateFamily {

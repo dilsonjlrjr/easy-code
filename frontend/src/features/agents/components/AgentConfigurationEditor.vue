@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, ref, useId, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import ConfirmActionDialog from '@/shared/ui/ConfirmActionDialog.vue'
 import type { NewAgentConfiguration, ProjectAgent } from '../api/agentsApi'
@@ -29,6 +29,7 @@ const i18n = useI18n()
 const { t } = i18n
 const form = ref(formFromConfiguration(props.agent.configuration))
 const reviewOpen = ref(false)
+const fieldId = useId()
 
 const options = computed(() =>
   toolOptions(props.agent.configuration.tools, props.agent.allowed_by_role),
@@ -86,60 +87,73 @@ async function save(): Promise<void> {
 </script>
 
 <template>
-  <v-form data-testid="agent-editor" @submit.prevent="reviewOpen = true">
-    <p v-if="dirty" class="text-body-2 font-weight-medium mb-2" data-testid="unsaved-changes">
+  <!-- Look: canvas "Agentes e skills" (Agentes.dc.html) form primitives (.fld, .lb, .btn). -->
+  <form class="editor" data-testid="agent-editor" @submit.prevent="reviewOpen = true">
+    <p v-if="dirty" class="chip warn unsaved" data-testid="unsaved-changes">
       {{ $t('agentsPage.edit.unsaved') }}
     </p>
-    <h3 class="text-h6 mb-1">{{ $t('agentsPage.edit.instructionsTitle') }}</h3>
-    <p class="text-body-2 text-medium-emphasis mb-2">
-      {{ $t('agentsPage.edit.instructionsHelp') }}
-    </p>
-    <v-textarea
-      v-model="form.adjustment"
-      :label="$t('agentsPage.edit.adjustment')"
-      :counter="ADJUSTMENT_LIMIT"
-      :error-messages="tooLong ? [$t('agentsPage.edit.tooLong', { n: ADJUSTMENT_LIMIT })] : []"
-      rows="6"
-      auto-grow
-      class="mb-4"
-      data-testid="agent-adjustment"
-    />
+    <div class="block">
+      <h3 class="lb">{{ $t('agentsPage.edit.instructionsTitle') }}</h3>
+      <p :id="`${fieldId}-help`" class="t2 help">{{ $t('agentsPage.edit.instructionsHelp') }}</p>
+      <label :for="`${fieldId}-adjustment`" class="field">
+        <span class="field-label">{{ $t('agentsPage.edit.adjustment') }}</span>
+        <textarea
+          :id="`${fieldId}-adjustment`"
+          v-model="form.adjustment"
+          class="fld"
+          rows="6"
+          :aria-invalid="tooLong ? 'true' : undefined"
+          :aria-describedby="`${fieldId}-help ${fieldId}-counter${tooLong ? ` ${fieldId}-error` : ''}`"
+          data-testid="agent-adjustment"
+        />
+      </label>
+      <div class="field-foot">
+        <span v-if="tooLong" :id="`${fieldId}-error`" class="field-error">
+          {{ $t('agentsPage.edit.tooLong', { n: ADJUSTMENT_LIMIT }) }}
+        </span>
+        <span :id="`${fieldId}-counter`" class="t2 counter">
+          {{ form.adjustment.length }} / {{ ADJUSTMENT_LIMIT }}
+        </span>
+      </div>
+    </div>
 
-    <h3 class="text-h6 mb-1">{{ $t('agentsPage.tools.title') }}</h3>
-    <p class="text-body-2 text-medium-emphasis mb-2">{{ $t('agentsPage.edit.toolsHelp') }}</p>
-    <p v-if="groups.length === 0" class="text-body-2">{{ $t('agentsPage.tools.none') }}</p>
-    <fieldset
-      v-for="group in groups"
-      :key="group.tool"
-      class="tool-group mb-3"
-      :data-testid="`tool-group-${group.tool}`"
-    >
-      <legend class="text-subtitle-2">{{ $t(`agentsPage.tools.${group.tool}`) }}</legend>
-      <v-checkbox
-        v-for="option in group.items"
-        :key="option.key"
-        v-model="form.tools"
-        :value="option.key"
-        :disabled="!option.allowed && !form.tools.includes(option.key)"
-        density="compact"
-        hide-details
+    <div class="block">
+      <h3 class="lb">{{ $t('agentsPage.tools.title') }}</h3>
+      <p class="t2 help">{{ $t('agentsPage.edit.toolsHelp') }}</p>
+      <p v-if="groups.length === 0" class="kv empty">{{ $t('agentsPage.tools.none') }}</p>
+      <fieldset
+        v-for="group in groups"
+        :key="group.tool"
+        class="tool-group"
+        :data-testid="`tool-group-${group.tool}`"
       >
-        <template #label>
-          <span :class="{ monospace: option.tool !== 'browser' && !!option.value }">
+        <legend class="group-title">{{ $t(`agentsPage.tools.${group.tool}`) }}</legend>
+        <label
+          v-for="(option, index) in group.items"
+          :key="option.key"
+          :for="`${fieldId}-${group.tool}-${index}`"
+          class="check"
+        >
+          <input
+            :id="`${fieldId}-${group.tool}-${index}`"
+            v-model="form.tools"
+            type="checkbox"
+            :value="option.key"
+            :disabled="!option.allowed && !form.tools.includes(option.key)"
+          />
+          <span :class="{ mono: option.tool !== 'browser' && !!option.value }">
             {{ optionLabel(option) }}
           </span>
-          <span v-if="!option.allowed" class="ml-2 text-body-2">
-            · {{ $t('agentsPage.edit.outsideRole') }}
-          </span>
-        </template>
-      </v-checkbox>
-    </fieldset>
+          <span v-if="!option.allowed" class="t2"> · {{ $t('agentsPage.edit.outsideRole') }}</span>
+        </label>
+      </fieldset>
+    </div>
 
-    <div class="d-flex flex-wrap ga-2 mt-4">
-      <v-btn type="submit" color="primary" variant="flat" :disabled="!dirty || tooLong">
+    <div class="actions">
+      <button type="submit" class="btn btn-p" :disabled="!dirty || tooLong">
         {{ $t('agentsPage.edit.review') }}
-      </v-btn>
-      <v-btn variant="text" @click="emit('cancel')">{{ $t('common.cancel') }}</v-btn>
+      </button>
+      <button type="button" class="btn" @click="emit('cancel')">{{ $t('common.cancel') }}</button>
     </div>
 
     <ConfirmActionDialog
@@ -152,13 +166,104 @@ async function save(): Promise<void> {
       test-id="agent-review-dialog"
       :submit="save"
     />
-  </v-form>
+  </form>
 </template>
 
 <style scoped>
+.editor {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin-top: 8px;
+}
+
+.unsaved {
+  align-self: flex-start;
+  margin: 0;
+}
+
+.block {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.block h3 {
+  margin: 0;
+}
+
+.help {
+  margin: 0;
+  font-size: 13px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.field-label {
+  font-weight: 600;
+}
+
+.field-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  font-size: 12px;
+}
+
+.field-error {
+  margin-right: auto;
+  color: #fca5a5;
+  font-weight: 600;
+}
+
+.empty {
+  margin: 0;
+}
+
 .tool-group {
   border: 0;
   margin: 0;
   padding: 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  padding-top: 10px;
+}
+
+.group-title {
+  padding: 0;
+  font-weight: 600;
+}
+
+.check {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  cursor: pointer;
+}
+
+.check input {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  flex: none;
+  accent-color: #7c3aed;
+  cursor: pointer;
+}
+
+.check input:disabled,
+.check input:disabled ~ span {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 </style>

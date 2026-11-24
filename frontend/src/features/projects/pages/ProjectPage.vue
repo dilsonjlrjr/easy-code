@@ -13,6 +13,7 @@ import { useSessionStore } from '@/shared/session/sessionStore'
 import type { CloudEvent, EventClass } from '@/shared/events/eventStream'
 import { useProjectEventStream } from '@/shared/events/useProjectEventStream'
 import AppBreadcrumbs from '@/shared/ui/AppBreadcrumbs.vue'
+import CanvasIcon from '@/shared/ui/CanvasIcon.vue'
 import LiveConnectionStatus from '@/shared/ui/LiveConnectionStatus.vue'
 import LoadingState from '@/shared/ui/LoadingState.vue'
 import ProblemAlert from '@/shared/ui/ProblemAlert.vue'
@@ -133,16 +134,26 @@ const exhaustedCause = computed(() => {
 })
 
 /** ESP-30 2: the findings tab carries the count of open findings (`summary.open_findings`, PL-72). */
-const findingsTabLabel = computed(() => {
+const openFindings = computed(() => {
   const open = project.value?.summary?.open_findings
   // `escalated` is also inside the severity counts: it is not added again.
-  const total = open
+  return open
     ? (['critical', 'high', 'medium', 'low'] as const).reduce(
         (sum, severity) => sum + (open[severity] ?? 0),
         0,
       )
     : 0
-  return total > 0 ? t('pages.project.findingsCount', { n: total }) : t('pages.project.findings')
+})
+const findingsTabLabel = computed(() =>
+  openFindings.value > 0
+    ? t('pages.project.findingsCount', { n: openFindings.value })
+    : t('pages.project.findings'),
+)
+/** Canvas: the count chip is red when a critical, high or escalated finding is open. */
+const findingsTone = computed(() => {
+  const open = project.value?.summary?.open_findings
+  if (!open || openFindings.value === 0) return 'mute'
+  return (open.critical ?? 0) + (open.high ?? 0) + (open.escalated ?? 0) > 0 ? 'crit' : 'warn'
 })
 
 /** ESP-27 2: the audit trail is for approvers and the lead (x-roles of listProjectAudit). */
@@ -161,6 +172,13 @@ const tabs = computed(() => [
   { name: ROUTE_NAMES.projectConfiguration, label: t('pages.project.configuration') },
   { name: ROUTE_NAMES.projectMembers, label: t('pages.project.members') },
 ])
+
+/** The stage and Release pages open inside the Workflow tab. */
+const activeTab = computed(() =>
+  route.name === ROUTE_NAMES.stage || route.name === ROUTE_NAMES.release
+    ? ROUTE_NAMES.project
+    : route.name,
+)
 
 const breadcrumbs = computed(() => [
   { title: t('pages.projects.title'), to: { name: ROUTE_NAMES.projects } },
@@ -240,94 +258,127 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <v-container max-width="1200">
-    <LoadingState v-if="loader.loading.value && !project" />
-    <template v-else-if="loader.error.value && !project">
-      <h1 class="text-h4 mb-4">{{ $t('pages.project.title') }}</h1>
-      <!-- ER-00-13: same message for missing and without access, without the project name. -->
-      <v-alert v-if="notFound" type="warning" variant="tonal" role="alert">
-        <p>{{ $t('problems.not-found') }}</p>
+  <!-- Layout: canvas "Projeto" (Projeto.dc.html; created, blocked and questions variants). -->
+  <LoadingState v-if="loader.loading.value && !project" />
+  <template v-else-if="loader.error.value && !project">
+    <h1>{{ $t('pages.project.title') }}</h1>
+    <!-- ER-00-13: same message for missing and without access, without the project name. -->
+    <div v-if="notFound" class="note note-warn" role="alert">
+      <CanvasIcon name="alert" />
+      <span class="note-text">
+        <span class="note-line">{{ $t('problems.not-found') }}</span>
         <router-link :to="{ name: ROUTE_NAMES.projects }">{{
           $t('common.goProjects')
         }}</router-link>
-      </v-alert>
-      <ProblemAlert v-else :error="loader.error.value" retry @retry="loader.run" />
-    </template>
-    <template v-else-if="project">
-      <AppBreadcrumbs :items="breadcrumbs" />
-      <div class="d-flex flex-wrap align-center ga-3 mb-2">
-        <h1 class="text-h4">{{ project.name }}</h1>
-        <StateLabel
-          machine="project"
-          :state="project.state"
-          :detail="
-            project.pause_reason ? $t(`projects.pauseReason.${project.pause_reason}`) : undefined
-          "
-        />
-        <v-spacer />
-        <LiveConnectionStatus :status="live.status.value" />
+      </span>
+    </div>
+    <ProblemAlert v-else :error="loader.error.value" retry @retry="loader.run" />
+  </template>
+  <template v-else-if="project">
+    <AppBreadcrumbs :items="breadcrumbs" />
+    <div class="project-head">
+      <div class="project-title">
+        <h1>{{ project.name }}</h1>
+        <span class="project-meta">
+          <StateLabel
+            machine="project"
+            :state="project.state"
+            :detail="
+              project.pause_reason ? $t(`projects.pauseReason.${project.pause_reason}`) : undefined
+            "
+          />
+          <span v-if="project.business_need || project.lead" class="t2 meta-text">
+            <template v-if="project.business_need">{{ project.business_need }}</template>
+            <template v-if="project.business_need && project.lead"> · </template>
+            <template v-if="project.lead">{{
+              $t('projects.list.lead', { name: project.lead.name })
+            }}</template>
+          </span>
+          <LiveConnectionStatus class="t2 meta-text" :status="live.status.value" />
+        </span>
+        <span v-if="pausedBy" class="t2 meta-text" data-testid="paused-by">
+          {{
+            $t('projects.lifecycle.pausedBy', {
+              who: pausedBy.who,
+              when: format.dateTime(pausedBy.when),
+            })
+          }}
+        </span>
+        <span v-if="budgetUse" class="t2 meta-text" data-testid="budget-use">
+          {{
+            $t('projects.budget.use', {
+              spend: format.money(budgetUse.spend),
+              limit: format.money(budgetUse.limit),
+              percentage: format.percent(budgetUse.percentage),
+            })
+          }}
+        </span>
       </div>
-      <p v-if="project.lead" class="text-body-2 mb-1">
-        {{ $t('projects.list.lead', { name: project.lead.name }) }}
-      </p>
-      <p v-if="pausedBy" class="text-body-2 mb-1" data-testid="paused-by">
-        {{
-          $t('projects.lifecycle.pausedBy', {
-            who: pausedBy.who,
-            when: format.dateTime(pausedBy.when),
-          })
-        }}
-      </p>
-      <p v-if="budgetUse" class="text-body-2 mb-4" data-testid="budget-use">
-        {{
-          $t('projects.budget.use', {
-            spend: format.money(budgetUse.spend),
-            limit: format.money(budgetUse.limit),
-            percentage: format.percent(budgetUse.percentage),
-          })
-        }}
-      </p>
-      <div v-else class="mb-3" />
-      <ProjectLifecycleActions
-        :project="project"
-        :workflow="store.workflow"
-        @changed="store.load(projectId).catch(() => undefined)"
-      />
-      <div role="status" class="sr-only">{{ message }}</div>
-      <v-alert
-        v-if="viewedAsAdministrator"
-        type="info"
-        variant="tonal"
-        class="mb-4"
-        data-testid="administrator-view"
-      >
-        {{ $t('pages.project.asAdministrator') }}
-      </v-alert>
+      <div class="project-actions">
+        <ProjectLifecycleActions
+          :project="project"
+          :workflow="store.workflow"
+          @changed="store.load(projectId).catch(() => undefined)"
+        />
+        <!-- US-05 CA-1: the created project starts its workflow from the header (canvas). -->
+        <button
+          v-if="project.state === 'created' && canStart"
+          type="button"
+          class="btn btn-p"
+          :disabled="starting"
+          :aria-busy="starting ? 'true' : undefined"
+          @click="startWorkflow"
+        >
+          <CanvasIcon name="play" :size="16" :stroke-width="2" />
+          {{ $t('projects.view.start') }}
+        </button>
+      </div>
+    </div>
+    <div role="status" class="sr-only">{{ message }}</div>
 
-      <!-- ER-06-11, US-52 CA-4: concluded or canceled is read-only, with history kept. -->
-      <v-alert
-        v-if="readOnly"
-        type="info"
-        variant="tonal"
-        class="mb-4"
-        data-testid="read-only-notice"
-      >
+    <nav :aria-label="$t('projects.view.sections')">
+      <div class="tabs" role="tablist">
+        <router-link
+          v-for="tab in tabs"
+          :key="tab.name"
+          class="tab"
+          :class="{ on: activeTab === tab.name }"
+          role="tab"
+          :aria-selected="activeTab === tab.name ? 'true' : 'false'"
+          :aria-current="activeTab === tab.name ? 'page' : undefined"
+          :to="{ name: tab.name, params: { projectId: project.id } }"
+        >
+          <template v-if="tab.name === ROUTE_NAMES.projectFindings">
+            <span class="sr-only">{{ tab.label }}</span>
+            <span aria-hidden="true">{{ $t('pages.project.findings') }}</span>
+            <span v-if="project.summary" class="chip" :class="findingsTone" aria-hidden="true">
+              {{ openFindings }}
+            </span>
+          </template>
+          <template v-else>{{ tab.label }}</template>
+        </router-link>
+      </div>
+    </nav>
+
+    <div v-if="viewedAsAdministrator" class="note" data-testid="administrator-view">
+      <span class="note-text">{{ $t('pages.project.asAdministrator') }}</span>
+    </div>
+
+    <!-- ER-06-11, US-52 CA-4: concluded or canceled is read-only, with history kept. -->
+    <div v-if="readOnly" class="note" data-testid="read-only-notice">
+      <span class="note-text">
         {{
           project.state === 'completed'
             ? $t('projects.lifecycle.completedReadOnly')
             : $t('projects.lifecycle.canceledReadOnly')
         }}
-      </v-alert>
-      <!-- ESP-06 3.2: paused by the budget comes first; it says what to do to resume (ER-06-8). -->
-      <v-alert
-        v-if="pausedByBudget"
-        type="error"
-        variant="tonal"
-        role="alert"
-        class="mb-4"
-        data-testid="budget-paused"
-      >
-        <p>
+      </span>
+    </div>
+    <!-- ESP-06 3.2: paused by the budget comes first; it says what to do to resume (ER-06-8). -->
+    <div v-if="pausedByBudget" class="note note-crit" role="alert" data-testid="budget-paused">
+      <CanvasIcon name="alert" />
+      <span class="note-text">
+        <span class="note-line">
           {{
             budgetUse
               ? $t('projects.budget.pausedWithValues', {
@@ -336,10 +387,10 @@ onBeforeUnmount(() => {
                 })
               : $t('projects.budget.paused')
           }}
-        </p>
-        <p
+        </span>
+        <span
           v-if="exhaustedCause?.cause === 'estimate_exceeds_balance'"
-          class="mt-1"
+          class="note-line"
           data-testid="budget-paused-estimate"
         >
           {{
@@ -350,21 +401,19 @@ onBeforeUnmount(() => {
                 })
               : $t('projects.budget.estimateExceedsBalanceShort')
           }}
-        </p>
-        <p class="mt-1">{{ $t('projects.budget.howToResume') }}</p>
-        <router-link
-          :to="{ name: ROUTE_NAMES.projectConfiguration, params: { projectId: project.id } }"
-        >
-          {{ $t('projects.budget.raiseLimit') }}
-        </router-link>
-      </v-alert>
-      <v-alert
-        v-else-if="shownBudgetAlert"
-        type="warning"
-        variant="tonal"
-        class="mb-4"
-        data-testid="budget-alert"
+        </span>
+        <span class="note-line">{{ $t('projects.budget.howToResume') }}</span>
+      </span>
+      <router-link
+        class="btn btn-p"
+        :to="{ name: ROUTE_NAMES.projectConfiguration, params: { projectId: project.id } }"
       >
+        {{ $t('projects.budget.raiseLimit') }}
+      </router-link>
+    </div>
+    <div v-else-if="shownBudgetAlert" class="note note-warn" data-testid="budget-alert">
+      <CanvasIcon name="alert" />
+      <span class="note-text">
         {{
           $t('projects.budget.alerted', {
             percentage: format.percent(shownBudgetAlert.percentage),
@@ -372,65 +421,96 @@ onBeforeUnmount(() => {
             limit: format.money(shownBudgetAlert.stopLimit),
           })
         }}
-      </v-alert>
-      <!-- ESP-06 3.2: contextual notice, one per situation. -->
-      <v-alert
-        v-if="openQuestionWave"
-        type="warning"
-        variant="tonal"
-        class="mb-4"
-        data-testid="question-notice"
+      </span>
+    </div>
+    <!-- ESP-06 3.2: contextual notice, one per situation. -->
+    <div v-if="openQuestionWave" class="note note-vio" data-testid="question-notice">
+      <CanvasIcon name="question" />
+      <span class="note-text">
+        <strong>{{
+          $t('projects.view.questionNotice', { agent: $t(`agents.${openQuestionWave.agent}`) })
+        }}</strong>
+      </span>
+      <router-link
+        class="btn btn-p"
+        :to="{
+          name: ROUTE_NAMES.wave,
+          params: { projectId: project.id, waveId: openQuestionWave.wave },
+        }"
       >
-        <p>
-          {{
-            $t('projects.view.questionNotice', { agent: $t(`agents.${openQuestionWave.agent}`) })
-          }}
-        </p>
-        <router-link
-          :to="{
-            name: ROUTE_NAMES.wave,
-            params: { projectId: project.id, waveId: openQuestionWave.wave },
-          }"
-        >
-          {{ $t('projects.view.answer') }}
-        </router-link>
-      </v-alert>
-      <v-alert v-if="project.state === 'created'" type="info" variant="tonal" class="mb-4">
-        <p>{{ $t('projects.view.notStarted') }}</p>
-        <v-btn
-          v-if="canStart"
-          color="primary"
-          variant="flat"
-          class="mt-3"
-          :loading="starting"
-          @click="startWorkflow"
-        >
-          {{ $t('projects.view.start') }}
-        </v-btn>
-      </v-alert>
-      <StartRefusal v-if="startFailure" :error="startFailure" class="mb-4" />
+        {{ $t('projects.view.answer') }}
+      </router-link>
+    </div>
+    <div v-if="project.state === 'created'" class="note">
+      <CanvasIcon name="bolt" />
+      <span class="note-text">{{ $t('projects.view.notStarted') }}</span>
+    </div>
+    <StartRefusal v-if="startFailure" :error="startFailure" />
 
-      <nav :aria-label="$t('projects.view.sections')" class="mb-6">
-        <v-tabs
-          color="primary"
-          :model-value="
-            route.name === ROUTE_NAMES.stage || route.name === ROUTE_NAMES.release
-              ? ROUTE_NAMES.project
-              : route.name
-          "
-          show-arrows
-        >
-          <v-tab
-            v-for="tab in tabs"
-            :key="tab.name"
-            :value="tab.name"
-            :to="{ name: tab.name, params: { projectId: project.id } }"
-          >
-            {{ tab.label }}
-          </v-tab>
-        </v-tabs>
-      </nav>
-      <router-view />
-    </template>
-  </v-container>
+    <router-view />
+  </template>
 </template>
+
+<style scoped>
+.project-head {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 16px;
+}
+
+.project-title {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.project-meta {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.meta-text {
+  font-size: 13px;
+}
+
+.project-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.note-text {
+  flex: 1 1 400px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.note > svg {
+  flex: none;
+}
+
+.note-crit {
+  flex-wrap: wrap;
+  border-color: rgba(239, 68, 68, 0.45);
+  background: rgba(239, 68, 68, 0.1);
+}
+
+.note-warn {
+  flex-wrap: wrap;
+  border-color: rgba(234, 179, 8, 0.45);
+  background: rgba(234, 179, 8, 0.1);
+}
+
+.note-vio {
+  flex-wrap: wrap;
+  border-color: rgba(168, 85, 247, 0.5);
+  background: rgba(168, 85, 247, 0.12);
+}
+</style>

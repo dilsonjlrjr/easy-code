@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, ref, useId, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import { ROUTE_NAMES } from '@/app/router/routeNames'
@@ -35,6 +35,9 @@ const { t } = useI18n()
 const route = useRoute()
 const router = useRouter()
 const { message, announce } = useAnnouncer()
+const uid = useId()
+/** Tone of each change, reinforcing its text and symbol (never color alone). */
+const OPERATION_TONES = { added: 'ok', removed: 'crit', modified: 'warn' } as const
 
 const numbers = computed(() => props.versions.map((item) => item.version))
 const pair = computed(() => comparedPair(route.query, numbers.value))
@@ -119,39 +122,52 @@ watch(
 </script>
 
 <template>
-  <section aria-labelledby="comparison-heading" class="mb-6" data-testid="artifact-comparison">
-    <h2 id="comparison-heading" class="text-h6 mb-2">{{ $t('comparison.title') }}</h2>
+  <!-- Layout: canvas "Artefato" (card and the v1/v2 diff marks of the article). -->
+  <section aria-labelledby="comparison-heading" class="card cmp" data-testid="artifact-comparison">
+    <h2 id="comparison-heading">{{ $t('comparison.title') }}</h2>
     <div role="status" class="sr-only">{{ message }}</div>
     <!-- ESP-21 6: with a single version the comparison is unavailable, with the reason. -->
-    <p v-if="versions.length < 2" class="text-body-2" data-testid="comparison-unavailable">
+    <p v-if="versions.length < 2" class="t2 cmp-text" data-testid="comparison-unavailable">
       {{ $t('comparison.singleVersion') }}
     </p>
     <template v-else>
-      <form class="comparison-form mb-4" @submit.prevent="compare">
-        <v-select
-          v-model="from"
-          :items="options"
-          :label="$t('comparison.from')"
-          density="comfortable"
-          hide-details
-        />
-        <v-select
-          v-model="to"
-          :items="options"
-          :label="$t('comparison.to')"
-          density="comfortable"
-          hide-details
-        />
-        <div class="d-flex ga-2 align-center">
-          <v-btn type="submit" color="primary" variant="flat" :disabled="!canCompare">
+      <form class="cmp-form" @submit.prevent="compare">
+        <label :for="`${uid}-from`" class="cmp-field">
+          <span :id="`${uid}-from-label`" class="cmp-label">{{ $t('comparison.from') }}</span>
+          <select
+            :id="`${uid}-from`"
+            v-model.number="from"
+            class="fld"
+            :aria-labelledby="`${uid}-from-label`"
+          >
+            <option v-for="option in options" :key="option.value" :value="option.value">
+              {{ option.title }}
+            </option>
+          </select>
+        </label>
+        <label :for="`${uid}-to`" class="cmp-field">
+          <span :id="`${uid}-to-label`" class="cmp-label">{{ $t('comparison.to') }}</span>
+          <select
+            :id="`${uid}-to`"
+            v-model.number="to"
+            class="fld"
+            :aria-labelledby="`${uid}-to-label`"
+          >
+            <option v-for="option in options" :key="option.value" :value="option.value">
+              {{ option.title }}
+            </option>
+          </select>
+        </label>
+        <span class="cmp-buttons">
+          <button type="submit" class="btn btn-p" :disabled="!canCompare">
             {{ $t('comparison.compare') }}
-          </v-btn>
-          <v-btn v-if="pair" variant="outlined" @click="hide">
+          </button>
+          <button v-if="pair" type="button" class="btn" @click="hide">
             {{ $t('comparison.hide') }}
-          </v-btn>
-        </div>
+          </button>
+        </span>
       </form>
-      <p v-if="from !== undefined && from === to" class="text-body-2 mb-2">
+      <p v-if="from !== undefined && from === to" class="t2 cmp-text">
         {{ $t('comparison.sameVersion') }}
       </p>
 
@@ -163,7 +179,7 @@ watch(
         @retry="loader.run"
       />
       <template v-else-if="comparison && pair && counts">
-        <p class="text-body-1 mb-3" data-testid="comparison-summary">
+        <p class="cmp-summary" data-testid="comparison-summary">
           {{
             $t('comparison.summary', {
               from: pair.from,
@@ -175,22 +191,24 @@ watch(
           }}
         </p>
 
-        <div v-if="drivingFindings.length" class="mb-4" data-testid="comparison-findings">
-          <span class="text-body-2">{{ $t('comparison.drivingFindings') }}</span>
+        <div v-if="drivingFindings.length" class="cmp-text" data-testid="comparison-findings">
+          <span class="t2">{{ $t('comparison.drivingFindings') }}</span>
           <template v-for="(finding, index) in drivingFindings" :key="finding">
-            <router-link
+            {{ ' '
+            }}<router-link
               :to="{ name: ROUTE_NAMES.finding, params: { projectId, findingId: finding } }"
-              class="monospace ml-1"
-              >{{ finding }}</router-link><span v-if="index < drivingFindings.length - 1">,</span>
+              class="mono"
+              >{{ finding }}</router-link
+            ><span v-if="index < drivingFindings.length - 1">,</span>
           </template>
         </div>
 
-        <h3 class="text-subtitle-1 font-weight-medium mb-2">{{ $t('comparison.header') }}</h3>
-        <p v-if="comparison.header.length === 0" class="text-body-2 mb-4">
+        <h3>{{ $t('comparison.header') }}</h3>
+        <p v-if="comparison.header.length === 0" class="t2 cmp-text">
           {{ $t('comparison.noHeaderChanges') }}
         </p>
-        <div v-else class="table-scroll mb-4">
-          <v-table density="compact" data-testid="comparison-header">
+        <div v-else class="table-scroll">
+          <table class="tbl" data-testid="comparison-header">
             <thead>
               <tr>
                 <th scope="col">{{ $t('comparison.field') }}</th>
@@ -206,31 +224,33 @@ watch(
                 :class="`diff-${change.operation}`"
                 :data-operation="change.operation"
               >
-                <th scope="row" class="monospace">{{ pointerText(change.path) }}</th>
+                <th scope="row" class="mono">{{ pointerText(change.path) }}</th>
                 <td>
-                  <span aria-hidden="true" class="diff-symbol">{{
-                    $t(`comparison.symbols.${change.operation}`)
-                  }}</span>
-                  {{ $t(`comparison.operations.${change.operation}`) }}
+                  <span class="chip" :class="OPERATION_TONES[change.operation]">
+                    <span aria-hidden="true" class="diff-symbol">{{
+                      $t(`comparison.symbols.${change.operation}`)
+                    }}</span>
+                    {{ $t(`comparison.operations.${change.operation}`) }}
+                  </span>
                 </td>
                 <td>
-                  <pre class="diff-value">{{ diffValue(change.before) }}</pre>
+                  <pre class="mono diff-value">{{ diffValue(change.before) }}</pre>
                 </td>
                 <td>
-                  <pre class="diff-value">{{ diffValue(change.after) }}</pre>
+                  <pre class="mono diff-value">{{ diffValue(change.after) }}</pre>
                 </td>
               </tr>
             </tbody>
-          </v-table>
+          </table>
         </div>
 
-        <h3 class="text-subtitle-1 font-weight-medium mb-2">{{ $t('comparison.body') }}</h3>
-        <p class="text-body-2 text-medium-emphasis mb-2">{{ $t('artifacts.sanitizedNotice') }}</p>
-        <p v-if="comparison.body.every((line) => line.operation === 'equal')" class="text-body-2">
+        <h3>{{ $t('comparison.body') }}</h3>
+        <p class="t2 cmp-note">{{ $t('artifacts.sanitizedNotice') }}</p>
+        <p v-if="comparison.body.every((line) => line.operation === 'equal')" class="t2 cmp-text">
           {{ $t('comparison.noBodyChanges') }}
         </p>
         <!-- Lines are plain text (never HTML): agent content stays inert (RNF-05). -->
-        <ol v-else class="diff-lines" data-testid="comparison-body">
+        <ol v-else class="diff-lines mono" data-testid="comparison-body">
           <li
             v-for="(line, index) in comparison.body"
             :key="index"
@@ -252,27 +272,78 @@ watch(
 </template>
 
 <style scoped>
-.comparison-form {
-  display: grid;
-  gap: 0.75rem;
-  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-  align-items: center;
+.cmp {
+  padding: 18px 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
 
+.cmp h3 {
+  margin: 6px 0 0;
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 700;
+}
+
+.cmp-text,
+.cmp-summary {
+  margin: 0;
+  font-size: 13px;
+}
+
+.cmp-summary {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.cmp-note {
+  margin: -8px 0 0;
+  font-size: 12px;
+}
+
+.cmp-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: flex-end;
+}
+
+.cmp-field {
+  flex: 1 1 160px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.cmp-label {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.cmp-buttons {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* Canvas "Artefato": removed lines struck through in red, added lines in green. */
 .diff-lines {
   list-style: none;
-  padding: 0;
-  font-family: monospace;
-  font-size: 0.85rem;
-  border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
-  border-radius: 4px;
+  margin: 0;
+  padding: 8px 0;
+  border: 1px solid rgba(140, 150, 255, 0.16);
+  border-radius: 10px;
+  background: rgba(10, 13, 40, 0.8);
   overflow-x: auto;
+  line-height: 20px;
 }
 
 .diff-lines li {
   display: flex;
-  gap: 0.5rem;
-  padding: 0 0.5rem;
+  gap: 8px;
+  padding: 2px 10px;
   white-space: pre-wrap;
 }
 
@@ -282,22 +353,27 @@ watch(
   font-weight: 700;
 }
 
-.diff-added {
-  background: rgba(var(--v-theme-success), 0.12);
+.diff-lines .diff-added {
+  background: rgba(34, 197, 94, 0.16);
+  color: #bbf7d0;
 }
 
-.diff-removed {
-  background: rgba(var(--v-theme-error), 0.12);
+.diff-lines .diff-removed {
+  background: rgba(239, 68, 68, 0.16);
+  color: #fca5a5;
 }
 
-.diff-modified {
-  background: rgba(var(--v-theme-warning), 0.12);
+.diff-lines .diff-removed .diff-text {
+  text-decoration: line-through;
+}
+
+.diff-lines .diff-modified {
+  background: rgba(234, 179, 8, 0.16);
+  color: #fcd34d;
 }
 
 .diff-value {
   white-space: pre-wrap;
-  font-family: monospace;
-  font-size: 0.85rem;
   margin: 0;
 }
 </style>

@@ -68,34 +68,39 @@ async function submit(): Promise<void> {
 </script>
 
 <template>
-  <section aria-labelledby="gates-heading" class="mt-8" data-testid="gate-modes">
-    <h3 id="gates-heading" class="text-subtitle-1 font-weight-medium mb-1">
-      {{ $t('projects.gateModes.title') }}
-    </h3>
-    <p class="text-body-2 text-medium-emphasis mb-3">{{ $t('projects.gateModes.help') }}</p>
-    <p v-if="rows.length === 0" class="text-body-2">{{ $t('projects.gateModes.none') }}</p>
+  <!-- Layout: canvas primitives of Projeto.dc.html (no own artboard): .card, h2, .kv rows. -->
+  <section aria-labelledby="gates-heading" class="card gates" data-testid="gate-modes">
+    <h2 id="gates-heading">{{ $t('projects.gateModes.title') }}</h2>
+    <p class="t2 help">{{ $t('projects.gateModes.help') }}</p>
+    <p v-if="rows.length === 0" class="t2 help">{{ $t('projects.gateModes.none') }}</p>
     <ul v-else class="gate-modes">
-      <li v-for="row in rows" :key="row.gate" :data-testid="`gate-mode-${row.gate}`">
+      <li
+        v-for="row in rows"
+        :key="row.gate"
+        class="kv gate-row"
+        :data-testid="`gate-mode-${row.gate}`"
+      >
         <v-radio-group
           v-if="canEdit && row.configurable"
           :key="`${row.gate}-${row.mode}-${redraw}`"
           :model-value="row.mode"
           :label="gateName(row)"
           density="compact"
+          inline
           hide-details
           @update:model-value="ask(row, $event)"
         >
           <v-radio value="human" :label="$t('projects.gateModes.modes.human')" />
           <v-radio value="automatic" :label="$t('projects.gateModes.modes.automatic')" />
         </v-radio-group>
-        <p v-else class="text-body-2">
-          <span class="font-weight-medium">{{ gateName(row) }}:</span> {{ modeText(row) }}
-        </p>
+        <template v-else>
+          <!-- The space after the colon is in the text, so it reads "Gate …: Human". -->
+          <span class="t2">{{ `${gateName(row)}: ` }}</span>
+          <span class="value">{{ modeText(row) }}</span>
+        </template>
       </li>
     </ul>
-    <p class="text-body-2 text-medium-emphasis mt-2">
-      {{ $t('projects.gateModes.automaticExplanation') }}
-    </p>
+    <p class="t2 help foot">{{ $t('projects.gateModes.automaticExplanation') }}</p>
     <ConfirmActionDialog
       v-model="dialogOpen"
       :title="
@@ -117,10 +122,32 @@ async function submit(): Promise<void> {
 </template>
 
 <style scoped>
+.gates {
+  padding: 18px 22px;
+}
+
+.help {
+  margin: 4px 0 10px;
+  font-size: 13px;
+}
+
+.foot {
+  margin: 10px 0 0;
+}
+
 .gate-modes {
-  display: grid;
-  gap: 0.75rem;
   list-style: none;
+  margin: 0;
   padding: 0;
+}
+
+.gate-row {
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.value {
+  font-weight: 600;
+  text-align: right;
 }
 </style>

@@ -7,6 +7,7 @@ import { isApiError } from '@/shared/api/problemDetails'
 import { useLoader } from '@/shared/composables/useLoader'
 import { useFormat } from '@/shared/format/useFormat'
 import AppBreadcrumbs from '@/shared/ui/AppBreadcrumbs.vue'
+import CanvasIcon from '@/shared/ui/CanvasIcon.vue'
 import LoadingState from '@/shared/ui/LoadingState.vue'
 import MarkdownContent from '@/shared/ui/MarkdownContent.vue'
 import ProblemAlert from '@/shared/ui/ProblemAlert.vue'
@@ -213,179 +214,260 @@ async function downloadVersion(): Promise<void> {
 </script>
 
 <template>
-  <v-container max-width="1200">
-    <LoadingState v-if="loader.loading.value && !current" />
-    <template v-else-if="loader.error.value && !current">
-      <h1 class="text-h4 mb-4">{{ $t('pages.artifact.title') }}</h1>
-      <v-alert v-if="notFound" type="warning" variant="tonal" role="alert">
-        <p>{{ $t('artifacts.notFound') }}</p>
+  <!-- Layout: canvas "Artefato" (Artefato.dc.html). -->
+  <LoadingState v-if="loader.loading.value && !current" />
+  <template v-else-if="loader.error.value && !current">
+    <h1>{{ $t('pages.artifact.title') }}</h1>
+    <div v-if="notFound" class="note note-warn" role="alert">
+      <CanvasIcon name="alert" />
+      <span class="note-text">
+        <span>{{ $t('artifacts.notFound') }}</span>
         <router-link :to="{ name: ROUTE_NAMES.projects }">{{
           $t('common.goProjects')
         }}</router-link>
-      </v-alert>
-      <ProblemAlert v-else :error="loader.error.value" retry @retry="loader.run" />
-    </template>
+      </span>
+    </div>
+    <ProblemAlert v-else :error="loader.error.value" retry @retry="loader.run" />
+  </template>
 
-    <template v-else-if="shown && current">
-      <AppBreadcrumbs :items="breadcrumbs" />
-      <div class="d-flex flex-wrap align-center ga-3 mb-2">
-        <h1 class="text-h4">
-          <span class="monospace">{{ shown.id }}</span> · {{ shown.title }}
-        </h1>
-        <StateLabel machine="artifact" :state="current.state" />
+  <template v-else-if="shown && current">
+    <AppBreadcrumbs :items="breadcrumbs" />
+    <div class="art-head">
+      <div class="art-title">
+        <h1>{{ shown.id }} · {{ shown.title }}</h1>
+        <span class="art-meta">
+          <StateLabel machine="artifact" :state="current.state" />
+          <span class="t2 art-meta-text">
+            <span>{{ $t('artifacts.type') }}: {{ shown.type }}</span> ·
+            <span>{{ $t('artifacts.author') }}: {{ authorText(shown.author) }}</span> ·
+            <span>
+              {{ $t('artifacts.wave') }}:
+              <!-- US-26 CA-3: the wave that produced it. -->
+              <router-link
+                :to="{ name: ROUTE_NAMES.wave, params: { projectId, waveId: shown.wave } }"
+                class="mono"
+                data-testid="origin-wave"
+                >{{ shown.wave }}</router-link
+              ></span
+            >
+            · <span>{{ $t('artifacts.version') }}: {{ shown.version }}</span>
+            <template v-if="shown.path">
+              ·
+              <span :title="$t('artifacts.path')">{{ shown.path }}</span>
+            </template>
+          </span>
+        </span>
       </div>
-
-      <v-alert
-        v-if="isOlderVersion"
-        type="info"
-        variant="tonal"
-        class="mb-4"
-        data-testid="older-version"
-      >
-        {{
-          $t('artifacts.olderVersion', {
-            n: shown.version,
-            total: current.version,
-          })
-        }}
-        <template v-if="shownVersionInfo?.approved === false">
-          · {{ $t('artifacts.notApproved') }}</template
+      <div class="art-actions">
+        <div
+          v-if="versions.length > 1"
+          class="seg2"
+          role="group"
+          :aria-label="$t('artifacts.version')"
         >
-        <template v-else-if="shownVersionInfo?.approved">
-          · {{ $t('artifacts.approvedVersion') }}</template
-        >
-        <div class="mt-2">
-          <v-btn variant="outlined" size="small" @click="chooseVersion(current.version)">
-            {{ $t('artifacts.goToCurrent') }}
-          </v-btn>
+          <button
+            v-for="item in versions"
+            :key="item.version"
+            type="button"
+            :class="{ on: item.version === shown.version }"
+            :aria-pressed="item.version === shown.version ? 'true' : 'false'"
+            @click="chooseVersion(item.version)"
+          >
+            {{ $t('artifacts.versionShort', { n: item.version }) }}
+          </button>
         </div>
-      </v-alert>
-      <p v-if="current.state === 'draft'" class="text-body-2 mb-2">
-        {{ $t('artifacts.draftNotice') }}
-      </p>
-      <!-- ESP-08 3: an imposed ADR says who imposed it. -->
-      <p
-        v-if="isImposedAdr(current.header) && current.author.type === 'human'"
-        class="text-body-2 mb-2"
-        data-testid="imposed-adr"
-      >
-        {{ $t('artifactEdit.imposedBy', { person: current.author.edited_by?.name ?? '' }) }}
-      </p>
-      <div role="status" class="sr-only">{{ message }}</div>
-      <v-alert
-        v-if="editNotice"
-        type="info"
-        variant="tonal"
-        class="mb-4"
-        closable
-        data-testid="artifact-edit-notice"
-        @click:close="dismissEditNotice"
-      >
-        {{ editNotice }}
+        <button type="button" class="btn" @click="downloadVersion">
+          {{ $t('artifacts.download') }}
+        </button>
+        <!-- US-53: edit or remove the item; the stage agent validates before it counts. -->
+        <div v-if="editable" class="art-edit" data-testid="artifact-edit-actions">
+          <button
+            type="button"
+            class="btn"
+            :disabled="editPreparing"
+            :aria-busy="editPreparing ? 'true' : undefined"
+            data-testid="edit-artifact"
+            @click="startEdit('modify')"
+          >
+            {{ $t('artifactEdit.modify') }}
+          </button>
+          <button
+            type="button"
+            class="btn btn-d"
+            data-testid="delete-artifact"
+            @click="startEdit('delete')"
+          >
+            {{ $t('artifactEdit.delete') }}
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div v-if="isOlderVersion" class="note" role="alert" data-testid="older-version">
+      <span class="note-text">
+        <span>
+          {{
+            $t('artifacts.olderVersion', {
+              n: shown.version,
+              total: current.version,
+            })
+          }}
+          <template v-if="shownVersionInfo?.approved === false">
+            · {{ $t('artifacts.notApproved') }}</template
+          >
+          <template v-else-if="shownVersionInfo?.approved">
+            · {{ $t('artifacts.approvedVersion') }}</template
+          >
+        </span>
+      </span>
+      <button type="button" class="btn note-action" @click="chooseVersion(current.version)">
+        {{ $t('artifacts.goToCurrent') }}
+      </button>
+    </div>
+    <p v-if="current.state === 'draft'" class="t2 art-line">
+      {{ $t('artifacts.draftNotice') }}
+    </p>
+    <!-- ESP-08 3: an imposed ADR says who imposed it. -->
+    <p
+      v-if="isImposedAdr(current.header) && current.author.type === 'human'"
+      class="t2 art-line"
+      data-testid="imposed-adr"
+    >
+      {{ $t('artifactEdit.imposedBy', { person: current.author.edited_by?.name ?? '' }) }}
+    </p>
+    <div role="status" class="sr-only">{{ message }}</div>
+    <div v-if="editNotice" class="note" role="alert" data-testid="artifact-edit-notice">
+      <span class="note-text">
+        <span>{{ editNotice }}</span>
         <!-- RN-1: the agent's review wave; when it refuses, its reason stays in the wave (CA-2). -->
         <router-link
           v-if="trackedEdit?.review_wave"
           :to="{ name: ROUTE_NAMES.wave, params: { projectId, waveId: trackedEdit.review_wave } }"
-          class="d-block monospace"
+          class="mono"
           data-testid="edit-review-wave"
         >
           {{ $t('artifactEdit.reviewWave', { wave: trackedEdit.review_wave }) }}
         </router-link>
-      </v-alert>
-      <!-- US-53: edit or remove the item; the stage agent validates before it counts. -->
-      <div v-if="editable" class="d-flex flex-wrap ga-2 mb-4" data-testid="artifact-edit-actions">
-        <v-btn
-          color="primary"
-          variant="tonal"
-          :loading="editPreparing"
-          data-testid="edit-artifact"
-          @click="startEdit('modify')"
-        >
-          {{ $t('artifactEdit.modify') }}
-        </v-btn>
-        <v-btn
-          color="error"
-          variant="outlined"
-          data-testid="delete-artifact"
-          @click="startEdit('delete')"
-        >
-          {{ $t('artifactEdit.delete') }}
-        </v-btn>
-      </div>
-      <!-- CA-6: an approved artifact only changes through a finding or a scope change. -->
-      <p
-        v-else-if="current.state === 'approved' && !isOlderVersion"
-        class="text-body-2 mb-4"
-        data-testid="artifact-approved-notice"
+      </span>
+      <button
+        type="button"
+        class="ibtn note-close"
+        :aria-label="$t('common.close')"
+        @click="dismissEditNotice"
       >
-        {{ $t('artifactEdit.approvedNotice') }}
-      </p>
-      <ProblemAlert v-if="editFailure" :error="editFailure" class="mb-4" />
-      <ArtifactEditDialog
-        v-if="editable"
-        v-model="editOpen"
-        :project-id="projectId"
-        :operation="editOperation"
-        :artifact-id="current.id"
-        :base-version="current.version"
-        :initial-content="editContent"
-        :finding="scopeFinding"
-        @submitted="editSubmitted"
-      />
+        <CanvasIcon name="close" :size="18" />
+      </button>
+    </div>
+    <ProblemAlert v-if="editFailure" :error="editFailure" />
+    <ProblemAlert v-if="downloadFailure" :error="downloadFailure" />
+    <ArtifactEditDialog
+      v-if="editable"
+      v-model="editOpen"
+      :project-id="projectId"
+      :operation="editOperation"
+      :artifact-id="current.id"
+      :base-version="current.version"
+      :initial-content="editContent"
+      :finding="scopeFinding"
+      @submitted="editSubmitted"
+    />
 
-      <div class="artifact-layout">
-        <div>
-          <section aria-labelledby="artifact-meta-heading" class="mb-6">
-            <h2 id="artifact-meta-heading" class="text-h6 mb-2">{{ $t('artifacts.metadata') }}</h2>
-            <dl class="summary-list">
-              <dt>{{ $t('artifacts.type') }}</dt>
-              <dd>{{ shown.type }}</dd>
-              <dt>{{ $t('artifacts.version') }}</dt>
-              <dd>{{ shown.version }}</dd>
-              <dt>{{ $t('artifacts.author') }}</dt>
-              <dd>{{ authorText(shown.author) }}</dd>
-              <dt>{{ $t('artifacts.wave') }}</dt>
+    <div class="art-cols">
+      <div class="art-main">
+        <article class="card art-body" aria-labelledby="artifact-body-heading">
+          <h2 id="artifact-body-heading" class="sr-only">{{ $t('artifacts.body') }}</h2>
+          <LoadingState v-if="versionLoader.loading.value" type="paragraph" />
+          <MarkdownContent v-else :source="shown.body" data-testid="artifact-body" />
+          <p class="t2 art-sanitized">{{ $t('artifacts.sanitizedNotice') }}</p>
+          <ProblemAlert v-if="versionLoader.error.value" :error="versionLoader.error.value" />
+        </article>
+
+        <!-- US-22, US-23: CT, REL-QA, AMEACAS and REL-SEG (ESP-15, ESP-16). -->
+        <QualityArtifactView
+          v-if="structured && QUALITY_TYPES.includes(structured.type)"
+          :project-id="projectId"
+          :artifact="structured"
+        />
+        <ArtifactStructuredView
+          v-else-if="structured"
+          :project-id="projectId"
+          :artifact="structured"
+        />
+
+        <section class="card art-card" aria-labelledby="artifact-header-heading">
+          <h2 id="artifact-header-heading">{{ $t('artifacts.header') }}</h2>
+          <dl class="art-fields">
+            <div v-for="[field, value] in headerEntries" :key="field" class="art-field">
+              <dt class="mono">{{ field }}</dt>
               <dd>
-                <!-- US-26 CA-3: the wave that produced it. -->
-                <router-link
-                  :to="{ name: ROUTE_NAMES.wave, params: { projectId, waveId: shown.wave } }"
-                  class="monospace"
-                  data-testid="origin-wave"
-                >
-                  {{ shown.wave }}
-                </router-link>
+                <span v-if="isScalar(value)">{{ headerValue(value) }}</span>
+                <pre v-else class="mono header-value">{{ headerValue(value) }}</pre>
               </dd>
-              <template v-if="shown.path">
-                <dt>{{ $t('artifacts.path') }}</dt>
-                <dd class="monospace">{{ shown.path }}</dd>
-              </template>
-            </dl>
-          </section>
+            </div>
+          </dl>
+        </section>
 
-          <section aria-labelledby="artifact-header-heading" class="mb-6">
-            <h2 id="artifact-header-heading" class="text-h6 mb-2">{{ $t('artifacts.header') }}</h2>
-            <dl class="summary-list">
-              <template v-for="[field, value] in headerEntries" :key="field">
-                <dt class="monospace">{{ field }}</dt>
-                <dd>
-                  <span v-if="isScalar(value)">{{ headerValue(value) }}</span>
-                  <pre v-else class="header-value">{{ headerValue(value) }}</pre>
-                </dd>
-              </template>
-            </dl>
-          </section>
+        <!-- US-27: any two versions side by side (ESP-21 4, Phase 2). -->
+        <ArtifactComparisonPanel
+          :project-id="projectId"
+          :artifact-id="artifactId"
+          :versions="versions"
+        />
+      </div>
 
-          <!-- US-22, US-23: CT, REL-QA, AMEACAS and REL-SEG (ESP-15, ESP-16). -->
-          <QualityArtifactView
-            v-if="structured && QUALITY_TYPES.includes(structured.type)"
-            :project-id="projectId"
-            :artifact="structured"
-          />
-          <ArtifactStructuredView
-            v-else-if="structured"
-            :project-id="projectId"
-            :artifact="structured"
-          />
+      <aside class="art-side">
+        <section class="card side-card" aria-labelledby="versions-heading">
+          <h2 id="versions-heading">{{ $t('artifacts.versions') }}</h2>
+          <p v-if="versions.length <= 1" class="t2 side-text">
+            {{ $t('artifacts.singleVersion') }}
+          </p>
+          <ol class="version-list" data-testid="version-list">
+            <li v-for="item in versions" :key="item.version" class="version">
+              <span class="version-top">
+                <button
+                  type="button"
+                  class="version-btn"
+                  :class="{ on: item.version === shown.version }"
+                  :aria-current="item.version === shown.version ? 'true' : undefined"
+                  @click="chooseVersion(item.version)"
+                >
+                  {{
+                    item.version === current.version
+                      ? $t('artifacts.versionCurrent', { n: item.version })
+                      : $t('artifacts.versionNumber', { n: item.version })
+                  }}
+                </button>
+                <span class="t2">{{ format.date(item.data) }}</span>
+              </span>
+              <span class="version-line">
+                <router-link
+                  :to="{ name: ROUTE_NAMES.wave, params: { projectId, waveId: item.wave } }"
+                  class="mono"
+                >
+                  {{ item.wave }}
+                </router-link>
+                · <span class="t2">{{ item.description }}</span>
+              </span>
+              <!-- ER-21-7: the finding that drove a rework version, with a link. -->
+              <span v-if="item.finding" class="version-line t2">
+                {{ $t('artifacts.drivenBy') }}
+                <router-link
+                  :to="{
+                    name: ROUTE_NAMES.finding,
+                    params: { projectId, findingId: item.finding },
+                  }"
+                  class="mono"
+                  :data-testid="`version-finding-${item.version}`"
+                >
+                  {{ item.finding }}
+                </router-link>
+              </span>
+            </li>
+          </ol>
+        </section>
+
+        <section class="card side-card" aria-labelledby="artifact-trace-heading">
+          <h2 id="artifact-trace-heading">{{ $t('pages.project.traceability') }}</h2>
           <!-- ESP-24 2: the full traceability with this artifact as root (US-28). -->
           <router-link
             :to="{
@@ -393,112 +475,268 @@ async function downloadVersion(): Promise<void> {
               params: { projectId, view: 'links' },
               query: { root: artifactId },
             }"
-            class="d-inline-block text-body-2 mb-6"
+            class="side-link"
             data-testid="artifact-traceability"
           >
             {{ $t('artifacts.traceabilityLink') }}
           </router-link>
+        </section>
 
-          <section aria-labelledby="artifact-body-heading" class="mb-6">
-            <h2 id="artifact-body-heading" class="text-h6 mb-1">{{ $t('artifacts.body') }}</h2>
-            <p class="text-body-2 text-medium-emphasis mb-3">
-              {{ $t('artifacts.sanitizedNotice') }}
-            </p>
-            <LoadingState v-if="versionLoader.loading.value" type="paragraph" />
-            <MarkdownContent v-else :source="shown.body" data-testid="artifact-body" />
-            <v-btn variant="outlined" size="small" class="mt-4" @click="downloadVersion">
-              {{ $t('artifacts.download') }}
-            </v-btn>
-            <ProblemAlert v-if="downloadFailure" :error="downloadFailure" class="mt-2" />
-            <ProblemAlert
-              v-if="versionLoader.error.value"
-              :error="versionLoader.error.value"
-              class="mt-2"
-            />
-          </section>
-
-          <!-- US-27: any two versions side by side (ESP-21 4, Phase 2). -->
-          <ArtifactComparisonPanel
-            :project-id="projectId"
-            :artifact-id="artifactId"
-            :versions="versions"
-          />
-        </div>
-
-        <aside aria-labelledby="versions-heading">
-          <h2 id="versions-heading" class="text-h6 mb-2">{{ $t('artifacts.versions') }}</h2>
-          <p v-if="versions.length <= 1" class="text-body-2 mb-2">
-            {{ $t('artifacts.singleVersion') }}
+        <!-- CA-6: an approved artifact only changes through a finding or a scope change. -->
+        <section
+          v-if="!editable && current.state === 'approved' && !isOlderVersion"
+          class="card side-card"
+          aria-labelledby="artifact-approval-heading"
+        >
+          <h2 id="artifact-approval-heading">{{ $t('artifacts.approval') }}</h2>
+          <p class="side-text" data-testid="artifact-approved-notice">
+            {{ $t('artifactEdit.approvedNotice') }}
           </p>
-          <ol class="version-list" data-testid="version-list">
-            <li v-for="item in versions" :key="item.version" class="mb-3">
-              <v-btn
-                variant="text"
-                size="small"
-                class="px-1"
-                :aria-current="item.version === shown.version ? 'true' : undefined"
-                :class="{ 'font-weight-bold': item.version === shown.version }"
-                @click="chooseVersion(item.version)"
-              >
-                {{
-                  item.version === current.version
-                    ? $t('artifacts.versionCurrent', { n: item.version })
-                    : $t('artifacts.versionNumber', { n: item.version })
-                }}
-              </v-btn>
-              <p class="text-body-2">
-                {{ format.date(item.data) }} ·
-                <router-link
-                  :to="{ name: ROUTE_NAMES.wave, params: { projectId, waveId: item.wave } }"
-                  class="monospace"
-                >
-                  {{ item.wave }}
-                </router-link>
-              </p>
-              <p class="text-body-2">{{ item.description }}</p>
-              <!-- ER-21-7: the finding that drove a rework version, with a link. -->
-              <p v-if="item.finding" class="text-body-2">
-                {{ $t('artifacts.drivenBy') }}
-                <router-link
-                  :to="{
-                    name: ROUTE_NAMES.finding,
-                    params: { projectId, findingId: item.finding },
-                  }"
-                  class="monospace"
-                  :data-testid="`version-finding-${item.version}`"
-                >
-                  {{ item.finding }}
-                </router-link>
-              </p>
-            </li>
-          </ol>
-        </aside>
-      </div>
-    </template>
-  </v-container>
+        </section>
+      </aside>
+    </div>
+  </template>
 </template>
 
 <style scoped>
-.artifact-layout {
-  display: grid;
-  gap: 2rem;
-  grid-template-columns: minmax(0, 1fr);
+.art-head {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 16px;
 }
 
-@media (min-width: 960px) {
-  .artifact-layout {
-    grid-template-columns: minmax(0, 3fr) minmax(220px, 1fr);
-  }
+.art-title {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.art-meta {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.art-meta-text {
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.art-actions,
+.art-edit {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+/* Canvas "Artefato": version segmented control. */
+.seg2 {
+  display: inline-flex;
+  max-width: 100%;
+  overflow-x: auto;
+  border: 1px solid rgba(140, 150, 255, 0.28);
+  border-radius: 10px;
+}
+
+.seg2 button {
+  min-height: 42px;
+  padding: 0 14px;
+  border: 0;
+  border-right: 1px solid rgba(140, 150, 255, 0.2);
+  background: transparent;
+  font: inherit;
+  color: #c7cceb;
+  cursor: pointer;
+}
+
+.seg2 button:last-child {
+  border-right: 0;
+}
+
+.seg2 button.on {
+  background: #4f46e5;
+  color: #ffffff;
+  font-weight: 600;
+}
+
+.note {
+  align-items: center;
+}
+
+.note-warn {
+  border-color: rgba(234, 179, 8, 0.45);
+  background: rgba(234, 179, 8, 0.1);
+}
+
+.note-warn > svg {
+  flex: none;
+  color: #fcd34d;
+}
+
+.note-text {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.note-action {
+  flex: none;
+}
+
+.note-close {
+  flex: none;
+  margin: -8px -8px -8px 0;
+}
+
+.art-line {
+  margin: 0;
+  font-size: 13px;
+}
+
+.art-cols {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 20px;
+  align-items: flex-start;
+}
+
+.art-main {
+  flex: 3 1 520px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.art-body {
+  padding: 26px 30px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  line-height: 22px;
+}
+
+.art-sanitized {
+  margin: 4px 0 0;
+  font-size: 12px;
+}
+
+.art-card {
+  padding: 18px 22px;
+}
+
+.art-card h2 {
+  margin-bottom: 4px;
+}
+
+.art-fields {
+  margin: 0;
+}
+
+.art-field {
+  display: grid;
+  grid-template-columns: minmax(140px, max-content) 1fr;
+  gap: 12px;
+  padding: 10px 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.art-field dt {
+  color: #a9b0d6;
+}
+
+.art-field dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.header-value {
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.art-side {
+  flex: 2 1 300px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.side-card {
+  padding: 18px 22px;
+}
+
+.side-card h2 {
+  margin-bottom: 4px;
+}
+
+.side-text {
+  margin: 0;
+  font-size: 13px;
+}
+
+.side-link {
+  display: inline-flex;
+  min-height: 44px;
+  align-items: center;
+  text-decoration: none;
+  font-weight: 500;
 }
 
 .version-list {
   list-style: none;
+  margin: 0;
   padding: 0;
 }
 
-.header-value {
-  white-space: pre-wrap;
-  font-family: monospace;
-  font-size: 0.85rem;
+.version {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 0 10px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.version-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.version-btn {
+  min-height: 44px;
+  margin-left: -8px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #f1f3ff;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.version-btn:hover {
+  background: rgba(255, 255, 255, 0.07);
+  color: #ffffff;
+}
+
+.version-btn.on {
+  background: rgba(99, 102, 241, 0.16);
+  font-weight: 600;
+}
+
+.version-line {
+  font-size: 13px;
+  overflow-wrap: anywhere;
 }
 </style>

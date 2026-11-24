@@ -73,6 +73,7 @@ const reasonValid = computed(() => {
   const length = reason.value.trim().length
   return length >= 3 && length <= 2000
 })
+const contentTooLarge = computed(() => contentBytes.value > ARTIFACT_EDIT_LIMIT)
 const contentValid = computed(
   () =>
     props.operation === 'delete' ||
@@ -132,6 +133,7 @@ async function submit(): Promise<void> {
 </script>
 
 <template>
+  <!-- Look: canvas dialog surface (#151B45 card) with `.fld` fields and `.btn` actions. -->
   <v-dialog
     v-model="open"
     max-width="900"
@@ -139,77 +141,175 @@ async function submit(): Promise<void> {
     :aria-labelledby="`${id}-title`"
     :aria-describedby="`${id}-description`"
   >
-    <v-card data-testid="artifact-edit-dialog">
-      <v-card-title>
-        <h2 :id="`${id}-title`" class="text-h6 text-wrap">{{ title }}</h2>
-      </v-card-title>
-      <v-form @submit.prevent="submit">
-        <v-card-text>
-          <div :id="`${id}-description`">
-            <p class="mb-2">{{ $t('artifactEdit.agentReview') }}</p>
-            <p v-if="operation === 'delete'" class="mb-2">{{ $t('artifactEdit.deleteEffect') }}</p>
-            <p v-if="finding" class="mb-2">
-              {{ $t('artifactEdit.scopeChange', { finding }) }}
-            </p>
-          </div>
-          <v-select
-            v-if="operation === 'create'"
-            :model-value="type"
-            :items="typeItems"
-            :label="$t('artifactEdit.type')"
-            class="mb-2"
-            @update:model-value="chooseType"
-          />
-          <p v-if="operation === 'create' && type === 'ADR'" class="text-body-2 mb-2">
-            {{ $t('artifactEdit.imposedAdrHelp') }}
+    <div class="dlg" data-testid="artifact-edit-dialog">
+      <h2 :id="`${id}-title`">{{ title }}</h2>
+      <form class="dlg-form" novalidate @submit.prevent="submit">
+        <div :id="`${id}-description`" class="dlg-text">
+          <p>{{ $t('artifactEdit.agentReview') }}</p>
+          <p v-if="operation === 'delete'">{{ $t('artifactEdit.deleteEffect') }}</p>
+          <p v-if="finding">
+            {{ $t('artifactEdit.scopeChange', { finding }) }}
           </p>
-          <v-textarea
-            v-if="operation !== 'delete'"
-            v-model="content"
-            :label="$t('artifactEdit.content')"
-            :hint="$t('artifactEdit.contentHint')"
-            persistent-hint
-            :error-messages="
-              contentBytes > ARTIFACT_EDIT_LIMIT ? [$t('artifactEdit.contentTooLarge')] : []
-            "
-            rows="14"
-            class="monospace mb-2"
-            spellcheck="false"
-            data-testid="artifact-edit-content"
-          />
-          <v-textarea
-            v-model="reason"
-            :label="$t('artifactEdit.reason')"
-            :hint="$t('artifactEdit.reasonHint')"
-            persistent-hint
-            counter="2000"
-            rows="2"
-            auto-grow
-          />
-          <ProblemAlert
-            v-if="failure"
-            :error="failure"
-            class="mt-3"
-            data-testid="artifact-edit-failure"
-          />
-          <p v-if="failure" class="text-body-2 mt-2">{{ $t('artifactEdit.keptText') }}</p>
-        </v-card-text>
-        <v-card-actions>
-          <v-spacer />
-          <v-btn variant="text" :disabled="sending" @click="open = false">
+        </div>
+        <span v-if="operation === 'create'" class="dlg-field">
+          <label :for="`${id}-type`" class="dlg-wrap">
+            <span :id="`${id}-type-label`" class="dlg-label">{{ $t('artifactEdit.type') }}</span>
+            <select
+              :id="`${id}-type`"
+              :aria-labelledby="`${id}-type-label`"
+              class="fld"
+              :value="type"
+              @change="chooseType(($event.target as HTMLSelectElement).value as HumanEditType)"
+            >
+              <option v-for="item in typeItems" :key="item.value" :value="item.value">
+                {{ item.title }}
+              </option>
+            </select>
+          </label>
+        </span>
+        <p v-if="operation === 'create' && type === 'ADR'" class="t2 dlg-help">
+          {{ $t('artifactEdit.imposedAdrHelp') }}
+        </p>
+        <span v-if="operation !== 'delete'" class="dlg-field" data-testid="artifact-edit-content">
+          <label :for="`${id}-content`" class="dlg-wrap">
+            <span :id="`${id}-content-label`" class="dlg-label">{{
+              $t('artifactEdit.content')
+            }}</span>
+            <textarea
+              :id="`${id}-content`"
+              v-model="content"
+              :aria-labelledby="`${id}-content-label`"
+              class="fld mono"
+              rows="14"
+              spellcheck="false"
+              :aria-invalid="contentTooLarge ? 'true' : 'false'"
+              :aria-describedby="`${id}-content-messages`"
+            />
+          </label>
+          <span :id="`${id}-content-messages`" class="dlg-messages" aria-live="polite">
+            <span v-if="contentTooLarge" class="dlg-error">{{
+              $t('artifactEdit.contentTooLarge')
+            }}</span>
+            <span v-else class="t2">{{ $t('artifactEdit.contentHint') }}</span>
+          </span>
+        </span>
+        <span class="dlg-field">
+          <label :for="`${id}-reason`" class="dlg-wrap">
+            <span :id="`${id}-reason-label`" class="dlg-label">{{
+              $t('artifactEdit.reason')
+            }}</span>
+            <textarea
+              :id="`${id}-reason`"
+              v-model="reason"
+              :aria-labelledby="`${id}-reason-label`"
+              class="fld"
+              rows="2"
+              :aria-describedby="`${id}-reason-messages`"
+            />
+          </label>
+          <span :id="`${id}-reason-messages`" class="dlg-messages">
+            <span class="t2">{{ $t('artifactEdit.reasonHint') }}</span>
+            <span class="t2 dlg-counter">{{
+              $t('common.counter', { n: reason.length, max: 2000 })
+            }}</span>
+          </span>
+        </span>
+        <ProblemAlert v-if="failure" :error="failure" data-testid="artifact-edit-failure" />
+        <p v-if="failure" class="t2 dlg-help">{{ $t('artifactEdit.keptText') }}</p>
+        <div class="dlg-actions">
+          <button type="button" class="btn" :disabled="sending" @click="open = false">
             {{ $t('common.cancel') }}
-          </v-btn>
-          <v-btn
+          </button>
+          <button
             type="submit"
-            :color="operation === 'delete' ? 'error' : 'primary'"
-            variant="flat"
-            :loading="sending"
-            :disabled="!reasonValid || !contentValid"
+            class="btn"
+            :class="operation === 'delete' ? 'btn-d' : 'btn-p'"
+            :disabled="sending || !reasonValid || !contentValid"
+            :aria-busy="sending ? 'true' : undefined"
           >
             {{ $t(`artifactEdit.submit.${operation}`) }}
-          </v-btn>
-        </v-card-actions>
-      </v-form>
-    </v-card>
+          </button>
+        </div>
+      </form>
+    </div>
   </v-dialog>
 </template>
+
+<style scoped>
+.dlg {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 22px 24px;
+  background: #151b45;
+  border: 1px solid rgba(140, 150, 255, 0.24);
+  border-radius: 14px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.45);
+  color: #f1f3ff;
+  font-size: 14px;
+  line-height: 20px;
+  overflow-y: auto;
+}
+
+.dlg-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.dlg-text {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.dlg-text p,
+.dlg-help {
+  margin: 0;
+}
+
+.dlg-help {
+  font-size: 13px;
+}
+
+.dlg-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.dlg-wrap {
+  display: contents;
+}
+
+.dlg-label {
+  font-weight: 600;
+}
+
+.dlg-messages {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.dlg-error {
+  color: #fca5a5;
+}
+
+.dlg-counter {
+  flex: none;
+}
+
+.fld[aria-invalid='true'] {
+  border-color: #fca5a5;
+}
+
+.dlg-actions {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+</style>

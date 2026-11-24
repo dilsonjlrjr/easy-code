@@ -8,8 +8,11 @@ import { useAnnouncer } from '@/shared/composables/useAnnouncer'
 import { useLoader } from '@/shared/composables/useLoader'
 import { useFormat } from '@/shared/format/useFormat'
 import { useSessionStore } from '@/shared/session/sessionStore'
+import AppBreadcrumbs from '@/shared/ui/AppBreadcrumbs.vue'
+import CanvasIcon from '@/shared/ui/CanvasIcon.vue'
 import LoadingState from '@/shared/ui/LoadingState.vue'
 import ProblemAlert from '@/shared/ui/ProblemAlert.vue'
+import StageSegments from '@/shared/ui/StageSegments.vue'
 import StateLabel from '@/shared/ui/StateLabel.vue'
 import { projectsApi, type Project } from '../api/projectsApi'
 import ProjectSituation from '../components/ProjectSituation.vue'
@@ -95,182 +98,359 @@ function firstLine(text: string | undefined): string {
   return text?.split('\n').find((line) => line.trim() !== '') ?? ''
 }
 
+/** ESP-04 3: the open findings by severity, or zero; the escalated ones are told apart below. */
+function findingsText(project: Project): string {
+  const list = openFindings(project.summary)
+  if (list.length === 0) return format.integer(0)
+  return list
+    .map(([severity, count]) =>
+      t('dashboard.severityCount', { n: count, severity: t(`findings.severity.${severity}`) }),
+    )
+    .join(', ')
+}
+
 function dismissNotice(): void {
   void router.replace({ name: ROUTE_NAMES.projects, query: { ...route.query, notice: undefined } })
 }
 </script>
 
 <template>
-  <v-container max-width="1200">
-    <div class="d-flex flex-wrap align-center ga-2 mb-2">
-      <h1 class="text-h4">{{ $t('pages.projects.title') }}</h1>
-      <v-spacer />
-      <v-btn color="primary" variant="flat" :to="{ name: ROUTE_NAMES.newProject }">
-        {{ $t('projects.list.newProject') }}
-      </v-btn>
+  <!-- Layout: canvas "Projetos" (Projetos.dc.html). -->
+  <AppBreadcrumbs :items="[{ title: $t('pages.projects.title') }]" />
+  <div class="projects-head">
+    <div>
+      <h1>{{ $t('pages.projects.title') }}</h1>
+      <p class="t2 projects-description">{{ $t('pages.projects.description') }}</p>
     </div>
-    <p class="text-body-1 text-medium-emphasis mb-4">{{ $t('pages.projects.description') }}</p>
+    <router-link class="btn btn-p" :to="{ name: ROUTE_NAMES.newProject }">
+      <CanvasIcon name="plus" :size="16" :stroke-width="2.2" />
+      {{ $t('projects.list.newProject') }}
+    </router-link>
+  </div>
 
-    <v-alert
-      v-if="notice"
-      type="info"
-      variant="tonal"
-      role="alert"
-      closable
-      class="mb-4"
-      @click:close="dismissNotice"
+  <div v-if="notice" class="note projects-notice" role="alert">
+    <span class="projects-notice-text">{{ $t(`projects.list.notices.${notice}`) }}</span>
+    <button
+      type="button"
+      class="ibtn projects-notice-close"
+      :aria-label="$t('common.close')"
+      @click="dismissNotice"
     >
-      {{ $t(`projects.list.notices.${notice}`) }}
-    </v-alert>
+      <CanvasIcon name="close" :size="18" />
+    </button>
+  </div>
 
-    <div
-      v-if="session.isAdministrator"
-      role="group"
-      :aria-label="$t('projects.list.scopeLabel')"
-      class="d-flex flex-wrap ga-2 mb-2"
+  <div
+    v-if="session.isAdministrator"
+    role="group"
+    :aria-label="$t('projects.list.scopeLabel')"
+    class="projects-filters"
+  >
+    <button
+      v-for="value in ['my', 'organization'] as const"
+      :key="value"
+      type="button"
+      class="tabf"
+      :class="{ on: scope === value }"
+      :aria-pressed="scope === value"
+      @click="scope = value"
     >
-      <v-btn
-        v-for="value in ['my', 'organization'] as const"
-        :key="value"
-        :variant="scope === value ? 'flat' : 'outlined'"
-        :color="scope === value ? 'primary' : undefined"
-        :aria-pressed="scope === value"
-        size="small"
-        @click="scope = value"
+      {{ $t(`projects.list.scopes.${value}`) }}
+    </button>
+  </div>
+
+  <!-- ESP-04: one state filter at a time, each with its count; the active one is exposed as pressed. -->
+  <div role="group" :aria-label="$t('projects.list.filterLabel')" class="projects-filters">
+    <button
+      v-for="value in ['all', ...STATE_FILTERS] as StateFilter[]"
+      :key="value"
+      type="button"
+      class="tabf"
+      :class="{ on: filter === value }"
+      :aria-pressed="filter === value"
+      @click="filter = value"
+    >
+      {{ $t(`projects.list.filters.${value}`) }}
+      <!-- The brackets are in the name ("Todos (3)") but not on screen, as in the canvas pill. -->
+      <span class="cnt"
+        ><span class="paren">(</span>{{ filterCount(value) }}<span class="paren">)</span></span
       >
-        {{ $t(`projects.list.scopes.${value}`) }}
-      </v-btn>
-    </div>
+    </button>
+  </div>
 
-    <!-- ESP-04: one state filter at a time, each with its count; the active one is exposed as pressed. -->
-    <div
-      role="group"
-      :aria-label="$t('projects.list.filterLabel')"
-      class="d-flex flex-wrap ga-2 mb-4"
-    >
-      <v-btn
-        v-for="value in ['all', ...STATE_FILTERS] as StateFilter[]"
-        :key="value"
-        :variant="filter === value ? 'flat' : 'outlined'"
-        :color="filter === value ? 'primary' : undefined"
-        :aria-pressed="filter === value"
-        size="small"
-        @click="filter = value"
-      >
-        {{ $t(`projects.list.filters.${value}`) }} ({{ filterCount(value) }})
-      </v-btn>
-    </div>
-
-    <div role="status" class="sr-only">{{ message }}</div>
-    <LoadingState v-if="loader.loading.value" type="card@3" />
-    <ProblemAlert
-      v-else-if="loader.error.value"
-      :error="loader.error.value"
-      retry
-      @retry="loader.run"
-    />
-    <template v-else-if="projects.length === 0">
-      <p v-if="filter === 'all'" class="mb-4">{{ $t('projects.list.emptyAll') }}</p>
-      <p v-else>{{ $t('projects.list.emptyFilter') }}</p>
-    </template>
-    <ul v-else class="project-cards">
-      <li v-for="project in projects" :key="project.id">
-        <v-card variant="outlined" class="pa-4 h-100">
-          <h2 class="text-h6">
-            <router-link :to="{ name: ROUTE_NAMES.project, params: { projectId: project.id } }">
-              {{ project.name }}
-            </router-link>
-          </h2>
-          <p class="text-body-2 text-medium-emphasis project-need">
-            {{ firstLine(project.business_need) }}
-          </p>
-          <div class="mt-2">
-            <StateLabel
-              machine="project"
-              :state="project.state"
-              :detail="
-                project.pause_reason
-                  ? $t(`projects.pauseReason.${project.pause_reason}`)
-                  : undefined
-              "
-            />
+  <div role="status" class="sr-only">{{ message }}</div>
+  <LoadingState v-if="loader.loading.value" type="card@3" />
+  <ProblemAlert
+    v-else-if="loader.error.value"
+    :error="loader.error.value"
+    retry
+    @retry="loader.run"
+  />
+  <template v-else-if="projects.length === 0">
+    <p v-if="filter === 'all'" class="t2 projects-empty">{{ $t('projects.list.emptyAll') }}</p>
+    <p v-else class="t2 projects-empty">{{ $t('projects.list.emptyFilter') }}</p>
+  </template>
+  <ul v-else class="project-cards">
+    <li v-for="project in projects" :key="project.id" class="card project-card">
+      <div class="pc">
+        <div class="pc-head">
+          <div class="pc-title">
+            <h2 class="pc-name">
+              <router-link
+                class="pc-link"
+                :to="{ name: ROUTE_NAMES.project, params: { projectId: project.id } }"
+              >
+                {{ project.name }}
+              </router-link>
+            </h2>
+            <span class="t2 pc-need">{{ firstLine(project.business_need) }}</span>
           </div>
-          <!-- CA-04-4: a created project has no stage counter. -->
-          <p v-if="project.state !== 'created' && project.summary" class="text-body-2 mt-2">
-            {{
-              $t('projects.list.stagesApproved', {
-                approved: project.summary.approved_stages,
-                total: project.summary.stages_total,
-              })
-            }}
-          </p>
-          <div class="mt-1">
+          <StateLabel
+            machine="project"
+            :state="project.state"
+            :detail="
+              project.pause_reason ? $t(`projects.pauseReason.${project.pause_reason}`) : undefined
+            "
+          />
+        </div>
+        <div class="pc-progress">
+          <div class="pc-now">
             <ProjectSituation :project="project" />
-          </div>
-          <p v-if="project.lead" class="text-body-2">
-            {{ $t('projects.list.lead', { name: project.lead.name }) }}
-          </p>
-          <p v-if="project.summary" class="text-body-2">
-            {{ $t('projects.list.cost', { cost: format.money(project.summary.accumulated_cost) }) }}
-          </p>
-          <p
-            v-if="budgetUsed(project.summary) !== undefined"
-            class="text-body-2"
-            data-testid="project-budget-used"
-          >
-            {{
-              $t('dashboard.budgetUsed', {
-                percentage: format.percent(budgetUsed(project.summary)),
-              })
-            }}
-          </p>
-          <p v-if="project.summary" class="text-body-2" data-testid="project-open-findings">
-            <template v-if="openFindings(project.summary).length">
-              {{
-                $t('dashboard.openFindings', {
-                  list: openFindings(project.summary)
-                    .map(([severity, count]) =>
-                      $t('dashboard.severityCount', {
-                        n: count,
-                        severity: $t(`findings.severity.${severity}`),
-                      }),
-                    )
-                    .join(', '),
+            <!-- CA-04-4: a created project has no stage counter. -->
+            <span v-if="project.state !== 'created' && project.summary" class="t2 pc-stages">
+              <span class="sr-only">{{
+                $t('projects.list.stagesApproved', {
+                  approved: project.summary.approved_stages,
+                  total: project.summary.stages_total,
                 })
+              }}</span>
+              <span aria-hidden="true">{{
+                $t('projects.list.stagesOf', {
+                  approved: project.summary.approved_stages,
+                  total: project.summary.stages_total,
+                })
+              }}</span>
+            </span>
+          </div>
+          <StageSegments :summary="project.summary" />
+        </div>
+        <div class="pc-meta">
+          <div class="pc-cell">
+            <span class="t2 pc-label"
+              >{{ $t('projects.list.card.lead') }}<span class="sr-only">: </span></span
+            >
+            <span>{{ project.lead?.name ?? '-' }}</span>
+          </div>
+          <div class="pc-cell">
+            <span class="t2 pc-label"
+              >{{ $t('projects.list.card.budgetUsed') }}<span class="sr-only">: </span></span
+            >
+            <span
+              v-if="budgetUsed(project.summary) !== undefined"
+              data-testid="project-budget-used"
+              >{{ format.percent(budgetUsed(project.summary)) }}</span
+            >
+            <span v-else>-</span>
+            <span v-if="project.summary" class="t2 pc-cost">
+              {{
+                $t('projects.list.cost', { cost: format.money(project.summary.accumulated_cost) })
               }}
-            </template>
-            <template v-else>{{ $t('dashboard.noOpenFindings') }}</template>
-            <!-- ESP-04 3: escalated in text (also counted in the severities above). -->
-            <template v-if="(project.summary.open_findings?.escalated ?? 0) > 0">
-              ·
-              {{ $t('dashboard.escalated', { n: project.summary.open_findings?.escalated ?? 0 }) }}
-            </template>
-          </p>
-        </v-card>
-      </li>
-    </ul>
+            </span>
+          </div>
+          <div class="pc-cell">
+            <span class="t2 pc-label"
+              >{{ $t('projects.list.card.openFindings') }}<span class="sr-only">: </span></span
+            >
+            <span v-if="project.summary" data-testid="project-open-findings">
+              {{ findingsText(project) }}
+              <!-- ESP-04 3: escalated in text (also counted in the severities above). -->
+              <template v-if="(project.summary.open_findings?.escalated ?? 0) > 0">
+                ·
+                {{
+                  $t('dashboard.escalated', { n: project.summary.open_findings?.escalated ?? 0 })
+                }}
+              </template>
+            </span>
+            <span v-else>-</span>
+          </div>
+        </div>
+      </div>
+    </li>
+  </ul>
 
-    <div v-if="nextCursor && !loader.loading.value" class="mt-4">
-      <v-btn variant="outlined" :loading="loadingMore" @click="loadMore">
-        {{ $t('common.loadMore') }}
-      </v-btn>
-      <ProblemAlert v-if="moreFailure" :error="moreFailure" class="mt-2" />
-    </div>
-  </v-container>
+  <div v-if="nextCursor && !loader.loading.value" class="projects-more">
+    <button
+      type="button"
+      class="btn"
+      :disabled="loadingMore"
+      :aria-busy="loadingMore"
+      @click="loadMore"
+    >
+      {{ $t('common.loadMore') }}
+    </button>
+    <ProblemAlert v-if="moreFailure" :error="moreFailure" />
+  </div>
+
+  <p class="t2 projects-states">{{ $t('projects.list.statesHelp') }}</p>
 </template>
 
 <style scoped>
+.projects-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.projects-description {
+  margin: 4px 0 0;
+}
+
+.projects-notice {
+  margin: 0;
+  align-items: center;
+}
+
+.projects-notice-text {
+  flex: 1;
+}
+
+.projects-notice-close {
+  flex: none;
+  margin: -10px -8px -10px 0;
+}
+
+.projects-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.projects-empty {
+  margin: 0;
+}
+
 .project-cards {
   display: grid;
-  gap: 1rem;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  gap: 18px;
   list-style: none;
+  margin: 0;
   padding: 0;
 }
 
-.project-need {
+.project-card {
+  overflow: hidden;
+}
+
+.pc {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 20px;
+  color: #f1f3ff;
+  height: 100%;
+  box-sizing: border-box;
+}
+
+.pc:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.pc-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+}
+
+.pc-title {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.pc-name {
+  font-size: 16px;
+  line-height: 20px;
+  font-weight: 700;
+}
+
+/* The whole card is the link target, as on the canvas (`a.pc`); the name stays the link text. */
+.pc-link {
+  color: #f1f3ff;
+  text-decoration: none;
+}
+
+.pc-link:hover {
+  color: #f1f3ff;
+}
+
+.pc-link::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+}
+
+.pc-need {
+  font-size: 13px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.pc-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.pc-now {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.pc-stages {
+  white-space: nowrap;
+}
+
+.pc-meta {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  font-size: 13px;
+}
+
+.pc-cell {
+  display: flex;
+  flex-direction: column;
+}
+
+.pc-label,
+.pc-cost {
+  font-size: 12px;
+}
+
+.projects-more {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.projects-states {
+  margin: 0;
+  font-size: 13px;
+}
+
+.paren {
+  font-size: 0;
 }
 </style>

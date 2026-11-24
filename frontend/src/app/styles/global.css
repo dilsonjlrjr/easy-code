@@ -1,12 +1,7 @@
-/* Visible focus for keyboard users (WCAG 2.4.7) that the fixed app bar never covers (2.4.11). */
+/* Focused elements are never hidden under the top bar (WCAG 2.4.11). The focus ring is in easycode.css. */
 :root {
   scroll-padding-top: 80px;
   scroll-padding-bottom: 72px;
-}
-
-:focus-visible {
-  outline: 3px solid rgb(var(--v-theme-primary));
-  outline-offset: 2px;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -33,7 +28,8 @@
 
 /* Ids of artifacts, waves and findings (ESP-00 3.3): monospace, selectable. */
 .monospace {
-  font-family: 'Roboto Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
   user-select: text;
 }
 

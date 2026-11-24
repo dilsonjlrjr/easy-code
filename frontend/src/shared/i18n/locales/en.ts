@@ -6,6 +6,8 @@ export const en: MessageSchema = {
     name: 'Easy Code',
     documentTitle: '{page} · Easy Code',
     skipToContent: 'Skip to content',
+    brand: 'EasyCode',
+    tagline: 'AI Engineering Factory',
   },
   navigation: {
     mainLabel: 'Main',
@@ -15,12 +17,14 @@ export const en: MessageSchema = {
     pendingItems: 'Pending items',
     agents: 'Agents and skills',
     settings: 'Settings',
+    pendingCount: 'Pending items, {n}',
   },
   account: {
     menuLabel: 'Account of {name}',
     myPendingItems: 'My pending items',
     myProjects: 'My projects',
-    localClient: 'Local client',
+    localClient: 'Local client and devices',
+    organizationSso: '{organization} · signed in with SSO',
     signOut: 'Sign out',
   },
   language: {
@@ -52,6 +56,7 @@ export const en: MessageSchema = {
     loadMore: 'Load more',
     loading: 'Loading',
     close: 'Close',
+    counter: '{n} / {max}',
     no: 'no',
     remove: 'Remove',
     retry: 'Try again',
@@ -64,14 +69,17 @@ export const en: MessageSchema = {
     },
     home: {
       title: 'Home',
-      description: 'Summary of your projects, running waves and pending items.',
+      description: 'What the agents are doing, what waits for you and how much it cost.',
     },
     projects: {
       title: 'Projects',
-      description: "The organization's projects, with current stage, gates and cost.",
+      description:
+        'Each project takes a business need through the standard workflow up to the Release.',
     },
     newProject: {
       title: 'New project',
+      description:
+        'The project starts with the need, the configuration and the budget. When it starts, the Requirements stage begins and the agent may ask questions.',
     },
     project: {
       title: 'Project',
@@ -108,7 +116,8 @@ export const en: MessageSchema = {
     },
     pendingItems: {
       title: 'Pending items',
-      description: 'Gates, agent questions and findings waiting for your decision.',
+      description:
+        'Everything waiting for a person: gates to decide, agent questions and escalated findings. While it sits here, the stage or the wave waits.',
     },
     agents: {
       title: 'Agents and skills',
@@ -116,16 +125,16 @@ export const en: MessageSchema = {
     },
     settings: {
       title: 'Settings',
-      description: "The organization's providers, models and price table.",
+      description:
+        "The organization's AI providers with their own keys, price table and skill library.",
     },
     login: {
       title: 'Sign in',
       subtitle: 'Software factory with AI agents and governance',
-      description:
-        "Access is through your company's single sign-on (SSO). The platform never asks for or keeps a password.",
+      description: 'Use the company account. Access is through single sign-on (SSO).',
       signIn: 'Sign in with the company account',
       tryAgain: 'Try signing in again',
-      help: 'No account or no access? Talk to the organization administrator.',
+      help: 'No account or no access? Talk to the EasyCode administrator in your organization.',
       signedOut: 'You signed out of the platform.',
       sessionExpired: 'Your session expired. Sign in again to go back to the page you were on.',
       loginFailed: 'The sign-in was not completed. Try again.',
@@ -352,6 +361,7 @@ export const en: MessageSchema = {
     },
   },
   settings: {
+    tabsLabel: 'Sections',
     tabs: {
       providers: 'Providers and models',
       prices: 'Price table',
@@ -360,6 +370,8 @@ export const en: MessageSchema = {
     },
     providers: {
       title: 'Providers and keys',
+      description:
+        'Each provider uses its own key (BYOK), stored encrypted and never shown after it is saved. The agents are not tied to one vendor.',
       privacy:
         "Project content goes to the provider chosen in the model pair; retention follows the organization's policy.",
       keyStatusLabel: 'Key:',
@@ -627,6 +639,14 @@ export const en: MessageSchema = {
       openQuestions: 'Open agent questions: {count}',
       lead: 'Lead: {name}',
       cost: 'Accumulated cost: {cost}',
+      stagesOf: '{approved} of {total}',
+      card: {
+        lead: 'Lead',
+        budgetUsed: 'Budget used',
+        openFindings: 'Open findings',
+      },
+      statesHelp:
+        'Project states: created, in progress, paused (manually or by budget), completed (Release published) and canceled.',
       notices: {
         access_removed: 'You lost access to the project that was open.',
         project_deleted: 'The project that was open was deleted.',
@@ -703,6 +723,11 @@ export const en: MessageSchema = {
       parallelWith: 'In parallel with: {stages}',
       cost: 'Cost: {cost}',
       activities: 'Parallel activities',
+      activity: 'Parallel activity',
+      between: 'Between stages',
+      hint: 'Each stage ends in a gate: automatic checks and approval. Choose a stage to open it.',
+      modelPair: 'Model pair',
+      agentSkills: 'Skills used by the agents',
     },
     stage: {
       back: 'Back to the workflow',
@@ -801,6 +826,7 @@ export const en: MessageSchema = {
   },
   waves: {
     heading: 'Wave',
+    skillsTitle: 'Loaded skills',
     notFound: 'Wave not found.',
     attempt: 'attempt {n}',
     task: 'task {task}',
@@ -949,6 +975,7 @@ export const en: MessageSchema = {
     },
     calls: {
       title: 'Call record',
+      subtitle: 'Every model and tool call is recorded and linked to the wave.',
       none: 'No call yet.',
       number: 'Call {n}',
       model: 'Model {model} ({role})',
@@ -982,6 +1009,7 @@ export const en: MessageSchema = {
     },
   },
   artifacts: {
+    versionShort: 'v{n}',
     traceabilityLink: 'See the full traceability',
     empty: 'No artifact yet.',
     notFound: 'Artifact not found.',
@@ -999,7 +1027,7 @@ export const en: MessageSchema = {
     body: 'Content',
     sanitizedNotice: 'Agent-generated content: shown sanitized.',
     download: 'Download the file of this version',
-    versions: 'Versions',
+    versions: 'History',
     singleVersion: 'This artifact has a single version.',
     versionNumber: 'Version {n}',
     versionCurrent: 'Version {n} (current)',
@@ -1010,6 +1038,7 @@ export const en: MessageSchema = {
     draftNotice: 'Draft: the owning agent can still edit it.',
     editedBy: 'edited by {person}, validated by {agent}',
     drivenBy: 'Driven by finding',
+    approval: 'Approval',
   },
   pendingItems: {
     empty: 'Nothing waiting for you.',
@@ -1086,6 +1115,15 @@ export const en: MessageSchema = {
   },
   gates: {
     heading: 'Gate of the {stage} stage',
+    explanation:
+      'The gate is the mandatory validation at the end of the stage: first the automatic checks, then the approval.',
+    countChips: {
+      passed: 'Passed: {n}.',
+      alerts: 'Alerts: {n}.',
+      blocking: 'Failed blocking checks: {n}.',
+    },
+    yourDecision: 'Your decision',
+    decisionNote: 'The decision records who, when and from where (web or local client).',
     round: 'Round {n}',
     openedAge: 'opened {age}',
     modeHuman: 'human approval',
@@ -1540,6 +1578,8 @@ export const en: MessageSchema = {
       loadMore: 'Load more waves',
     },
     chooseProject: 'Choose the project to see the agent configuration and skills.',
+    description:
+      'Each agent has a role, instructions, skills, authorized tools, limits and a model. Here you adjust what each one carries.',
     noProjects: 'You are not in any project yet.',
     readOnly: 'Only the project lead changes the agent configuration.',
     listLabel: 'Project agents',
@@ -1601,6 +1641,7 @@ export const en: MessageSchema = {
     },
     tools: {
       title: 'Authorized tools',
+      help: 'Least privilege: the agent only uses what is listed here, in the project sandbox.',
       none: 'No authorized tool.',
       allowed: 'allowed',
       read_file: 'Read file',
@@ -1652,6 +1693,7 @@ export const en: MessageSchema = {
       },
       severityFilter: 'Severity',
       destinationFilter: 'Destination stage',
+      anyDestination: 'All stages',
       destinationIs: 'destination {stage}',
       activeFilters: 'Filters: {filters}.',
       clear: 'Clear filters',
@@ -1786,6 +1828,8 @@ export const en: MessageSchema = {
       },
       renewNotice: 'Renewing records a new date and validity without changing the status.',
       confirm: 'Record the decision',
+      footnote:
+        'Discarding only applies to a finding without evidence or a duplicate. Every decision records who authorized it and when.',
       approverOnly: 'Only the project approver decides this Finding.',
       errors: {
         action: 'Choose a decision.',
@@ -2153,6 +2197,7 @@ export const en: MessageSchema = {
       reworkFindings: 'origin findings: {findings}',
       firstStage: 'First stage: {stage}',
       nextStage: 'Next stage: {stage}',
+      ofBudget: 'of the budget ({spend} of {limit})',
     },
   },
   audit: {
@@ -2345,7 +2390,7 @@ export const en: MessageSchema = {
     activity: 'Recent activity',
     noActivity: 'No activity in the last 24 hours.',
     aProject: 'project',
-    greeting: 'Hello, {name}.',
+    greeting: 'Hello, {name}',
     indicators: 'Indicators',
     inProgress: 'Projects in progress',
     created: '{n} created, not started yet',
@@ -2358,17 +2403,19 @@ export const en: MessageSchema = {
       name: 'Project',
       state: 'State',
       stages: 'Stages',
-      situation: 'Current situation',
+      situation: 'Now',
       cost: 'Accumulated cost',
     },
     stagesValue: '{approved} of {total} approved',
     agentsRunning: 'Agents running',
     noAgents: 'No agent running.',
-    openPending: 'Open pending items ({n})',
+    openPending: 'Open',
     monthCost: 'AI cost this month',
-    ofYourProjects: 'of your projects',
-    reworkShare: 'Rework: {percentage} of the cost',
-    largestSpend: 'Largest spend: {name} ({cost})',
+    ofYourProjects: 'Sum of the waves of your projects, by the current price table.',
+    rework: 'Rework',
+    reworkShare: '{percentage} of the cost',
+    largest: 'Largest spend',
+    largestSpend: '{name} · {cost}',
   },
   installer: installerEn,
 }

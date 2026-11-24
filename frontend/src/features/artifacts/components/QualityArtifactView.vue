@@ -54,22 +54,21 @@ function referenceRoute(reference: string): RouteLocationRaw | undefined {
 </script>
 
 <template>
-  <section aria-labelledby="quality-heading" class="mb-6" data-testid="structured-view">
-    <h2 id="quality-heading" class="text-h6 mb-2">
+  <!-- Look: canvas "Artefato" side cards (h2, `.kv` rows, `.tbl` tables). -->
+  <section aria-labelledby="quality-heading" class="card sv" data-testid="structured-view">
+    <h2 id="quality-heading">
       {{ $t(`structured.title.${props.artifact.type}`) }}
     </h2>
 
     <!-- CT (ESP-15 3.3): what it covers, steps and the last execution. -->
     <template v-if="ct">
-      <dl class="summary-list mb-4">
+      <dl class="sv-fields">
         <dt>{{ $t('structured.ct.covers') }}</dt>
         <dd>
           <template v-for="(item, index) in covers" :key="item">
-            <router-link
-              v-if="referenceRoute(item)"
-              :to="referenceRoute(item)!"
-              class="monospace"
-              >{{ item }}</router-link><span v-else class="monospace">{{ item }}</span
+            <router-link v-if="referenceRoute(item)" :to="referenceRoute(item)!" class="mono">{{
+              item
+            }}</router-link><span v-else class="mono">{{ item }}</span
             ><span v-if="index < covers.length - 1">, </span>
           </template>
         </dd>
@@ -86,14 +85,14 @@ function referenceRoute(reference: string): RouteLocationRaw | undefined {
               <router-link
                 v-if="referenceRoute(ct.execucao.achado)"
                 :to="referenceRoute(ct.execucao.achado)!"
-                class="monospace"
+                class="mono"
                 >{{ ct.execucao.achado }}</router-link
               >
             </template>
           </dd>
           <template v-if="ct.execucao.teste">
             <dt>{{ $t('structured.ct.test') }}</dt>
-            <dd class="monospace">{{ ct.execucao.teste }}</dd>
+            <dd class="mono">{{ ct.execucao.teste }}</dd>
           </template>
           <template v-if="ct.execucao.onda">
             <dt>{{ $t('artifacts.wave') }}</dt>
@@ -104,7 +103,7 @@ function referenceRoute(reference: string): RouteLocationRaw | undefined {
                   params: { projectId, waveId: ct.execucao.onda },
                   hash: '#evidence',
                 }"
-                class="monospace"
+                class="mono"
                 >{{ ct.execucao.onda }}</router-link
               >
             </dd>
@@ -115,19 +114,19 @@ function referenceRoute(reference: string): RouteLocationRaw | undefined {
           </template>
         </template>
       </dl>
-      <h3 class="text-subtitle-2">{{ $t('structured.ct.preconditions') }}</h3>
-      <ul class="ml-4 mb-3">
-        <li v-for="(item, index) in ct.precondicoes" :key="index" class="text-body-2">
+      <h3>{{ $t('structured.ct.preconditions') }}</h3>
+      <ul class="sv-rows">
+        <li v-for="(item, index) in ct.precondicoes" :key="index">
           {{ item }}
         </li>
       </ul>
-      <h3 class="text-subtitle-2">{{ $t('structured.ct.steps') }}</h3>
-      <ol class="ml-4 mb-3">
-        <li v-for="(item, index) in ct.passos" :key="index" class="text-body-2">{{ item }}</li>
+      <h3>{{ $t('structured.ct.steps') }}</h3>
+      <ol class="sv-steps">
+        <li v-for="(item, index) in ct.passos" :key="index">{{ item }}</li>
       </ol>
-      <h3 class="text-subtitle-2">{{ $t('structured.ct.expected') }}</h3>
-      <ul class="ml-4">
-        <li v-for="(item, index) in ct.resultado_esperado" :key="index" class="text-body-2">
+      <h3>{{ $t('structured.ct.expected') }}</h3>
+      <ul class="sv-rows">
+        <li v-for="(item, index) in ct.resultado_esperado" :key="index">
           {{ item }}
         </li>
       </ul>
@@ -135,10 +134,10 @@ function referenceRoute(reference: string): RouteLocationRaw | undefined {
 
     <!-- REL-QA (ESP-15 3.3): totals, gaps first, the US × CA × CT matrix and the verdict. -->
     <template v-if="relQa">
-      <p class="text-body-2 mb-2" data-testid="rel-qa-verdict">
+      <p class="sv-text" data-testid="rel-qa-verdict">
         {{ $t('structured.verdict', { verdict: label('structured.verdicts', relQa.veredito) }) }}
       </p>
-      <p class="text-body-2 mb-4" data-testid="rel-qa-summary">
+      <p class="sv-text" data-testid="rel-qa-summary">
         {{
           $t('structured.relQa.summary', {
             executed: relQa.resumo.ct_executados,
@@ -150,22 +149,21 @@ function referenceRoute(reference: string): RouteLocationRaw | undefined {
           })
         }}
       </p>
-      <v-alert
+      <div
         v-if="relQa.sem_cobertura.length > 0"
-        type="warning"
-        variant="tonal"
-        class="mb-4"
+        class="note note-warn"
+        role="alert"
         data-testid="rel-qa-gaps"
       >
-        <p class="font-weight-medium">{{ $t('structured.relQa.gaps') }}</p>
-        <ul class="plain-list">
+        <p class="sv-text sv-strong">{{ $t('structured.relQa.gaps') }}</p>
+        <ul class="sv-rows">
           <li v-for="gap in relQa.sem_cobertura" :key="`${gap.us}-${gap.criterio}`">
-            <span class="monospace">{{ gap.us }}/{{ gap.criterio }}</span> · {{ gap.motivo }}
+            <span class="mono">{{ gap.us }}/{{ gap.criterio }}</span> · {{ gap.motivo }}
           </li>
         </ul>
-      </v-alert>
-      <div class="table-scroll mb-4">
-        <v-table density="compact" data-testid="rel-qa-matrix">
+      </div>
+      <div class="table-scroll">
+        <table class="tbl" data-testid="rel-qa-matrix">
           <caption class="sr-only">
             {{
               $t('structured.relQa.matrix')
@@ -186,39 +184,39 @@ function referenceRoute(reference: string): RouteLocationRaw | undefined {
                 <router-link
                   v-if="referenceRoute(row.us)"
                   :to="referenceRoute(row.us)!"
-                  class="monospace"
+                  class="mono"
                   >{{ row.us }}</router-link
                 >
-                <span v-else class="monospace">{{ row.us }}</span>
+                <span v-else class="mono">{{ row.us }}</span>
               </td>
-              <td class="monospace">{{ row.criterio }}</td>
+              <td class="mono">{{ row.criterio }}</td>
               <td>
                 <router-link
                   v-if="referenceRoute(row.ct)"
                   :to="referenceRoute(row.ct)!"
-                  class="monospace"
+                  class="mono"
                   >{{ row.ct }}</router-link
                 >
-                <span v-else class="monospace">{{ row.ct }}</span>
+                <span v-else class="mono">{{ row.ct }}</span>
               </td>
               <td>{{ label('structured.levels', row.nivel) }}</td>
               <td>
                 {{ label('structured.results', row.resultado) }}
                 <template v-if="row.achado">
                   ·
-                  <router-link :to="referenceRoute(row.achado) ?? ''" class="monospace">{{
+                  <router-link :to="referenceRoute(row.achado) ?? ''" class="mono">{{
                     row.achado
                   }}</router-link>
                 </template>
               </td>
             </tr>
           </tbody>
-        </v-table>
+        </table>
       </div>
-      <p v-if="relQa.achados_abertos.length" class="text-body-2">
+      <p v-if="relQa.achados_abertos.length" class="sv-text">
         {{ $t('structured.openFindings') }}
         <template v-for="(id, index) in relQa.achados_abertos" :key="id">
-          <router-link :to="referenceRoute(id) ?? ''" class="monospace">{{ id }}</router-link><span
+          <router-link :to="referenceRoute(id) ?? ''" class="mono">{{ id }}</router-link><span
             v-if="index < relQa.achados_abertos.length - 1"
             >,
           </span>
@@ -228,9 +226,9 @@ function referenceRoute(reference: string): RouteLocationRaw | undefined {
 
     <!-- AMEACAS (ESP-16 3.7): threats with STRIDE, severity, mitigation and status. -->
     <template v-if="ameacas">
-      <p class="text-body-2 mb-4">{{ ameacas.fluxo }}</p>
+      <p class="sv-text">{{ ameacas.fluxo }}</p>
       <div class="table-scroll">
-        <v-table density="compact" data-testid="threats-table">
+        <table class="tbl" data-testid="threats-table">
           <caption class="sr-only">
             {{
               $t('structured.title.AMEACAS')
@@ -248,7 +246,7 @@ function referenceRoute(reference: string): RouteLocationRaw | undefined {
           </thead>
           <tbody>
             <tr v-for="threat in ameacas.ameacas" :key="threat.id">
-              <th scope="row" class="font-weight-regular monospace">{{ threat.id }}</th>
+              <th scope="row" class="mono">{{ threat.id }}</th>
               <td>{{ label('structured.severities', threat.severidade) }}</td>
               <td>{{ threat.stride.join(', ') }}</td>
               <td>{{ threat.descricao }}</td>
@@ -257,24 +255,24 @@ function referenceRoute(reference: string): RouteLocationRaw | undefined {
                 {{ label('structured.threatStatus', threat.status) }}
                 <template v-if="threat.achado">
                   ·
-                  <router-link :to="referenceRoute(threat.achado) ?? ''" class="monospace">{{
+                  <router-link :to="referenceRoute(threat.achado) ?? ''" class="mono">{{
                     threat.achado
                   }}</router-link>
                 </template>
               </td>
             </tr>
           </tbody>
-        </v-table>
+        </table>
       </div>
     </template>
 
     <!-- REL-SEG (ESP-16 3.4, 3.6, 3.8): verdict, summary, scans, OWASP and false positives. -->
     <template v-if="relSeg">
-      <p class="text-body-2 mb-4" data-testid="rel-seg-verdict">
+      <p class="sv-text" data-testid="rel-seg-verdict">
         {{ $t('structured.verdict', { verdict: label('structured.verdicts', relSeg.veredito) }) }}
       </p>
-      <div class="table-scroll mb-4">
-        <v-table density="compact" data-testid="rel-seg-summary">
+      <div class="table-scroll">
+        <table class="tbl" data-testid="rel-seg-summary">
           <caption class="sr-only">
             {{
               $t('structured.relSeg.summary')
@@ -290,7 +288,7 @@ function referenceRoute(reference: string): RouteLocationRaw | undefined {
           </thead>
           <tbody>
             <tr v-for="severity in SEVERITY_ROWS" :key="severity">
-              <th scope="row" class="font-weight-regular">
+              <th scope="row">
                 {{ label('structured.severities', severity) }}
               </th>
               <td>{{ relSeg.resumo[severity].abertos }}</td>
@@ -298,11 +296,11 @@ function referenceRoute(reference: string): RouteLocationRaw | undefined {
               <td>{{ relSeg.resumo[severity].aceitos }}</td>
             </tr>
           </tbody>
-        </v-table>
+        </table>
       </div>
-      <h3 class="text-subtitle-1 font-weight-medium mb-1">{{ $t('structured.relSeg.scans') }}</h3>
-      <div class="table-scroll mb-4">
-        <v-table density="compact" data-testid="rel-seg-scans">
+      <h3>{{ $t('structured.relSeg.scans') }}</h3>
+      <div class="table-scroll">
+        <table class="tbl" data-testid="rel-seg-scans">
           <caption class="sr-only">
             {{
               $t('structured.relSeg.scans')
@@ -318,14 +316,12 @@ function referenceRoute(reference: string): RouteLocationRaw | undefined {
           </thead>
           <tbody>
             <tr v-for="scan in relSeg.varreduras" :key="`${scan.ferramenta}-${scan.comando}`">
-              <th scope="row" class="font-weight-regular">
-                {{ scan.ferramenta }} {{ scan.versao }}
-              </th>
-              <td class="monospace">{{ scan.comando }}</td>
+              <th scope="row">{{ scan.ferramenta }} {{ scan.versao }}</th>
+              <td class="mono">{{ scan.comando }}</td>
               <td>
                 <template v-if="scan.achados.length === 0">{{ format.integer(0) }}</template>
                 <template v-for="(id, index) in scan.achados" :key="id">
-                  <router-link :to="referenceRoute(id) ?? ''" class="monospace">{{
+                  <router-link :to="referenceRoute(id) ?? ''" class="mono">{{
                     id
                   }}</router-link><span v-if="index < scan.achados.length - 1">, </span>
                 </template>
@@ -333,27 +329,27 @@ function referenceRoute(reference: string): RouteLocationRaw | undefined {
               <td>{{ scan.falsos_positivos }}</td>
             </tr>
           </tbody>
-        </v-table>
+        </table>
       </div>
-      <h3 class="text-subtitle-1 font-weight-medium mb-1">{{ $t('structured.relSeg.owasp') }}</h3>
-      <ul class="plain-list mb-4" data-testid="rel-seg-owasp">
-        <li v-for="item in relSeg.owasp" :key="item.categoria" class="text-body-2">
-          <span class="monospace">{{ item.categoria }}</span> ·
+      <h3>{{ $t('structured.relSeg.owasp') }}</h3>
+      <ul class="sv-rows" data-testid="rel-seg-owasp">
+        <li v-for="item in relSeg.owasp" :key="item.categoria">
+          <span class="mono">{{ item.categoria }}</span> ·
           {{ label('structured.owasp', item.categoria) }} · {{ item.resultado }}
           <template v-for="id in item.achados" :key="id">
             ·
-            <router-link :to="referenceRoute(id) ?? ''" class="monospace">{{ id }}</router-link>
+            <router-link :to="referenceRoute(id) ?? ''" class="mono">{{ id }}</router-link>
           </template>
         </li>
       </ul>
       <template v-if="relSeg.falsos_positivos.length">
-        <h3 class="text-subtitle-1 font-weight-medium mb-1">
+        <h3>
           {{ $t('structured.relSeg.falsePositives') }}
         </h3>
-        <ul class="plain-list">
-          <li v-for="(item, index) in relSeg.falsos_positivos" :key="index" class="text-body-2">
-            {{ item.ferramenta }} · <span class="monospace">{{ item.regra }}</span> ·
-            <span class="monospace">{{ item.local }}</span> · {{ item.justificativa }}
+        <ul class="sv-rows">
+          <li v-for="(item, index) in relSeg.falsos_positivos" :key="index">
+            {{ item.ferramenta }} · <span class="mono">{{ item.regra }}</span> ·
+            <span class="mono">{{ item.local }}</span> · {{ item.justificativa }}
           </li>
         </ul>
       </template>
@@ -362,7 +358,99 @@ function referenceRoute(reference: string): RouteLocationRaw | undefined {
 </template>
 
 <style scoped>
+.sv {
+  padding: 18px 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.sv h2 {
+  margin-bottom: 2px;
+}
+
+.sv h3 {
+  margin: 8px 0 0;
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 700;
+}
+
+.sv-text {
+  margin: 0;
+  font-size: 13px;
+}
+
+.sv-strong {
+  font-weight: 700;
+}
+
+.sv-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+/* Label / value rows (canvas `.kv` separators). */
+.sv-fields {
+  display: grid;
+  grid-template-columns: minmax(140px, max-content) 1fr;
+  column-gap: 12px;
+  margin: 0;
+}
+
+.sv-fields > dt,
+.sv-fields > dd {
+  margin: 0;
+  padding: 10px 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.sv-fields > dt {
+  color: #a9b0d6;
+}
+
+/* Lists of generated items: one per row, canvas `.li` separators. */
+.sv-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-size: 13px;
+}
+
+.sv-rows > li {
+  padding: 8px 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  overflow-wrap: anywhere;
+}
+
+.sv-steps {
+  margin: 0;
+  padding-left: 22px;
+  font-size: 13px;
+}
+
+.sv-steps > li + li {
+  margin-top: 4px;
+}
+
+.tbl th[scope='row'] {
+  font-weight: 400;
+  color: #f1f3ff;
+}
+
 .pre-wrap {
   white-space: pre-wrap;
+}
+
+.note-warn {
+  flex-direction: column;
+  gap: 6px;
+  border-color: rgba(234, 179, 8, 0.45);
+  background: rgba(234, 179, 8, 0.1);
 }
 </style>

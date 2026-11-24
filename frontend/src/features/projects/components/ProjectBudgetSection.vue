@@ -4,6 +4,7 @@ import { useLoader } from '@/shared/composables/useLoader'
 import { useFormat } from '@/shared/format/useFormat'
 import { useSessionStore } from '@/shared/session/sessionStore'
 import ConfirmActionDialog from '@/shared/ui/ConfirmActionDialog.vue'
+import CanvasIcon from '@/shared/ui/CanvasIcon.vue'
 import ProblemAlert from '@/shared/ui/ProblemAlert.vue'
 import type { Budget, ProjectConfiguration, ProjectCosts } from '../api/projectsApi'
 import {
@@ -131,68 +132,78 @@ async function confirmLowLimit(): Promise<void> {
 </script>
 
 <template>
-  <section aria-labelledby="budget-heading" class="mt-8" data-testid="budget">
-    <h3 id="budget-heading" class="text-subtitle-1 font-weight-medium mb-1">
-      {{ $t('projects.budget.title') }}
-    </h3>
-    <p class="text-body-2 text-medium-emphasis mb-2">{{ $t('projects.budget.stopRule') }}</p>
+  <!-- Layout: canvas primitives of Projeto.dc.html (no own artboard): .card, h2, .kv rows, .note. -->
+  <section aria-labelledby="budget-heading" class="card budget" data-testid="budget">
+    <h2 id="budget-heading">{{ $t('projects.budget.title') }}</h2>
+    <p class="t2 help">{{ $t('projects.budget.stopRule') }}</p>
 
-    <v-alert
+    <div
       v-if="pausedByBudget"
-      type="error"
-      variant="tonal"
+      class="note note-crit"
       role="alert"
-      class="mb-3"
       data-testid="budget-section-paused"
     >
-      <p>{{ $t('projects.budget.paused') }}</p>
-      <p v-if="readyToResume" class="mt-1" data-testid="budget-ready-to-resume">
-        {{ $t('projects.budget.readyToResume') }}
-      </p>
-      <p v-else class="mt-1">{{ $t('projects.budget.raiseToResume') }}</p>
-    </v-alert>
+      <CanvasIcon name="alert" />
+      <span class="note-text">
+        <span>{{ $t('projects.budget.paused') }}</span>
+        <span v-if="readyToResume" data-testid="budget-ready-to-resume">
+          {{ $t('projects.budget.readyToResume') }}
+        </span>
+        <span v-else>{{ $t('projects.budget.raiseToResume') }}</span>
+      </span>
+    </div>
 
-    <dl class="summary-list mb-3" data-testid="budget-current">
-      <dt>{{ $t('projects.budget.stopLimit') }}</dt>
-      <dd>
-        {{
-          configuration.budget
-            ? format.money(configuration.budget.stop_limit)
-            : $t('projects.budget.notDefined')
-        }}
-      </dd>
-      <dt>{{ $t('projects.budget.alerts') }}</dt>
-      <dd>
-        {{
-          (configuration.budget?.percentage_alert_limits ?? [])
-            .map((value) => format.percent(value))
-            .join(', ') || $t('projects.budget.noAlerts')
-        }}
-      </dd>
-      <template v-if="ceiling">
-        <dt>{{ $t('projects.budget.ceilingLabel') }}</dt>
+    <dl class="kvs" data-testid="budget-current">
+      <div class="kv">
+        <dt class="t2">{{ $t('projects.budget.stopLimit') }}</dt>
+        <dd>
+          {{
+            configuration.budget
+              ? format.money(configuration.budget.stop_limit)
+              : $t('projects.budget.notDefined')
+          }}
+        </dd>
+      </div>
+      <div class="kv">
+        <dt class="t2">{{ $t('projects.budget.alerts') }}</dt>
+        <dd>
+          {{
+            (configuration.budget?.percentage_alert_limits ?? [])
+              .map((value) => format.percent(value))
+              .join(', ') || $t('projects.budget.noAlerts')
+          }}
+        </dd>
+      </div>
+      <div v-if="ceiling" class="kv">
+        <dt class="t2">{{ $t('projects.budget.ceilingLabel') }}</dt>
         <dd>{{ format.money(ceiling) }}</dd>
-      </template>
-      <dt>{{ $t('projects.budget.spent') }}</dt>
-      <dd data-testid="budget-spent">
-        {{ format.money(spend) }}
-        <template v-if="usedPercentage !== undefined">
-          ·
-          {{ $t('projects.budget.usedPercentage', { percentage: format.percent(usedPercentage) }) }}
-        </template>
-      </dd>
-      <template v-if="costs?.budget?.balance">
-        <dt>{{ $t('projects.budget.balance') }}</dt>
+      </div>
+      <div class="kv">
+        <dt class="t2">{{ $t('projects.budget.spent') }}</dt>
+        <dd data-testid="budget-spent">
+          {{ format.money(spend) }}
+          <template v-if="usedPercentage !== undefined">
+            ·
+            {{
+              $t('projects.budget.usedPercentage', { percentage: format.percent(usedPercentage) })
+            }}
+          </template>
+        </dd>
+      </div>
+      <div v-if="costs?.budget?.balance" class="kv">
+        <dt class="t2">{{ $t('projects.budget.balance') }}</dt>
         <dd>{{ format.money(costs.budget.balance) }}</dd>
-      </template>
+      </div>
     </dl>
     <ProblemAlert v-if="loader.error.value" :error="loader.error.value" retry @retry="loader.run" />
 
     <template v-if="canEdit">
-      <v-btn v-if="!editing" variant="tonal" @click="startEditing">
-        {{ $t('projects.budget.edit') }}
-      </v-btn>
-      <v-form v-else @submit.prevent="submit">
+      <div v-if="!editing" class="actions">
+        <button type="button" class="btn" @click="startEditing">
+          {{ $t('projects.budget.edit') }}
+        </button>
+      </div>
+      <form v-else class="edit" @submit.prevent="submit">
         <BudgetFields
           v-model="draft"
           id-prefix="configuration-budget"
@@ -202,18 +213,18 @@ async function confirmLowLimit(): Promise<void> {
           :show-errors="tried"
           :disabled="saving"
         />
-        <ProblemAlert v-if="failure && !warnOpen" :error="failure" class="my-2" />
-        <div class="d-flex flex-wrap ga-2 mt-2">
-          <v-btn type="submit" color="primary" variant="flat" :loading="saving">
+        <ProblemAlert v-if="failure && !warnOpen" :error="failure" />
+        <div class="actions">
+          <button type="submit" class="btn btn-p" :disabled="saving" :aria-busy="saving">
             {{ $t('projects.budget.save') }}
-          </v-btn>
-          <v-btn variant="text" :disabled="saving" @click="cancelEditing">
+          </button>
+          <button type="button" class="btn" :disabled="saving" @click="cancelEditing">
             {{ $t('common.cancel') }}
-          </v-btn>
+          </button>
         </div>
-      </v-form>
+      </form>
     </template>
-    <p v-else class="text-body-2 text-medium-emphasis">{{ $t('projects.budget.readOnly') }}</p>
+    <p v-else class="t2 help foot">{{ $t('projects.budget.readOnly') }}</p>
 
     <ConfirmActionDialog
       v-model="warnOpen"
@@ -230,3 +241,65 @@ async function confirmLowLimit(): Promise<void> {
     />
   </section>
 </template>
+
+<style scoped>
+.budget {
+  padding: 18px 22px;
+}
+
+.help {
+  margin: 4px 0 10px;
+  font-size: 13px;
+}
+
+.foot {
+  margin: 12px 0 0;
+}
+
+.note {
+  margin-bottom: 10px;
+}
+
+.note-crit {
+  border-color: rgba(239, 68, 68, 0.45);
+  background: rgba(239, 68, 68, 0.1);
+}
+
+.note svg {
+  flex: none;
+}
+
+.note-text {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.kvs {
+  margin: 0;
+}
+
+.kvs dd {
+  margin: 0;
+  font-weight: 600;
+  text-align: right;
+}
+
+.edit {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.edit .actions {
+  margin-top: 0;
+}
+</style>

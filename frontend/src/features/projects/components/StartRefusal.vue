@@ -19,16 +19,18 @@ const missingCapacity = computed(() =>
 </script>
 
 <template>
-  <v-alert v-if="missing" type="warning" variant="tonal" role="alert" data-testid="start-refusal">
-    <p class="font-weight-medium">{{ $t('projects.start.incomplete') }}</p>
-    <ul class="mt-2 ml-4">
-      <li v-for="item in missing" :key="item">{{ $t(`projects.start.missing.${item}`) }}</li>
-    </ul>
-  </v-alert>
-  <v-alert
+  <!-- Look: canvas `.note`, in the warning tone. -->
+  <div v-if="missing" class="note note-warn" role="alert" data-testid="start-refusal">
+    <div>
+      <p class="refusal-title">{{ $t('projects.start.incomplete') }}</p>
+      <ul class="refusal-list">
+        <li v-for="item in missing" :key="item">{{ $t(`projects.start.missing.${item}`) }}</li>
+      </ul>
+    </div>
+  </div>
+  <p
     v-else-if="missingCapacity"
-    type="warning"
-    variant="tonal"
+    class="note note-warn refusal-single"
     role="alert"
     data-testid="start-refusal"
   >
@@ -37,6 +39,27 @@ const missingCapacity = computed(() =>
         capacity: $t(`projects.capacities.${missingCapacity}`),
       })
     }}
-  </v-alert>
+  </p>
   <ProblemAlert v-else :error="error" />
 </template>
+
+<style scoped>
+.note-warn {
+  border-color: rgba(234, 179, 8, 0.45);
+  background: rgba(234, 179, 8, 0.1);
+}
+
+.refusal-single {
+  margin: 0;
+}
+
+.refusal-title {
+  margin: 0;
+  font-weight: 600;
+}
+
+.refusal-list {
+  margin: 4px 0 0;
+  padding-left: 18px;
+}
+</style>

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, useId } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ROUTE_NAMES } from '@/app/router/routeNames'
 import { useAnnouncer } from '@/shared/composables/useAnnouncer'
@@ -29,6 +29,9 @@ const loader = useLoader(async () => {
 })
 const unavailable = computed(() => repository.value?.status === 'not_created')
 const headingTag = computed(() => `h${String(props.headingLevel)}`)
+/** On the project page it is a canvas card of its own; inside a stage it sits in the stage's layout. */
+const standalone = computed(() => props.headingLevel === 2)
+const cloneUrlId = useId()
 
 onMounted(() => void loader.run())
 
@@ -48,8 +51,14 @@ function shortSha(sha: string | undefined): string {
 </script>
 
 <template>
-  <section aria-labelledby="repository-heading" class="mb-6" data-testid="repository-panel">
-    <component :is="headingTag" id="repository-heading" class="text-h6 mb-2">
+  <!-- Layout: canvas primitives of Projeto.dc.html (side card, `.fld`, `.btn`, `.kv`); no own artboard. -->
+  <section
+    aria-labelledby="repository-heading"
+    class="repository"
+    :class="{ card: standalone, 'repository-card': standalone }"
+    data-testid="repository-panel"
+  >
+    <component :is="headingTag" id="repository-heading" class="repository-heading">
       {{ $t('repository.title') }}
     </component>
     <LoadingState v-if="loader.loading.value && !repository" />
@@ -59,76 +68,133 @@ function shortSha(sha: string | undefined): string {
       retry
       @retry="loader.run"
     />
-    <p v-else-if="unavailable" class="text-body-2" data-testid="repository-unavailable">
+    <p v-else-if="unavailable" class="t2 repository-text" data-testid="repository-unavailable">
       {{ $t('repository.unavailable') }}
     </p>
     <template v-else-if="repository">
-      <div class="d-flex flex-wrap align-center ga-2">
-        <v-text-field
-          :model-value="repository.clone_url"
-          :label="$t('repository.cloneUrl')"
-          readonly
-          density="compact"
-          hide-details
-          class="clone-url monospace"
-          data-testid="clone-url"
-        />
-        <v-btn variant="outlined" data-testid="copy-clone-url" @click="copyCloneUrl">
+      <div class="clone-row">
+        <label :for="cloneUrlId" class="clone-field">
+          <span :id="`${cloneUrlId}-label`" class="lb">{{ $t('repository.cloneUrl') }}</span>
+          <input
+            :id="cloneUrlId"
+            :value="repository.clone_url"
+            :aria-labelledby="`${cloneUrlId}-label`"
+            class="fld mono"
+            type="text"
+            readonly
+            data-testid="clone-url"
+          />
+        </label>
+        <button type="button" class="btn" data-testid="copy-clone-url" @click="copyCloneUrl">
           {{ $t('repository.copy') }}
-        </v-btn>
+        </button>
       </div>
       <div role="status" class="sr-only">{{ message }}</div>
-      <p class="text-body-2 mt-2">{{ $t('repository.credential') }}</p>
-      <dl class="summary-list mt-2">
-        <dt>{{ $t('repository.mainBranch') }}</dt>
-        <dd class="monospace">{{ repository.main_branch }}</dd>
-        <dt>{{ $t('repository.lastCommit') }}</dt>
-        <dd data-testid="repository-last-commit">
-          <template v-if="repository.last_commit?.sha">
-            <span class="monospace" :title="repository.last_commit.sha">{{
-              shortSha(repository.last_commit.sha)
-            }}</span>
-            <template v-if="repository.last_commit.when">
-              ·
-              {{
-                $t('repository.lastCommitWhen', {
-                  when: format.dateTime(repository.last_commit.when),
-                })
-              }}
+      <p class="t2 repository-text">{{ $t('repository.credential') }}</p>
+      <div class="repository-rows">
+        <div class="kv">
+          <span class="t2">{{ $t('repository.mainBranch') }}</span>
+          <span class="kv-value mono">{{ repository.main_branch }}</span>
+        </div>
+        <div class="kv">
+          <span class="t2">{{ $t('repository.lastCommit') }}</span>
+          <span class="kv-value" data-testid="repository-last-commit">
+            <template v-if="repository.last_commit?.sha">
+              <span class="mono" :title="repository.last_commit.sha">{{
+                shortSha(repository.last_commit.sha)
+              }}</span>
+              <template v-if="repository.last_commit.when">
+                ·
+                {{
+                  $t('repository.lastCommitWhen', {
+                    when: format.dateTime(repository.last_commit.when),
+                  })
+                }}
+              </template>
+              <template v-if="repository.last_commit.wave">
+                ·
+                <router-link
+                  :to="{
+                    name: ROUTE_NAMES.wave,
+                    params: { projectId, waveId: repository.last_commit.wave },
+                  }"
+                >
+                  {{ $t('repository.lastCommitWave', { wave: repository.last_commit.wave }) }}
+                </router-link>
+              </template>
             </template>
-            <template v-if="repository.last_commit.wave">
-              ·
-              <router-link
-                :to="{
-                  name: ROUTE_NAMES.wave,
-                  params: { projectId, waveId: repository.last_commit.wave },
-                }"
-              >
-                {{ $t('repository.lastCommitWave', { wave: repository.last_commit.wave }) }}
-              </router-link>
-            </template>
-          </template>
-          <template v-else>{{ $t('repository.noCommit') }}</template>
-        </dd>
-        <dt>{{ $t('repository.marks') }}</dt>
-        <dd>
-          <ul v-if="repository.marks?.length" class="plain-list">
-            <li v-for="mark in repository.marks" :key="mark.name">
-              <span class="monospace">{{ mark.name }}</span> ·
-              <span class="monospace">{{ shortSha(mark.commit) }}</span>
-              <template v-if="mark.when"> · {{ format.dateTime(mark.when) }}</template>
-            </li>
-          </ul>
-          <template v-else>{{ $t('repository.noMarks') }}</template>
-        </dd>
-      </dl>
+            <template v-else>{{ $t('repository.noCommit') }}</template>
+          </span>
+        </div>
+        <div class="kv">
+          <span class="t2">{{ $t('repository.marks') }}</span>
+          <span class="kv-value">
+            <ul v-if="repository.marks?.length" class="marks">
+              <li v-for="mark in repository.marks" :key="mark.name">
+                <span class="mono">{{ mark.name }}</span> ·
+                <span class="mono">{{ shortSha(mark.commit) }}</span>
+                <template v-if="mark.when"> · {{ format.dateTime(mark.when) }}</template>
+              </li>
+            </ul>
+            <template v-else>{{ $t('repository.noMarks') }}</template>
+          </span>
+        </div>
+      </div>
     </template>
   </section>
 </template>
 
 <style scoped>
-.clone-url {
-  flex: 1 1 22rem;
+.repository {
+  display: flex;
+  flex-direction: column;
+}
+
+.repository-card {
+  padding: 18px 22px;
+}
+
+.repository-heading {
+  margin: 0 0 10px;
+  font-size: 18px;
+  line-height: 24px;
+  font-weight: 700;
+}
+
+.clone-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: flex-end;
+}
+
+.clone-field {
+  flex: 1 1 220px;
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.repository-text {
+  margin: 10px 0 0;
+  font-size: 13px;
+}
+
+.repository-rows {
+  margin-top: 10px;
+}
+
+.kv-value {
+  font-weight: 600;
+  text-align: right;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.marks {
+  list-style: none;
+  margin: 0;
+  padding: 0;
 }
 </style>

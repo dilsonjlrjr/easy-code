@@ -22,6 +22,7 @@
     "build-installer": "vite build --mode installer"
   },
   "dependencies": {
+    "@fontsource/inter": "5.3.0",
     "@fontsource/roboto": "5.3.0",
     "@mdi/js": "7.4.47",
     "@vueuse/core": "15.0.0",
