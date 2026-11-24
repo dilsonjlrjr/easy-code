@@ -18,7 +18,8 @@
     "e2e:docker": "sh ./scripts/e2e-in-docker.sh",
     "lint": "eslint . --max-warnings 0 && prettier --check .",
     "lint:fix": "eslint . --fix && prettier --write .",
-    "format": "prettier --write ."
+    "format": "prettier --write .",
+    "build-installer": "vite build --mode installer"
   },
   "dependencies": {
     "@fontsource/roboto": "5.3.0",

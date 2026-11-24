@@ -235,7 +235,7 @@ func Load(lookup LookupFunc) (Config, error) {
 			ShutdownTimeout: r.duration(EnvShutdownTimeout, 20*time.Second),
 		},
 		Database: Database{
-			URL:          r.text(EnvDatabaseURL, ""),
+			URL:          r.secret(EnvDatabaseURL),
 			MaxConns:     int32(r.integer(EnvDatabaseMaxConns, 10)),
 			ProbeTimeout: r.duration(EnvProbeTimeout, 2*time.Second),
 		},
@@ -301,7 +301,9 @@ func Load(lookup LookupFunc) (Config, error) {
 		cfg.Sandbox.Images[logical] = ref
 	}
 	r.checkIdentity(cfg.Identity)
-	cfg.Database.MigrationURL = r.text(EnvMigrationDatabaseURL, cfg.Database.URL)
+	if cfg.Database.MigrationURL = r.secret(EnvMigrationDatabaseURL); cfg.Database.MigrationURL == "" {
+		cfg.Database.MigrationURL = cfg.Database.URL
+	}
 	return cfg, errors.Join(r.problems...)
 }
 

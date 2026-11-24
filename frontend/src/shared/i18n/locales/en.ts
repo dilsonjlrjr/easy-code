@@ -1,3 +1,4 @@
+import { installerEn } from './installer/en'
 import type { MessageSchema } from './pt-BR'
 
 export const en: MessageSchema = {
@@ -2369,4 +2370,5 @@ export const en: MessageSchema = {
     reworkShare: 'Rework: {percentage} of the cost',
     largestSpend: 'Largest spend: {name} ({cost})',
   },
+  installer: installerEn,
 }

@@ -45,8 +45,10 @@ frontend-type-check: frontend-deps
 frontend-test: frontend-deps
 	$(DOCKER_NODE) $(NODE_IMAGE) npm run test
 
+# The platform web and the installation wizard page (US-55).
 frontend-build: frontend-deps
 	$(DOCKER_NODE) $(NODE_IMAGE) npm run build-only
+	$(DOCKER_NODE) $(NODE_IMAGE) npm run build-installer
 
 # Playwright against the production build (playwright.config.ts starts `vite preview`).
 frontend-e2e: frontend-deps
@@ -70,3 +72,23 @@ endif
 .PHONY: desktop-ci
 desktop-ci:
 	$(MAKE) -C desktop ci
+
+# Installation of the platform (US-55, ADR-22): bundled PostgreSQL and Keycloak, the one-time wizard and
+# then the platform, all from install/compose.yaml. Guide: install/README.md. EASYCODE_BUNDLED=false on
+# the first run uses external PostgreSQL and Keycloak.
+INSTALL_COMPOSE := docker compose --env-file "$(CURDIR)/install/.env" -f "$(CURDIR)/install/compose.yaml" $(COMPOSE_EXTRA)
+INSTALL_BUNDLED := $(if $(filter false,$(shell sed -n 's/^EASYCODE_BUNDLED=//p' "$(CURDIR)/install/.env" 2>/dev/null)),,--profile bundled)
+
+.PHONY: install install-up install-down install-logs
+install:
+	COMPOSE_EXTRA="$(COMPOSE_EXTRA)" sh "$(CURDIR)/install/install.sh"
+
+# Starts the installed platform again (after a reboot or an update of the images).
+install-up:
+	$(INSTALL_COMPOSE) $(INSTALL_BUNDLED) up -d --build
+
+install-down:
+	$(INSTALL_COMPOSE) $(INSTALL_BUNDLED) down
+
+install-logs:
+	$(INSTALL_COMPOSE) $(INSTALL_BUNDLED) logs -f --tail 100

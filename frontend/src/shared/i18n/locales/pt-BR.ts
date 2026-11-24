@@ -3,6 +3,8 @@
  * exactly the same keys (checked by the compiler and by a unit test). Terms follow the glossary
  * in PROJETO.md section 4; state labels follow ESP-00 3.2.
  */
+import { installerPtBR } from './installer/pt-BR'
+
 export const ptBR = {
   app: {
     name: 'Easy Code',
@@ -2378,6 +2380,7 @@ export const ptBR = {
     reworkShare: 'Retrabalho: {percentage} do custo',
     largestSpend: 'Maior gasto: {name} ({cost})',
   },
+  installer: installerPtBR,
 }
 
 export type MessageSchema = typeof ptBR

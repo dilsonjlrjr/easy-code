@@ -1,0 +1,11 @@
+# Context of install/Dockerfile is the repository root: send only the sources it builds.
+**/node_modules
+frontend/dist
+frontend/dist-installer
+frontend/coverage
+frontend/playwright-report
+frontend/test-results
+backend/bin
+desktop
+infra
+.git

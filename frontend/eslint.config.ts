@@ -14,6 +14,7 @@ export default defineConfigWithVueTs(
 
   globalIgnores([
     '**/dist/**',
+    '**/dist-installer/**',
     '**/coverage/**',
     '**/playwright-report/**',
     '**/test-results/**',

@@ -3,7 +3,7 @@ GO_IMAGE        ?= golang:1.26.10-bookworm
 LINT_IMAGE      ?= golangci/golangci-lint:v2.15.0
 VERSION         ?= dev
 BINARY          ?= easycode-api
-BINARIES        := easycode-api easycode-worker easycode-sandbox easycode-gateway
+BINARIES        := easycode-api easycode-worker easycode-sandbox easycode-gateway easycode-installer
 DOCKER_GO       := docker run --rm -u $(shell id -u):$(shell id -g) -e HOME=/tmp \
                    -e GOCACHE=/cache/build -e GOMODCACHE=/cache/mod -e GOLANGCI_LINT_CACHE=/cache/lint \
                    -v "$(CURDIR)":/src -w /src -v easycode-go-cache:/cache
@@ -14,6 +14,8 @@ SANDBOX_TEST_IMAGE ?= easycode-sandbox-go:ci
 DOCKER_SOCKET   ?= /var/run/docker.sock
 DOCKER_GID      := $(shell stat -c %g $(DOCKER_SOCKET) 2>/dev/null)
 # The recovery test of RNF-11 runs the backup and restore scripts of ../infra/backup (read-only mount).
+# The realm template of easycode-installer is checked against the development realm (keycloakadmin tests).
+TEST_REALM      := -v "$(CURDIR)/../infra/keycloak":/infra/keycloak:ro -e EASYCODE_TEST_DEV_REALM=/infra/keycloak/easycode-realm.json
 TEST_DOCKER     := $(if $(DOCKER_GID),-v $(DOCKER_SOCKET):/var/run/docker.sock --group-add $(DOCKER_GID) -e EASYCODE_TEST_DOCKER_SOCKET=/var/run/docker.sock -e EASYCODE_TEST_SANDBOX_IMAGE=$(SANDBOX_TEST_IMAGE) -v "$(CURDIR)/../infra/backup":/infra/backup:ro -e EASYCODE_TEST_BACKUP_SCRIPTS=/infra/backup,)
 RUN_ENV         ?= --network host -e EASYCODE_DATABASE_URL -e EASYCODE_HTTP_ADDR -e EASYCODE_LOG_LEVEL
 
@@ -28,10 +30,10 @@ build: cache
 
 # Set EASYCODE_TEST_DATABASE_URL to a disposable database to run the migrator integration test.
 test: cache
-	$(DOCKER_GO) -e EASYCODE_TEST_DATABASE_URL $(TEST_NETWORK) $(TEST_DOCKER) $(GO_IMAGE) go test -count=1 -timeout 30m ./...
+	$(DOCKER_GO) -e EASYCODE_TEST_DATABASE_URL $(TEST_NETWORK) $(TEST_DOCKER) $(TEST_REALM) $(GO_IMAGE) go test -count=1 -timeout 30m ./...
 
 test-race: cache
-	$(DOCKER_GO) -e EASYCODE_TEST_DATABASE_URL $(TEST_NETWORK) $(TEST_DOCKER) $(GO_IMAGE) go test -race -count=1 -timeout 30m ./...
+	$(DOCKER_GO) -e EASYCODE_TEST_DATABASE_URL $(TEST_NETWORK) $(TEST_DOCKER) $(TEST_REALM) $(GO_IMAGE) go test -race -count=1 -timeout 30m ./...
 
 # Runs every test, integration included, against a throwaway PostgreSQL container.
 test-integration: sandbox-image

@@ -1,0 +1,16 @@
+# Optional override: real AI providers in the installed stack. The gateway, the only process that opens
+# provider keys (S-03, ADR-13), gets an outbound network and the real adapters.
+# The egress proxy with an allowlist (ADR-16) is not in the stack yet: with this override the gateway
+# reaches any address. Decide it knowingly.
+# Usage: make -C project install-up COMPOSE_EXTRA=-f install/compose.providers.yaml
+services:
+  gateway:
+    network_mode: !reset null
+    networks: [ai-output]
+    environment:
+      EASYCODE_GATEWAY_PROVIDERS: ${EASYCODE_GATEWAY_PROVIDERS:-anthropic,openai}
+      EASYCODE_ANTHROPIC_BASE_URL: ${EASYCODE_ANTHROPIC_BASE_URL:-https://api.anthropic.com}
+      EASYCODE_OPENAI_BASE_URL: ${EASYCODE_OPENAI_BASE_URL:-https://api.openai.com}
+
+networks:
+  ai-output: {}

@@ -64,7 +64,23 @@ qualidade.
 - Nada mais no host. Go, Node, Python e Playwright rodam dentro de containers.
 - Portas livres em `127.0.0.1`: 8080 (web), 8081 (API), 8180 (Keycloak) e 5432 (PostgreSQL).
 
-## Início rápido
+## Instalação
+
+Para instalar a plataforma num servidor, use o assistente de instalação. Ele roda uma vez, no tema da plataforma,
+e cobre o banco, o Keycloak (realm novo ou existente), o administrador, um usuário comum e as skills da organização.
+
+```sh
+git clone git@github.com:dilsonjlrjr/easy-code.git
+cd easy-code
+make install
+```
+
+O terminal mostra o endereço do assistente (`http://localhost:8090`) e um token de uso único. O passo a passo, as
+opções (PostgreSQL e Keycloak próprios, servidor remoto, provedores reais) e a reinstalação estão em
+[install/README.md](install/README.md). Os arquivos da instalação ficam todos em [install/](install/).
+
+## Início rápido (desenvolvimento)
+
 
 ```sh
 git clone git@github.com:dilsonjlrjr/easy-code.git
@@ -216,7 +232,9 @@ fora deste repositório. Quem mantém a especificação usa `make -C backend che
 
 ## Antes de produção
 
-O `compose.yaml` serve só para desenvolvimento:
+O `compose.yaml` da raiz serve só para desenvolvimento. Para instalar, use `make install`
+([install/README.md](install/README.md)), que gera segredos próprios e conecta cada processo com o seu papel no
+banco. O `compose.yaml` da raiz:
 
 - Todos os segredos dele são públicos.
 - Ele conecta ao banco como superusuário. Em produção, cada processo usa um papel próprio no banco.

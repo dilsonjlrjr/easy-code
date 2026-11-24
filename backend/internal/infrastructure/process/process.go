@@ -22,7 +22,11 @@ type Process struct {
 // Start loads the configuration and builds the logger. A configuration error is logged
 // and returned, so main can exit non-zero.
 func Start(service, version string) (Process, error) {
-	cfg, err := config.Load(os.LookupEnv)
+	lookup, err := config.Environment(os.LookupEnv)
+	var cfg config.Config
+	if err == nil {
+		cfg, err = config.Load(lookup)
+	}
 	logger := logging.New(os.Stdout, cfg.LogLevel, service, version)
 	if err != nil {
 		logger.Error("invalid configuration", logging.ErrorAttr(err))
