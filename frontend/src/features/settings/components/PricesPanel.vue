@@ -1,12 +1,12 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, useId, watch } from 'vue'
+import { computed, nextTick, onMounted, ref, useId, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAnnouncer } from '@/shared/composables/useAnnouncer'
 import { useLoader } from '@/shared/composables/useLoader'
 import { useFormat } from '@/shared/format/useFormat'
 import LoadingState from '@/shared/ui/LoadingState.vue'
 import ProblemAlert from '@/shared/ui/ProblemAlert.vue'
-import type { ModelPrice, PricesPerMillion } from '../api/providersApi'
+import type { Model, ModelPrice, PricesPerMillion } from '../api/providersApi'
 import { modelKey, useProvidersStore } from '../stores/providersStore'
 import PriceDialog from './PriceDialog.vue'
 
@@ -56,6 +56,13 @@ watch(selectedKey, () => {
   void pricesLoader.run()
 })
 
+/** PC-28: the history of one model opens below the matrix, with the focus on its heading. */
+async function showPeriods(model: Model): Promise<void> {
+  selectedKey.value = modelKey(model.provider, model.model)
+  await nextTick()
+  document.getElementById(`${fieldId}-periods`)?.focus()
+}
+
 function openNewPeriod(): void {
   correcting.value = undefined
   dialogOpen.value = true
@@ -89,6 +96,75 @@ function onSaved(): void {
       {{ $t('settings.prices.noModels') }}
     </p>
     <template v-else>
+      <!-- ESP-23 3 / US-37 (PC-28): model × current price, each model with its own period. -->
+      <h3 class="block-title">{{ $t('settings.prices.currentTitle') }}</h3>
+      <div class="table-scroll">
+        <table class="tbl" data-testid="current-prices">
+          <caption class="sr-only">
+            {{
+              $t('settings.prices.currentCaption')
+            }}
+          </caption>
+          <thead>
+            <tr>
+              <th scope="col">{{ $t('settings.models.model') }}</th>
+              <th scope="col">{{ $t('settings.prices.effectiveSince') }}</th>
+              <th v-for="priceType in PRICE_TYPES" :key="priceType" scope="col">
+                {{
+                  $t('settings.prices.perMillionColumn', {
+                    type: $t(`settings.prices.types.${priceType}`),
+                  })
+                }}
+              </th>
+              <th scope="col">
+                <span class="sr-only">{{ $t('common.actions') }}</span>
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr
+              v-for="model in store.models"
+              :key="modelKey(model.provider, model.model)"
+              :data-testid="`current-price-${model.model}`"
+            >
+              <th scope="row" class="model-cell">
+                {{ model.display_name }}
+                <span class="t2 mono model-id">{{ model.model }}</span>
+              </th>
+              <template v-if="model.current_price">
+                <td>{{ format.dateTime(model.current_price.effective_since) }}</td>
+                <td v-for="priceType in PRICE_TYPES" :key="priceType">
+                  {{
+                    format.amount(
+                      model.current_price.per_million_tokens[priceType],
+                      model.current_price.currency,
+                    )
+                  }}
+                </td>
+              </template>
+              <td v-else :colspan="PRICE_TYPES.length + 1">
+                <span class="chip warn">{{ $t('settings.prices.noCurrentPrice') }}</span>
+              </td>
+              <td class="row-actions">
+                <button
+                  type="button"
+                  class="btn"
+                  :aria-label="
+                    $t('settings.prices.showPeriodsNamed', { model: model.display_name })
+                  "
+                  @click="showPeriods(model)"
+                >
+                  {{ $t('settings.prices.showPeriods') }}
+                </button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3 :id="`${fieldId}-periods`" class="block-title" tabindex="-1">
+        {{ $t('settings.prices.periodsTitle', { model: selectedModel?.display_name ?? '' }) }}
+      </h3>
       <div class="toolbar">
         <div class="model-field">
           <label :for="`${fieldId}-model`" class="control">
@@ -116,7 +192,7 @@ function onSaved(): void {
         <span class="chip warn">{{ $t('settings.prices.noCurrentPrice') }}</span>
       </p>
       <div v-else class="table-scroll">
-        <table class="tbl">
+        <table class="tbl" data-testid="price-periods">
           <caption class="sr-only">
             {{
               $t('settings.prices.tableCaption', { model: selectedModel?.display_name ?? '' })
@@ -197,6 +273,27 @@ function onSaved(): void {
 
 .empty {
   margin: 0;
+}
+
+.block-title {
+  margin: 14px 0 6px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.model-cell {
+  text-align: left;
+  font-weight: 600;
+}
+
+.model-id {
+  display: block;
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.row-actions {
+  white-space: nowrap;
 }
 
 .toolbar {

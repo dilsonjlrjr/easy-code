@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute } from 'vue-router'
 import { ROUTE_NAMES } from '@/app/router/routeNames'
@@ -7,6 +7,7 @@ import { ApiError, isApiError } from '@/shared/api/problemDetails'
 import { waitForCommand } from '@/shared/commands/waitForCommand'
 import { describeEvent } from '@/shared/events/eventDescriptions'
 import type { CloudEvent } from '@/shared/events/eventStream'
+import { formatRelativeAge } from '@/shared/format/formatters'
 import { useFormat } from '@/shared/format/useFormat'
 import AppBreadcrumbs from '@/shared/ui/AppBreadcrumbs.vue'
 import CanvasIcon from '@/shared/ui/CanvasIcon.vue'
@@ -16,6 +17,7 @@ import LoadingState from '@/shared/ui/LoadingState.vue'
 import ProblemAlert from '@/shared/ui/ProblemAlert.vue'
 import StateLabel from '@/shared/ui/StateLabel.vue'
 import { projectsApi } from '@/features/projects/api/projectsApi'
+import { agentsApi, type Skill } from '@/features/agents/api/agentsApi'
 import type { CallRecord, Question, SandboxExecution } from '../api/wavesApi'
 import SandboxEvidence from '../components/SandboxEvidence.vue'
 import ConfirmActionDialog from '@/shared/ui/ConfirmActionDialog.vue'
@@ -23,6 +25,7 @@ import type { AvailableAction, Command } from '@/shared/api/contract'
 import { newIdempotencyKey } from '@/shared/api/idempotencyKey'
 import WaveQuestions from '../components/WaveQuestions.vue'
 import { refusedToolCalls } from '../composables/sandboxEvidence'
+import { callCounts, latestCheckpoint, waveTimeline } from '../composables/waveTimeline'
 import { currentWavesApi, useWaveLive } from '../composables/useWaveLive'
 
 const i18n = useI18n()
@@ -42,6 +45,12 @@ const controlNotice = ref<string>()
 /** Failure of an action sent without a dialog (pause, resume); a 409 shows the real state. */
 const controlFailure = ref<unknown>()
 const sendingAction = ref<AvailableAction>()
+/** ESP-18 "Skills": the library entry of each loaded skill, for its name and origin (PL-31). */
+const skillCatalog = ref(new Map<string, Skill>())
+/** "último checkpoint há N min" follows the clock without reloading. */
+const now = ref(new Date())
+const AGE_TICK_MS = 30_000
+let ageTimer: ReturnType<typeof setInterval> | undefined
 
 const wave = computed(() => live.wave.value)
 const ENDED_STATES = new Set(['completed', 'failed', 'canceled'])
@@ -100,6 +109,28 @@ const showEvidence = computed(
     live.executionsError.value !== undefined ||
     wave.value?.agent === 'developer-agent',
 )
+/** ESP-18 "Atividade" (PD-20, PL-39): calls and checkpoints in one timeline, no "steps". */
+const timeline = computed(() => waveTimeline(live.calls.value, live.checkpoints.value))
+const counts = computed(() => callCounts(live.calls.value))
+const lastCheckpoint = computed(() => latestCheckpoint(live.checkpoints.value))
+const lastCheckpointNumber = computed(
+  () => wave.value?.last_checkpoint ?? lastCheckpoint.value?.number ?? undefined,
+)
+const lastCheckpointAge = computed(() =>
+  lastCheckpoint.value
+    ? formatRelativeAge(i18n.locale.value, lastCheckpoint.value.written_at, now.value)
+    : undefined,
+)
+const writtenOutputs = computed(
+  () => wave.value?.expected_outputs?.filter((output) => output.status === 'written').length ?? 0,
+)
+const loadedSkills = computed(() =>
+  (wave.value?.versions?.skills ?? []).map((item) => ({
+    ...item,
+    name: skillCatalog.value.get(item.skill)?.name ?? item.skill,
+    origin: skillCatalog.value.get(item.skill)?.origin,
+  })),
+)
 const hasEstimatedLoss = computed(() => Number(wave.value?.cost.estimated_lost?.value ?? 0) > 0)
 
 const breadcrumbs = computed(() => [
@@ -115,8 +146,23 @@ const breadcrumbs = computed(() => [
   { title: waveId },
 ])
 
+/** The origin is extra information: without the library the skill still shows its id and version. */
+async function loadSkillCatalog(): Promise<void> {
+  if (!wave.value?.versions?.skills?.length) return
+  try {
+    const skills = await agentsApi.listSkills()
+    skillCatalog.value = new Map(skills.map((skill) => [skill.id, skill]))
+  } catch {
+    skillCatalog.value = new Map()
+  }
+}
+
 onMounted(async () => {
+  ageTimer = setInterval(() => {
+    now.value = new Date()
+  }, AGE_TICK_MS)
   await live.load()
+  void loadSkillCatalog()
   openedWaiting.value = live.wave.value?.state === 'awaiting_user'
   // PT-48: the stage, the task and the gate link straight to the evidence block.
   if (route.hash === '#evidence') {
@@ -125,6 +171,10 @@ onMounted(async () => {
     heading?.scrollIntoView()
     heading?.focus()
   }
+})
+
+onBeforeUnmount(() => {
+  if (ageTimer !== undefined) clearInterval(ageTimer)
 })
 
 function downloadOutput(execution: SandboxExecution): Promise<string> {
@@ -540,6 +590,53 @@ function callTitle(call: CallRecord): string {
           :submit="submitAnswer"
         />
 
+        <!-- ESP-18 "progresso da Onda": by checkpoint, never "steps" (PD-20, PL-39). -->
+        <section
+          aria-labelledby="progress-heading"
+          class="card main-card"
+          data-testid="wave-progress"
+        >
+          <h2 id="progress-heading" class="card-title">{{ $t('waves.progress.title') }}</h2>
+          <dl class="kv-list">
+            <div class="kv">
+              <dt class="t2">{{ $t('waves.progress.checkpoint') }}</dt>
+              <dd data-testid="progress-checkpoint">
+                {{
+                  lastCheckpointNumber === undefined
+                    ? $t('waves.checkpoints.none')
+                    : $t('waves.progress.checkpointValue', {
+                        n: lastCheckpointNumber,
+                        count: live.checkpoints.value.length,
+                      })
+                }}
+              </dd>
+            </div>
+            <div class="kv">
+              <dt class="t2">{{ $t('waves.progress.calls') }}</dt>
+              <dd>
+                {{
+                  $t('waves.progress.callsValue', {
+                    total: live.calls.value.length,
+                    model: counts.model,
+                    tool: counts.tool,
+                  })
+                }}
+              </dd>
+            </div>
+            <div v-if="wave.expected_outputs?.length" class="kv">
+              <dt class="t2">{{ $t('waves.progress.outputs') }}</dt>
+              <dd>
+                {{
+                  $t('waves.progress.outputsValue', {
+                    written: writtenOutputs,
+                    total: wave.expected_outputs.length,
+                  })
+                }}
+              </dd>
+            </div>
+          </dl>
+        </section>
+
         <section aria-labelledby="calls-heading" class="card main-card">
           <div class="card-head">
             <div class="card-head-text">
@@ -569,62 +666,94 @@ function callTitle(call: CallRecord): string {
           >
             {{ $t('live.pendingCount', { count: live.pendingWhilePaused.value.length }) }}
           </p>
-          <p class="t2 card-line">
-            {{
-              wave.last_checkpoint === null || wave.last_checkpoint === undefined
-                ? $t('waves.checkpoints.none')
-                : $t('waves.checkpoints.last', {
-                    n: wave.last_checkpoint,
-                    count: live.checkpoints.value.length,
-                  })
-            }}
-          </p>
-          <p v-if="live.calls.value.length === 0" class="t2 card-line">
+          <p v-if="timeline.length === 0" class="t2 card-line">
             {{ $t('waves.calls.none') }}
           </p>
-          <!-- ESP-18 section 8: the call record is a log; no prompt, answer or tool arguments (ER-18-15). -->
+          <!-- ESP-18 section 8: the activity is a log; no prompt, answer or tool arguments (ER-18-15). -->
           <div v-else role="log" :aria-label="$t('waves.calls.title')">
-            <ol class="list">
-              <li
-                v-for="call in live.calls.value"
-                :key="`${call.attempt ?? 1}-${call.number}`"
-                :data-testid="`call-${call.number}`"
-                class="li call-item"
-              >
-                <span class="chip call-number" :class="call.type === 'model' ? 'info' : 'mute'">
-                  {{ $t('waves.calls.number', { n: call.number }) }}
-                </span>
-                <span class="call-body">
-                  <span class="call-title">
-                    {{ callTitle(call) }} · {{ $t(`waves.calls.results.${call.result}`) }}
-                    <template v-if="call.lost">· {{ $t('waves.calls.lostCall') }}</template>
+            <ol class="list" data-testid="wave-timeline">
+              <template v-for="entry in timeline" :key="entry.key">
+                <li
+                  v-if="entry.kind === 'call'"
+                  :data-testid="`call-${entry.call.number}`"
+                  class="li call-item"
+                >
+                  <span class="t2 call-time">{{ format.dateTime(entry.call.start) }}</span>
+                  <span
+                    class="chip call-type"
+                    :class="entry.call.type === 'model' ? 'info' : 'mute'"
+                    data-testid="entry-type"
+                  >
+                    {{ $t(`waves.timeline.types.${entry.call.type}`) }}
                   </span>
-                  <span v-if="call.summary">{{ call.summary }}</span>
-                  <span v-if="call.refusal_reason">
-                    {{ $t('waves.calls.refusal', { reason: refusalText(call.refusal_reason) }) }}
-                  </span>
-                  <span class="t2 call-meta">
-                    {{ format.dateTime(call.start) }} · {{ format.duration(call.duration_ms) }}
-                    <template v-if="call.tokens">
-                      ·
+                  <span class="call-body">
+                    <span class="call-title">
+                      {{ $t('waves.calls.number', { n: entry.call.number }) }} ·
+                      {{ callTitle(entry.call) }} ·
+                      {{ $t(`waves.calls.results.${entry.call.result}`) }}
+                      <template v-if="entry.call.lost">· {{ $t('waves.calls.lostCall') }}</template>
+                    </span>
+                    <span v-if="entry.call.summary">{{ entry.call.summary }}</span>
+                    <span v-if="entry.call.refusal_reason">
                       {{
-                        $t('waves.calls.tokens', {
-                          input: format.integer(call.tokens.input),
-                          output: format.integer(call.tokens.output),
-                          cache: format.integer(call.tokens.read_cache + call.tokens.write_cache),
+                        $t('waves.calls.refusal', {
+                          reason: refusalText(entry.call.refusal_reason),
                         })
                       }}
-                    </template>
-                    <template v-if="call.cost">
-                      · {{ format.money(call.cost) }}
-                      <template v-if="call.estimated_cost"
-                        >({{ $t('waves.calls.estimated') }})</template
-                      >
-                      <template v-if="call.lost_cost">({{ $t('waves.calls.lostCost') }})</template>
-                    </template>
+                    </span>
+                    <span class="t2 call-meta">
+                      {{ format.duration(entry.call.duration_ms) }}
+                      <template v-if="entry.call.tokens">
+                        ·
+                        {{
+                          $t('waves.calls.tokens', {
+                            input: format.integer(entry.call.tokens.input),
+                            output: format.integer(entry.call.tokens.output),
+                            cache: format.integer(
+                              entry.call.tokens.read_cache + entry.call.tokens.write_cache,
+                            ),
+                          })
+                        }}
+                      </template>
+                      <template v-if="entry.call.cost">
+                        · {{ format.money(entry.call.cost) }}
+                        <template v-if="entry.call.estimated_cost"
+                          >({{ $t('waves.calls.estimated') }})</template
+                        >
+                        <template v-if="entry.call.lost_cost"
+                          >({{ $t('waves.calls.lostCost') }})</template
+                        >
+                      </template>
+                    </span>
                   </span>
-                </span>
-              </li>
+                </li>
+                <li
+                  v-else
+                  :data-testid="`checkpoint-entry-${entry.checkpoint.number}`"
+                  class="li call-item"
+                >
+                  <span class="t2 call-time">{{
+                    format.dateTime(entry.checkpoint.written_at)
+                  }}</span>
+                  <span class="chip ok call-type">{{ $t('waves.timeline.types.checkpoint') }}</span>
+                  <span class="call-body">
+                    <span class="call-title">
+                      {{ $t('waves.timeline.checkpointWritten', { n: entry.checkpoint.number }) }}
+                    </span>
+                    <span class="t2 call-meta">
+                      {{
+                        $t('waves.timeline.accumulated', {
+                          tokens: format.integer(
+                            entry.checkpoint.accumulated_tokens.input +
+                              entry.checkpoint.accumulated_tokens.output,
+                          ),
+                          cost: format.money(entry.checkpoint.accumulated_cost.total),
+                        })
+                      }}
+                    </span>
+                  </span>
+                </li>
+              </template>
             </ol>
           </div>
         </section>
@@ -743,6 +872,20 @@ function callTitle(call: CallRecord): string {
               <dt class="t2">{{ $t('waves.cost.cycleTime') }}</dt>
               <dd>{{ format.duration(wave.time.cycle_ms) }}</dd>
             </div>
+            <div class="kv" data-testid="wave-last-checkpoint">
+              <dt class="t2">{{ $t('waves.progress.lastCheckpoint') }}</dt>
+              <dd>
+                <template v-if="lastCheckpoint">
+                  {{
+                    $t('waves.progress.lastCheckpointValue', {
+                      n: lastCheckpoint.number,
+                      age: lastCheckpointAge,
+                    })
+                  }}
+                </template>
+                <template v-else>{{ $t('waves.progress.noCheckpoint') }}</template>
+              </dd>
+            </div>
             <div v-if="isEnded && wave.result" class="kv">
               <dt class="t2">{{ $t('waves.cost.result') }}</dt>
               <dd>{{ $t(`waves.results.${wave.result}`) }}</dd>
@@ -795,11 +938,25 @@ function callTitle(call: CallRecord): string {
         >
           <h2 id="skills-heading" class="card-title">{{ $t('waves.skillsTitle') }}</h2>
           <ul class="list">
-            <li v-for="item in wave.versions.skills" :key="item.skill" class="kv">
-              <span class="mono">{{ item.skill }}</span>
-              <span class="chip mute">{{
-                $t('artifacts.versionNumber', { n: item.version })
-              }}</span>
+            <li
+              v-for="item in loadedSkills"
+              :key="item.skill"
+              class="kv"
+              :data-testid="`wave-skill-${item.skill}`"
+            >
+              <span class="skill-name">
+                {{ item.name }}
+                <span class="t2 skill-version">
+                  {{ $t('artifacts.versionNumber', { n: item.version }) }}
+                </span>
+              </span>
+              <span
+                v-if="item.origin"
+                class="chip"
+                :class="item.origin === 'native' ? 'mute' : 'vio'"
+              >
+                {{ $t(`waves.skillOrigin.${item.origin}`) }}
+              </span>
             </li>
           </ul>
         </section>
@@ -955,8 +1112,27 @@ function callTitle(call: CallRecord): string {
   align-items: flex-start;
 }
 
-.call-number {
+.call-time {
   flex: none;
+  min-width: 112px;
+  font-size: 12px;
+  padding-top: 2px;
+}
+
+.call-type {
+  flex: none;
+}
+
+.skill-name {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow-wrap: anywhere;
+}
+
+.skill-version {
+  font-size: 12px;
 }
 
 .call-body {
