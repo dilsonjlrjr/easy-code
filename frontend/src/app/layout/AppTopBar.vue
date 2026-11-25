@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ROUTE_NAMES } from '@/app/router/routeNames'
+import HeaderSearch from '@/features/search/components/HeaderSearch.vue'
 import CanvasIcon from '@/shared/ui/CanvasIcon.vue'
 import AccountMenu from './AccountMenu.vue'
 
@@ -7,8 +8,9 @@ defineProps<{ pendingCount: number }>()
 </script>
 
 <template>
-  <!-- Canvas top row: the bell leads to Pendências (violet dot when something waits) and the account. -->
+  <!-- Canvas top row: the search (US-56), the bell to Pendências (violet dot when something waits) and the account. -->
   <header class="top-bar">
+    <HeaderSearch />
     <div class="top-actions">
       <router-link
         class="ibtn"
