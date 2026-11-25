@@ -1,6 +1,6 @@
 // Command easycode-gateway is the only process that opens provider keys and talks to AI
 // providers (S-03, ADR-02, interno.md section 3). It serves the worker over a Unix socket.
-// Providers: "anthropic" and "openai" (real adapters, US-24) and "fake" (deterministic, development and tests). Sealed keys
+// Providers: "anthropic", "claude-code" (ADR-23), "openai" (real adapters, US-24) and "fake" (deterministic, development and tests). Sealed keys
 // open only with the platform private key (ADR-13). "easycode-gateway keygen <private> <public>"
 // creates the key pair once at installation.
 package main
@@ -23,6 +23,7 @@ import (
 	"easycode/internal/infrastructure/logging"
 	"easycode/internal/infrastructure/process"
 	"easycode/internal/infrastructure/provider/anthropic"
+	"easycode/internal/infrastructure/provider/claudecode"
 	fakeprovider "easycode/internal/infrastructure/provider/fake"
 	"easycode/internal/infrastructure/provider/openai"
 	"easycode/internal/infrastructure/sealing"
@@ -114,7 +115,7 @@ func serve(ctx context.Context, proc process.Process) error {
 
 // buildProviders enables the configured adapters.
 func buildProviders(cfg config.Gateway) ([]provider.Provider, error) {
-	available := anthropic.Name + ", " + openai.Name + ", " + fakeprovider.Name
+	available := anthropic.Name + ", " + claudecode.Name + ", " + openai.Name + ", " + fakeprovider.Name
 	if len(cfg.Providers) == 0 {
 		return nil, fmt.Errorf("%s is required (available: %s)", config.EnvGatewayProviders, available)
 	}
@@ -128,6 +129,9 @@ func buildProviders(cfg config.Gateway) ([]provider.Provider, error) {
 		switch name {
 		case anthropic.Name:
 			providers = append(providers, anthropic.New(cfg.AnthropicBaseURL, nil, cfg.CallTimeout))
+		case claudecode.Name:
+			// Agent sessions run by Claude Code (ADR-23): raw requests forwarded to this base.
+			providers = append(providers, claudecode.New(cfg.ClaudeCodeBaseURL, nil, cfg.CallTimeout, cfg.AnthropicTestModel))
 		case openai.Name:
 			providers = append(providers, openai.New(cfg.OpenAIBaseURL, nil, cfg.CallTimeout))
 		case fakeprovider.Name:

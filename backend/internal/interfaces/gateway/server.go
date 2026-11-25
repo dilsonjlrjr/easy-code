@@ -26,6 +26,7 @@ type Sessions interface {
 	Open(ctx context.Context, scope appgateway.Scope, sealedKey []byte) (string, error)
 	Session(id string) (appgateway.Scope, error)
 	Call(ctx context.Context, id string, req provider.Request, onChunk func(provider.Chunk)) (provider.Response, error)
+	Forward(ctx context.Context, id string, req appgateway.ForwardRequest) (appgateway.ForwardResponse, error)
 	Close(id string) error
 	TestKey(ctx context.Context, providerName string, sealedKey []byte) error
 	Providers() []string
@@ -45,6 +46,7 @@ func NewHandler(sessions Sessions, logger *slog.Logger, tracer trace.Tracer, pro
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST "+routeSessions, server.traced(routeSessions, server.open))
 	mux.HandleFunc("POST "+routeSessions+"/{id}/calls", server.traced(routeSessions+"/{id}/calls", server.call))
+	mux.HandleFunc("POST "+routeSessions+"/{id}/forward/{path...}", server.traced(routeSessions+"/{id}/forward/{path...}", server.forward))
 	mux.HandleFunc("DELETE "+routeSessions+"/{id}", server.traced(routeSessions+"/{id}", server.close))
 	mux.HandleFunc("POST "+routeKeyTests, server.traced(routeKeyTests, server.testKey))
 	mux.HandleFunc("GET "+routeHealth, server.health)

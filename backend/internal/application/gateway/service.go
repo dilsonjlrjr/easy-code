@@ -38,10 +38,11 @@ type Scope struct {
 
 // Service manages the sessions of one gateway process.
 type Service struct {
-	providers map[string]provider.Provider
-	opener    KeyOpener
-	idle      time.Duration
-	now       func() time.Time
+	providers  map[string]provider.Provider
+	forwarders map[string]Forwarder
+	opener     KeyOpener
+	idle       time.Duration
+	now        func() time.Time
 
 	mu       sync.Mutex
 	sessions map[string]*session
@@ -55,13 +56,17 @@ type session struct {
 	nextCall int
 }
 
-// NewService builds the service. idle is the inactivity after which a session expires (15 min).
+// NewService builds the service. Providers that implement Forwarder also serve Forward (ADR-23). idle is the inactivity after which a session expires (15 min).
 func NewService(opener KeyOpener, idle time.Duration, providers ...provider.Provider) *Service {
 	registry := make(map[string]provider.Provider, len(providers))
+	forwarders := map[string]Forwarder{}
 	for _, p := range providers {
 		registry[p.Name()] = p
+		if forwarder, ok := p.(Forwarder); ok {
+			forwarders[p.Name()] = forwarder
+		}
 	}
-	return &Service{providers: registry, opener: opener, idle: idle, now: time.Now, sessions: map[string]*session{}}
+	return &Service{providers: registry, forwarders: forwarders, opener: opener, idle: idle, now: time.Now, sessions: map[string]*session{}}
 }
 
 // Open opens the key and returns the session id.

@@ -10,6 +10,10 @@ import (
 	"time"
 )
 
+// ClaudeCode is the provider id of agent sessions run by Claude Code (ADR-23): the gateway forwards
+// their raw Messages API requests instead of building them.
+const ClaudeCode = "claude-code"
+
 // Message is provider neutral. Role is "user", "assistant" or "tool".
 type Message struct {
 	Role    string       `json:"role"`

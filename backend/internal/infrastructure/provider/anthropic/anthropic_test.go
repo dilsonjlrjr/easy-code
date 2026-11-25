@@ -238,3 +238,21 @@ func TestCanceledCallIsAborted(t *testing.T) {
 		t.Fatalf("want aborted, got %v", err)
 	}
 }
+
+func TestWithAuthorizerReplacesTheCredentialHeader(t *testing.T) {
+	var got http.Header
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.Header.Clone()
+		_, _ = io.WriteString(w, `{"data":[]}`)
+	}))
+	t.Cleanup(server.Close)
+	adapter := anthropic.New(server.URL, server.Client(), 5*time.Second).WithAuthorizer(func(header http.Header, key provider.Secret) {
+		header.Set("Authorization", "Bearer "+string(key.Reveal()))
+	})
+	if err := adapter.TestKey(context.Background(), provider.NewSecret([]byte(testKey))); err != nil {
+		t.Fatal(err)
+	}
+	if got.Get("Authorization") != "Bearer "+testKey || got.Get("x-api-key") != "" || got.Get("anthropic-version") != anthropic.APIVersion {
+		t.Fatalf("headers %v", got)
+	}
+}

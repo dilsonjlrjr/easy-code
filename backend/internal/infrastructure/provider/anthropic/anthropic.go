@@ -33,8 +33,17 @@ const maxErrorBody = 64 << 10
 
 // Provider implements provider.Provider for Anthropic.
 type Provider struct {
-	baseURL string
-	client  *http.Client
+	baseURL   string
+	client    *http.Client
+	authorize Authorizer
+}
+
+// Authorizer sets the credential headers of a request from the opened key.
+type Authorizer func(header http.Header, key provider.Secret)
+
+// APIKey is the default Authorizer: the key goes in x-api-key.
+func APIKey(header http.Header, key provider.Secret) {
+	header.Set("x-api-key", string(key.Reveal()))
 }
 
 var _ provider.Provider = (*Provider)(nil)
@@ -48,7 +57,14 @@ func New(baseURL string, client *http.Client, callTimeout time.Duration) *Provid
 			Transport: &http.Transport{Proxy: http.ProxyFromEnvironment, ResponseHeaderTimeout: callTimeout},
 		}
 	}
-	return &Provider{baseURL: strings.TrimRight(baseURL, "/"), client: client}
+	return &Provider{baseURL: strings.TrimRight(baseURL, "/"), client: client, authorize: APIKey}
+}
+
+// WithAuthorizer replaces how the key is sent (the claude-code adapter also accepts subscription
+// tokens) and returns the adapter.
+func (p *Provider) WithAuthorizer(authorize Authorizer) *Provider {
+	p.authorize = authorize
+	return p
 }
 
 // Name implements provider.Provider.
@@ -135,8 +151,8 @@ func (p *Provider) send(ctx context.Context, key provider.Secret, method, path s
 	if err != nil {
 		return nil, &provider.Error{Class: provider.ErrorRequest, Message: "build request"}
 	}
-	httpReq.Header.Set("x-api-key", string(key.Reveal()))
 	httpReq.Header.Set("anthropic-version", APIVersion)
+	p.authorize(httpReq.Header, key)
 	if body != nil {
 		httpReq.Header.Set("content-type", "application/json")
 	}
@@ -170,6 +186,9 @@ type errorBody struct {
 		Message string `json:"message"`
 	} `json:"error"`
 }
+
+// ClassifyStatus maps an error answer to an error class with a short message; it reads the body.
+func ClassifyStatus(resp *http.Response) *provider.Error { return classifyStatus(resp) }
 
 // classifyStatus maps an error answer to an error class with a short message (never the key:
 // the provider does not echo it, and the message is cut).

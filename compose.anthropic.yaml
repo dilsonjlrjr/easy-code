@@ -11,8 +11,9 @@ services:
     network_mode: !reset null
     networks: [ai-output]
     environment:
-      EASYCODE_GATEWAY_PROVIDERS: ${EASYCODE_GATEWAY_PROVIDERS:-anthropic,openai=fake}
+      EASYCODE_GATEWAY_PROVIDERS: ${EASYCODE_GATEWAY_PROVIDERS:-anthropic,openai=fake,claude-code}
       EASYCODE_ANTHROPIC_BASE_URL: ${EASYCODE_ANTHROPIC_BASE_URL:-https://api.anthropic.com}
+      EASYCODE_GATEWAY_CLAUDE_CODE_BASE_URL: ${EASYCODE_GATEWAY_CLAUDE_CODE_BASE_URL:-https://api.anthropic.com}
 
 networks:
   ai-output: {}
