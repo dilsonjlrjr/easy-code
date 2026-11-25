@@ -19,7 +19,10 @@ import {
   type ArtifactAuthor,
   type ArtifactVersionSummary,
 } from '../api/artifactsApi'
+import ArtifactApprovalCard from '../components/ArtifactApprovalCard.vue'
+import ArtifactAttachments from '../components/ArtifactAttachments.vue'
 import ArtifactComparisonPanel from '../components/ArtifactComparisonPanel.vue'
+import ArtifactTraceCard from '../components/ArtifactTraceCard.vue'
 import ArtifactEditDialog from '../components/ArtifactEditDialog.vue'
 import { awaitingAgentReview, canEditArtifact, isImposedAdr } from '../composables/artifactEditing'
 import type { ArtifactEdit } from '../api/artifactsApi'
@@ -55,6 +58,16 @@ const requestedVersion = computed(() => {
   const value = Number(route.query.version)
   return Number.isInteger(value) && value >= 1 ? value : undefined
 })
+/** ESP-11 section 2: TELAS opens its prototype on the version shown. */
+const prototypeRoute = computed(() =>
+  shown.value?.type === 'TELAS'
+    ? {
+        name: ROUTE_NAMES.prototype,
+        params: { projectId },
+        query: { version: String(shown.value.version) },
+      }
+    : undefined,
+)
 
 const loader = useLoader(async () => {
   const [loadedProject, loadedArtifact, loadedVersions] = await Promise.all([
@@ -276,6 +289,14 @@ async function downloadVersion(): Promise<void> {
             {{ $t('artifacts.versionShort', { n: item.version }) }}
           </button>
         </div>
+        <router-link
+          v-if="prototypeRoute"
+          class="btn"
+          :to="prototypeRoute"
+          data-testid="artifact-open-prototype"
+        >
+          {{ $t('designStage.openPrototype') }}
+        </router-link>
         <button type="button" class="btn" @click="downloadVersion">
           {{ $t('artifacts.download') }}
         </button>
@@ -407,6 +428,14 @@ async function downloadVersion(): Promise<void> {
           </dl>
         </section>
 
+        <!-- PL-24, CA-21-16: the other files of the version. -->
+        <ArtifactAttachments
+          :project-id="projectId"
+          :artifact-id="artifactId"
+          :version="shown.version"
+          :attachments="shown.attachments ?? []"
+        />
+
         <!-- US-27: any two versions side by side (ESP-21 4, Phase 2). -->
         <ArtifactComparisonPanel
           :project-id="projectId"
@@ -466,33 +495,22 @@ async function downloadVersion(): Promise<void> {
           </ol>
         </section>
 
-        <section class="card side-card" aria-labelledby="artifact-trace-heading">
-          <h2 id="artifact-trace-heading">{{ $t('pages.project.traceability') }}</h2>
-          <!-- ESP-24 2: the full traceability with this artifact as root (US-28). -->
-          <router-link
-            :to="{
-              name: ROUTE_NAMES.traceability,
-              params: { projectId, view: 'links' },
-              query: { root: artifactId },
-            }"
-            class="side-link"
-            data-testid="artifact-traceability"
-          >
-            {{ $t('artifacts.traceabilityLink') }}
-          </router-link>
-        </section>
+        <!-- ESP-21 3: the chain from requirement to test and "Depende deste" (US-28). -->
+        <ArtifactTraceCard
+          :project-id="projectId"
+          :artifact-id="artifactId"
+          :version="current.version"
+        />
 
-        <!-- CA-6: an approved artifact only changes through a finding or a scope change. -->
-        <section
+        <!-- ESP-21 3 / CA-21-4: the gate and the round of the approval; CA-6: approved changes only by a finding. -->
+        <ArtifactApprovalCard v-if="!isOlderVersion" :project-id="projectId" :artifact="current" />
+        <p
           v-if="!editable && current.state === 'approved' && !isOlderVersion"
-          class="card side-card"
-          aria-labelledby="artifact-approval-heading"
+          class="t2 side-note"
+          data-testid="artifact-approved-notice"
         >
-          <h2 id="artifact-approval-heading">{{ $t('artifacts.approval') }}</h2>
-          <p class="side-text" data-testid="artifact-approved-notice">
-            {{ $t('artifactEdit.approvedNotice') }}
-          </p>
-        </section>
+          {{ $t('artifactEdit.approvedNotice') }}
+        </p>
       </aside>
     </div>
   </template>
@@ -683,12 +701,9 @@ async function downloadVersion(): Promise<void> {
   font-size: 13px;
 }
 
-.side-link {
-  display: inline-flex;
-  min-height: 44px;
-  align-items: center;
-  text-decoration: none;
-  font-weight: 500;
+.side-note {
+  margin: -12px 0 0;
+  font-size: 13px;
 }
 
 .version-list {

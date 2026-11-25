@@ -32,7 +32,16 @@ export interface Artifact extends ArtifactSummary {
   body: string
   /** Null until the project repository exists (US-42; openapi 0.3.1). */
   commit: string | null
-  attachments?: Array<{ path: string; media_type: string; size_bytes: number; sha256: string }>
+  /** The other files of the version (PL-24): text by `getArtifactAttachment`, HTML by the content origin. */
+  attachments?: ArtifactAttachment[]
+}
+
+/** openapi `Artifact.attachments[]`: path relative to the artifact folder (or the repository path outside it). */
+export interface ArtifactAttachment {
+  path: string
+  media_type: string
+  size_bytes: number
+  sha256: string
 }
 
 /**
@@ -119,6 +128,13 @@ export interface ArtifactsApi {
     idempotencyKey: string,
   ) => Promise<Command & { edit: string }>
   getArtifactEdit: (projectId: string, editId: string) => Promise<ArtifactEditStatus>
+  /** PL-24: a text attachment of a version, in the exact content of its commit (untrusted, RNF-05). */
+  getAttachment: (
+    projectId: string,
+    artifactId: string,
+    version: number,
+    path: string,
+  ) => Promise<string>
   /** US-27 CA-1: any two versions, not only neighbours (ER-21-6). */
   compareVersions: (
     projectId: string,
@@ -163,6 +179,14 @@ export function createArtifactsApi(client: HttpClient = apiClient): ArtifactsApi
       client.get<string>(`${artifactPath(projectId, artifactId)}/versions/${String(version)}`, {
         headers: { Accept: 'text/markdown' },
       }),
+    getAttachment: (projectId, artifactId, version, path) =>
+      client.get<string>(
+        `${artifactPath(projectId, artifactId)}/versions/${String(version)}/attachment`,
+        {
+          query: { path },
+          headers: { Accept: 'text/markdown, text/plain' },
+        },
+      ),
     getArtifactEdit: (projectId, editId) =>
       client.get<ArtifactEditStatus>(
         `/projects/${encodeURIComponent(projectId)}/artifact-edits/${encodeURIComponent(editId)}`,
