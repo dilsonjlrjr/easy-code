@@ -128,7 +128,17 @@ make install-up COMPOSE_EXTRA="-f install/compose.providers.yaml"
 make install-up     # sobe de novo (após reiniciar o servidor ou atualizar as imagens)
 make install-logs   # acompanha os logs
 make install-down   # para, mantendo os dados
+make security-db-refresh   # baixa a base de vulnerabilidades do Trivy mais recente (semanal)
 ```
+
+A sandbox de segurança roda sem rede, então a base do Trivy só muda quando a imagem é reconstruída. Agende a
+atualização toda semana, por exemplo no cron do servidor (segunda, 03:00):
+
+```sh
+0 3 * * 1  make -C /caminho/do/easycode/project security-db-refresh
+```
+
+A data da base sai no REL-SEG de cada varredura.
 
 ### HTTPS
 

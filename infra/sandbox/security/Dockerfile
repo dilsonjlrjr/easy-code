@@ -42,8 +42,12 @@ COPY --from=fetch /fetch/bin/ /usr/local/bin/
 # the only thing that changes between builds of the same versions: its date shows in `trivy version` (the
 # REL-SEG records it, varreduras-opensource.md).
 COPY --from=fetch /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+# TRIVY_DB_STAMP changes only this layer: `make -C project security-db-refresh` passes the date, so the
+# weekly refresh downloads a fresh database without refetching the tools (the base stays offline at scan time).
+ARG TRIVY_DB_STAMP=initial
 # chmod in the same layer: a later chmod would copy the whole database into a new layer.
-RUN trivy image --download-db-only --no-progress --cache-dir /opt/easycode/trivy \
+RUN echo "trivy db stamp ${TRIVY_DB_STAMP}" \
+ && trivy image --download-db-only --no-progress --cache-dir /opt/easycode/trivy \
  && chmod -R a+rX /opt/easycode
 COPY --chmod=0755 rules /opt/easycode/opengrep-rules
 # Offline by default, whatever flags the agent passes: no database or check update, no network lookup,

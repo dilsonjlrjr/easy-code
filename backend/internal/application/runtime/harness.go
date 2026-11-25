@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 	"unicode/utf8"
@@ -141,6 +142,16 @@ func untrustedText(text string) string {
 	return strings.NewReplacer("<", "‹", ">", "›").Replace(text)
 }
 
+// fenceTag matches an opening or closing tag of the untrusted input block, in any case and spacing.
+var fenceTag = regexp.MustCompile(`(?i)<(\s*/?\s*entrada_nao_confiavel)`)
+
+// fencedText neutralizes only the tags of the untrusted input block in a text whose markup must reach the
+// agent intact (the business need, its attachments, the text a person edited): `<br>` or `List<T>` stay as
+// they are, but the text cannot close the block it goes in (RNF-05).
+func fencedText(text string) string {
+	return fenceTag.ReplaceAllString(text, "‹$1")
+}
+
 // Start implements Steps: system prompt from the pinned instruction, user message with the inputs
 // fenced as untrusted data.
 func (a *ToolAgent) Start(_ context.Context, wave WaveContext) (Checkpoint, string, error) {
@@ -153,7 +164,7 @@ func (a *ToolAgent) Start(_ context.Context, wave WaveContext) (Checkpoint, stri
 		"{TAREFAS}", orNone(wave.Task), "{ACHADO}", finding).Replace(wave.Instruction) + "\n\n" + toolGuide(wave, policy)
 	var user strings.Builder
 	if strings.TrimSpace(wave.BusinessNeed) != "" {
-		user.WriteString("Necessidade de negócio do projeto:\n<entrada_nao_confiavel>\n" + wave.BusinessNeed + "\n</entrada_nao_confiavel>")
+		user.WriteString("Necessidade de negócio do projeto:\n<entrada_nao_confiavel>\n" + fencedText(wave.BusinessNeed) + "\n</entrada_nao_confiavel>")
 	}
 	for _, source := range wave.Sources {
 		if user.Len() > 0 {
@@ -163,7 +174,7 @@ func (a *ToolAgent) Start(_ context.Context, wave WaveContext) (Checkpoint, stri
 			fmt.Fprintf(&user, "Anexo da necessidade de negócio %q (%s): arquivo binário ou grande demais, não lido.", source.Name, source.MediaType)
 			continue
 		}
-		fmt.Fprintf(&user, "Anexo da necessidade de negócio %q (%s):\n<entrada_nao_confiavel>\n%s\n</entrada_nao_confiavel>", source.Name, source.MediaType, source.Text)
+		fmt.Fprintf(&user, "Anexo da necessidade de negócio %q (%s):\n<entrada_nao_confiavel>\n%s\n</entrada_nao_confiavel>", source.Name, source.MediaType, fencedText(source.Text))
 	}
 	if readable := readableFiles(wave, policy, agentState{}); len(readable) > 0 {
 		if user.Len() > 0 {
@@ -200,7 +211,7 @@ func (a *ToolAgent) Start(_ context.Context, wave WaveContext) (Checkpoint, stri
 			"Valide a edição contra o esquema do tipo e as regras da etapa e formate-a sem mudar o sentido. Se for válida, grave o artefato "+
 			"com versao igual à anterior mais 1 (1 na criação), `autor: humano`, `editado_por: %s` e `revisado_por: %s`; na exclusão, grave a nova "+
 			"versão sem o item. Se não for válida, não grave nada e explique o motivo com a sugestão de correção em finish().",
-			e.Operation, e.Type, orNone(e.Artifact), e.BaseVersion, untrustedText(e.Reason), e.Content, e.Editor, wave.Agent)
+			e.Operation, e.Type, orNone(e.Artifact), e.BaseVersion, untrustedText(e.Reason), fencedText(e.Content), e.Editor, wave.Agent)
 	}
 	if wave.Purpose == PurposeReevaluation {
 		user.WriteString("\n\nEsta é uma onda de reavaliação: uma dependência desta etapa foi reaberta e aprovada de novo. Compare as entradas " +

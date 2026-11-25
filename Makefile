@@ -92,3 +92,10 @@ install-down:
 
 install-logs:
 	$(INSTALL_COMPOSE) $(INSTALL_BUNDLED) logs -f --tail 100
+
+# Refreshes the Trivy vulnerability database of the security sandbox image (run weekly, e.g. from cron).
+# The sandbox has no network, so the database only changes when the image is rebuilt; the REL-SEG records
+# its date. Only the database layer is rebuilt; the next scan uses the new image.
+.PHONY: security-db-refresh
+security-db-refresh:
+	$(INSTALL_COMPOSE) $(INSTALL_BUNDLED) build --build-arg TRIVY_DB_STAMP=$$(date -u +%Y%m%d) sandbox-security-image
