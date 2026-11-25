@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute } from 'vue-router'
 import { ROUTE_NAMES } from '@/app/router/routeNames'
@@ -12,6 +12,7 @@ import StateLabel from '@/shared/ui/StateLabel.vue'
 import CanvasIcon from '@/shared/ui/CanvasIcon.vue'
 import RepositoryPanel from '@/features/repository/components/RepositoryPanel.vue'
 import TaskPlan from '@/features/tasks/components/TaskPlan.vue'
+import { STAGE_VIEWS } from '@/features/stages/stageViews'
 import StageEstimate from '@/features/costs/components/StageEstimate.vue'
 import { subtractMoney } from '@/shared/format/money'
 import type { Stage } from '../api/projectsApi'
@@ -46,6 +47,11 @@ const stageName = computed(() => {
 /** US-18: the architect plans the tasks; US-19, US-42: the developer runs them into the repository. */
 const showsTasks = computed(() => ['architecture', 'implementation'].includes(stageId.value))
 const isImplementation = computed(() => stageId.value === 'implementation')
+/** ESP-07 to ESP-16: the stage-specific view, when the stage has one. */
+const stageView = computed(() => {
+  const load = STAGE_VIEWS[stageId.value]
+  return load ? defineAsyncComponent(load) : undefined
+})
 /** US-20 CA-3: Data Modeling and Design run in parallel after Architecture (ESP-09, ESP-10). */
 const parallel = computed(() => parallelStages(store.workflow?.stages ?? [], stageId.value))
 /** ESP-16 3.2 / ESP-12 ER-12-3: critical or high findings of this stage that block its gate. */
@@ -282,6 +288,14 @@ watch([stageId, () => store.revision], () => void loader.run(), { immediate: tru
       <div v-if="isImplementation" class="card stage-card">
         <RepositoryPanel :project-id="projectId" :heading-level="3" />
       </div>
+
+      <component
+        :is="stageView"
+        v-if="stageView"
+        :project-id="projectId"
+        :stage="stage"
+        :revision="store.revision"
+      />
 
       <div class="stage-cols">
         <div class="stage-main">
