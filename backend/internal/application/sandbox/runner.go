@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"io"
 	"path"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -54,6 +55,23 @@ type ContainerSpec struct {
 	Processes  int
 	Tmpfs      map[string]string
 	Runtime    string
+	Mounts     []Mount
+}
+
+// Mount types of a ContainerSpec.
+const (
+	MountBind   = "bind"
+	MountVolume = "volume"
+)
+
+// Mount is a fixed mount of the agent session profile (ADR-23): a host file bound read-only or a
+// subdirectory of a named volume. Requests never name one; the runner builds them.
+type Mount struct {
+	Type     string // MountBind | MountVolume
+	Source   string // host path (bind) or volume name
+	Target   string
+	Subpath  string // directory inside the volume
+	ReadOnly bool
 }
 
 // ExecSpec is a process run inside the container.
@@ -87,6 +105,20 @@ type Config struct {
 		Network string   // internal network whose only exit is the deps-proxy (ADR-07); empty = action unavailable
 		Env     []string // proxy settings of the package managers (GOPROXY, npm_config_registry...)
 	}
+	AgentSession AgentSessionConfig
+}
+
+// AgentSessionConfig turns on CategoryAgentSession (ADR-23, US-58).
+type AgentSessionConfig struct {
+	ClaudeCodeBin string // host path of the Claude Code binary, bound read-only; empty = category unavailable
+	ProxyVolume   string // Docker volume shared with the worker: bin/ holds the bridge, one directory per wave socket
+	DetectImage   string // logical image of the version check container (the default project stack)
+}
+
+// ClaudeCodeStatus says whether agent sessions can run and with which Claude Code version (RNF-15).
+type ClaudeCodeStatus struct {
+	Available bool   `json:"available"`
+	Version   string `json:"version,omitempty"`
 }
 
 const (
@@ -99,7 +131,29 @@ const (
 	killGrace         = 10 * time.Second // RNF-03: killed within 10 s
 )
 
+// Fixed paths of an agent session container (ADR-23): the Claude Code binary of the host, the bridge
+// directory and the wave model proxy socket directory of the shared volume, the HOME of Claude Code.
+const (
+	claudeCodePath   = "/opt/claude-code/claude"
+	bridgeDir        = "/opt/easycode-bridge"
+	bridgePath       = bridgeDir + "/agent-bridge"
+	modelSocketDir   = "/run/easycode-model"
+	bridgeListen     = "127.0.0.1:8099"
+	agentHome        = workspaceDir + "/.easycode/home"
+	claudeCodeTTL    = time.Minute
+	claudeCodeDetect = 30 * time.Second
+)
+
 var allowedVariables = map[string]bool{"GOFLAGS": true, "CI": true, "TZ": true, "LANG": true, "CGO_ENABLED": true, "NODE_ENV": true}
+
+// agentVariables are the extra names an agent session may set (the model of the background calls).
+var agentVariables = map[string]bool{"ANTHROPIC_SMALL_FAST_MODEL": true}
+
+var (
+	socketDirName = regexp.MustCompile(`^[A-Za-z0-9-]{1,128}$`)
+	sessionToken  = regexp.MustCompile(`^[\x21-\x7e]{1,512}$`)
+	versionText   = regexp.MustCompile(`^[0-9A-Za-z.+_-]{1,64}$`)
+)
 
 // Runner runs the executions.
 type Runner struct {
@@ -113,6 +167,9 @@ type Runner struct {
 	executions map[string]*execution // execution id → state
 	busy       map[string]bool       // project → running
 	dependency map[string][]byte     // project → tar of the dependency directory kept by the runner
+	detectMu   sync.Mutex            // one Claude Code version check at a time
+	claudeCode ClaudeCodeStatus      // last version check
+	checkedAt  time.Time
 }
 
 type collection struct {
@@ -197,9 +254,21 @@ func (r *Runner) validate(request sandbox.ExecutionRequest, dependencies bool) (
 	if dependencies != (request.Category == sandbox.CategoryDependencies) {
 		return sandbox.Limits{}, "", invalid(sandbox.ProblemCommandNotAllowed)
 	}
-	category, ok := policy.Category(request.Category)
-	if !ok || !policy.Execute || category.Allowed(request.Argv) != nil {
-		return sandbox.Limits{}, "", invalid(sandbox.ProblemCommandNotAllowed)
+	agentSession := request.Category == sandbox.CategoryAgentSession
+	switch {
+	case agentSession:
+		// Every agent runs through Claude Code, file agents included: the argv is the Claude Code
+		// arguments and the runner builds the whole command (no shell).
+		if err := r.validateAgentSession(request); err != nil {
+			return sandbox.Limits{}, "", err
+		}
+	case request.AgentSession != nil:
+		return sandbox.Limits{}, "", invalid(sandbox.ProblemInvalidRequest)
+	default:
+		category, ok := policy.Category(request.Category)
+		if !ok || !policy.Execute || category.Allowed(request.Argv) != nil {
+			return sandbox.Limits{}, "", invalid(sandbox.ProblemCommandNotAllowed)
+		}
 	}
 	if len(request.Services) > 0 {
 		return sandbox.Limits{}, "", invalid(sandbox.ProblemServiceNotAllowed)
@@ -208,7 +277,8 @@ func (r *Runner) validate(request sandbox.ExecutionRequest, dependencies bool) (
 		return sandbox.Limits{}, "", invalid(sandbox.ProblemInvalidRequest)
 	}
 	for name := range request.Environment {
-		if !allowedVariables[name] || sandbox.ForbiddenVariable.MatchString(name) {
+		allowed := allowedVariables[name] || agentSession && agentVariables[name]
+		if !allowed || sandbox.ForbiddenVariable.MatchString(name) {
 			return sandbox.Limits{}, "", invalid(sandbox.ProblemForbiddenVariable)
 		}
 	}
@@ -218,6 +288,129 @@ func (r *Runner) validate(request sandbox.ExecutionRequest, dependencies bool) (
 		return sandbox.Limits{}, "", problem(failure.KindConflict, sandbox.ProblemLimitAboveCeiling)
 	}
 	return request.Limits.Min(ceiling), image, nil
+}
+
+// validateAgentSession checks what only an agent session carries: the feature is on, the socket
+// directory is one plain name of the shared volume, the session token is set and the writable paths are
+// clean workspace-relative paths.
+func (r *Runner) validateAgentSession(request sandbox.ExecutionRequest) error {
+	invalid := problem(failure.KindInvalidInput, sandbox.ProblemInvalidRequest)
+	if r.config.AgentSession.ClaudeCodeBin == "" || r.config.AgentSession.ProxyVolume == "" {
+		return problem(failure.KindUnavailable, sandbox.ProblemUnavailable)
+	}
+	session := request.AgentSession
+	if session == nil || !socketDirName.MatchString(session.SocketDir) || session.SocketDir == "bin" || !sessionToken.MatchString(session.Token) {
+		return invalid
+	}
+	if len(request.Argv) == 0 {
+		return invalid
+	}
+	for _, argument := range request.Argv {
+		if strings.ContainsRune(argument, 0) {
+			return invalid
+		}
+	}
+	if _, err := writablePaths(session.Writable); err != nil {
+		return invalid
+	}
+	return nil
+}
+
+// writablePaths turns the workspace-relative writable prefixes into the absolute list of
+// EASYCODE_WRITABLE (separated by ':').
+func writablePaths(writable []string) ([]string, error) {
+	paths := make([]string, 0, len(writable))
+	for _, p := range writable {
+		clean, ok := sandbox.CleanDirectory(p)
+		if strings.TrimSpace(p) == "" || !ok || strings.Contains(p, ":") {
+			return nil, fmt.Errorf("writable path not allowed: %q", p)
+		}
+		paths = append(paths, path.Join(workspaceDir, clean))
+	}
+	return paths, nil
+}
+
+// agentCommand is the command of an agent session: the bridge listens where Claude Code sends its model
+// calls and forwards them to the wave socket, then runs Claude Code with the arguments of the worker.
+func agentCommand(argv []string) []string {
+	return append([]string{bridgePath, "exec", "--listen", bridgeListen, "--socket", modelSocketDir + "/model.sock", "--", claudeCodePath}, argv...)
+}
+
+// agentEnvironment is the fixed environment of Claude Code in the container: model calls only to the
+// bridge with the wave session token (never a provider key), no update, telemetry or other traffic.
+func agentEnvironment(session *sandbox.AgentSession) []string {
+	writable, _ := writablePaths(session.Writable)
+	return []string{"ANTHROPIC_BASE_URL=http://" + bridgeListen, "ANTHROPIC_AUTH_TOKEN=" + session.Token,
+		"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1", "DISABLE_AUTOUPDATER=1", "DISABLE_TELEMETRY=1", "DISABLE_ERROR_REPORTING=1",
+		"EASYCODE_WRITABLE=" + strings.Join(writable, ":")}
+}
+
+// agentMounts are the mounts of an agent session: the binary of the host and the bridge read-only, the
+// wave socket directory read-write.
+func (r *Runner) agentMounts(socketDir string) []Mount {
+	volume := r.config.AgentSession.ProxyVolume
+	return []Mount{
+		{Type: MountBind, Source: r.config.AgentSession.ClaudeCodeBin, Target: claudeCodePath, ReadOnly: true},
+		{Type: MountVolume, Source: volume, Subpath: "bin", Target: bridgeDir, ReadOnly: true},
+		{Type: MountVolume, Source: volume, Subpath: socketDir, Target: modelSocketDir},
+	}
+}
+
+// ClaudeCode reports whether agent sessions can run: the binary is configured and answers --version in a
+// short container of the default stack image. The answer is kept for a minute (health asks often).
+func (r *Runner) ClaudeCode(ctx context.Context) ClaudeCodeStatus {
+	if r.config.AgentSession.ClaudeCodeBin == "" || r.config.AgentSession.ProxyVolume == "" {
+		return ClaudeCodeStatus{}
+	}
+	r.detectMu.Lock()
+	defer r.detectMu.Unlock()
+	if !r.checkedAt.IsZero() && r.now().Sub(r.checkedAt) < claudeCodeTTL {
+		return r.claudeCode
+	}
+	status := r.detectClaudeCode(ctx)
+	if ctx.Err() == nil {
+		r.claudeCode, r.checkedAt = status, r.now()
+	}
+	return status
+}
+
+func (r *Runner) detectClaudeCode(ctx context.Context) ClaudeCodeStatus {
+	image, ok := r.config.Images[r.config.AgentSession.DetectImage]
+	if !ok {
+		return ClaudeCodeStatus{}
+	}
+	ctx, cancel := context.WithTimeout(ctx, claudeCodeDetect)
+	defer cancel()
+	id, err := r.engine.Create(ctx, ContainerSpec{
+		Name: fmt.Sprintf("easycode-sbx-claude-version-%d", r.now().UnixNano()), Image: image, Cmd: []string{"sleep", "infinity"},
+		User: sandboxUser, Env: []string{"HOME=/tmp/home", "DISABLE_AUTOUPDATER=1", "DISABLE_TELEMETRY=1", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1"},
+		WorkingDir: "/tmp", CPU: 1, MemoryMiB: 1024, Processes: 64, Runtime: r.config.Runtime,
+		Tmpfs:  map[string]string{"/tmp": "rw,nosuid,nodev,size=64m,mode=1777"},
+		Mounts: []Mount{{Type: MountBind, Source: r.config.AgentSession.ClaudeCodeBin, Target: claudeCodePath, ReadOnly: true}},
+		Labels: map[string]string{"br.easycode.sandbox": "1", "br.easycode.check": "claude-code-version"},
+	})
+	if err != nil {
+		return ClaudeCodeStatus{}
+	}
+	defer func() { _ = r.engine.Remove(context.WithoutCancel(ctx), id) }()
+	if err := r.engine.Start(ctx, id); err != nil {
+		return ClaudeCodeStatus{}
+	}
+	out := &limitedBuffer{limit: 4096}
+	code, err := r.engine.Exec(ctx, id, ExecSpec{User: sandboxUser, WorkingDir: "/tmp", Cmd: []string{claudeCodePath, "--version"}}, nil, out)
+	if err != nil || code != 0 {
+		return ClaudeCodeStatus{}
+	}
+	return ClaudeCodeStatus{Available: true, Version: parseVersion(out.buffer.String())}
+}
+
+// parseVersion keeps the version number of "2.1.332 (Claude Code)".
+func parseVersion(output string) string {
+	fields := strings.Fields(output)
+	if len(fields) == 0 || !versionText.MatchString(fields[0]) {
+		return "unknown"
+	}
+	return fields[0]
 }
 
 // Execute runs the command and waits for the end. Repeating the same execution id never runs the
@@ -240,6 +433,14 @@ func (r *Runner) start(ctx context.Context, request sandbox.ExecutionRequest, de
 	limits, image, err := r.validate(request, dependencies)
 	if err != nil {
 		return sandbox.ExecutionResult{}, err
+	}
+	agentVersion := ""
+	if request.Category == sandbox.CategoryAgentSession {
+		status := r.ClaudeCode(ctx)
+		if !status.Available {
+			return sandbox.ExecutionResult{}, problem(failure.KindUnavailable, sandbox.ProblemUnavailable)
+		}
+		agentVersion = status.Version
 	}
 	r.mu.Lock()
 	r.expire()
@@ -270,6 +471,7 @@ func (r *Runner) start(ctx context.Context, request sandbox.ExecutionRequest, de
 	go func() {
 		defer abort()
 		result, output, files, refused, kept := r.run(runCtx, request, image, limits, workspace, deps, dependencies)
+		result.AgentVersion = agentVersion
 		r.mu.Lock()
 		current.result, current.output, current.finished = result, output, r.now()
 		if files != nil {
@@ -430,6 +632,14 @@ func (r *Runner) run(ctx context.Context, request sandbox.ExecutionRequest, imag
 	} else {
 		env = append(env, "GOPROXY=off", "GOSUMDB=off")
 	}
+	agentSession := request.Category == sandbox.CategoryAgentSession
+	var mounts []Mount
+	if agentSession {
+		result.Profile = "agent_session"
+		env[0] = "HOME=" + agentHome
+		env = append(env, agentEnvironment(request.AgentSession)...)
+		mounts = r.agentMounts(request.AgentSession.SocketDir)
+	}
 	for name, value := range request.Environment {
 		env = append(env, name+"="+value)
 	}
@@ -440,7 +650,7 @@ func (r *Runner) run(ctx context.Context, request sandbox.ExecutionRequest, imag
 	id, err := r.engine.Create(ctx, ContainerSpec{
 		Name: "easycode-sbx-" + request.ExecutionID, Image: image, Cmd: []string{"sleep", "infinity"}, User: sandboxUser, Env: env,
 		WorkingDir: workspaceDir, Network: network, CPU: limits.CPU, MemoryMiB: limits.MemoryMiB, Processes: limits.Processes,
-		Tmpfs: tmpfs, Runtime: r.config.Runtime,
+		Tmpfs: tmpfs, Runtime: r.config.Runtime, Mounts: mounts,
 		Labels: map[string]string{"br.easycode.sandbox": "1", "br.easycode.project": request.ProjectID, "br.easycode.wave": request.WaveID,
 			"br.easycode.agent": request.Agent, "br.easycode.execution": request.ExecutionID},
 	})
@@ -459,8 +669,12 @@ func (r *Runner) run(ctx context.Context, request sandbox.ExecutionRequest, imag
 		input = merge(workspace, deps)
 	}
 	var prepare bytes.Buffer
-	code, err := r.engine.Exec(ctx, id, ExecSpec{User: sandboxUser, WorkingDir: "/", Cmd: []string{"sh", "-c",
-		"mkdir -p /tmp/home && { [ -d " + seedDir + " ] && cp -a " + seedDir + "/. /tmp/ ; true; } && tar -x -f - -C " + workspaceDir}}, bytes.NewReader(input), &prepare)
+	script := "mkdir -p /tmp/home && { [ -d " + seedDir + " ] && cp -a " + seedDir + "/. /tmp/ ; true; } && tar -x -f - -C " + workspaceDir
+	if agentSession {
+		// The HOME of Claude Code (session, settings) lives in the workspace, out of the collection.
+		script += " && mkdir -p " + agentHome
+	}
+	code, err := r.engine.Exec(ctx, id, ExecSpec{User: sandboxUser, WorkingDir: "/", Cmd: []string{"sh", "-c", script}}, bytes.NewReader(input), &prepare)
 	if err != nil || code != 0 {
 		if strings.Contains(strings.ToLower(prepare.String()), "no space left") {
 			return fail(sandbox.EndDiskLimit)
@@ -477,7 +691,11 @@ func (r *Runner) run(ctx context.Context, request sandbox.ExecutionRequest, imag
 	var outputLimit bool
 	buffer := &limitedBuffer{limit: maxOutput, overflow: func() { outputLimit = true; stop() }}
 	directory, _ := sandbox.CleanDirectory(request.Directory)
-	exit, execErr := r.engine.Exec(commandCtx, id, ExecSpec{User: sandboxUser, WorkingDir: path.Join(workspaceDir, directory), Cmd: request.Argv}, nil, buffer)
+	command := request.Argv
+	if agentSession {
+		command = agentCommand(request.Argv)
+	}
+	exit, execErr := r.engine.Exec(commandCtx, id, ExecSpec{User: sandboxUser, WorkingDir: path.Join(workspaceDir, directory), Cmd: command}, nil, buffer)
 	timedOut := errors.Is(commandCtx.Err(), context.DeadlineExceeded)
 	aborted := ctx.Err() != nil
 	if timedOut || aborted || outputLimit {

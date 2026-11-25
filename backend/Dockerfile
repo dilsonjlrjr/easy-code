@@ -16,10 +16,17 @@ COPY . .
 RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
     go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o /out/app ./cmd/${BINARY}
+# easycode-sandbox ships the static agent bridge next to its binary (/agent-bridge) and copies it, at
+# start, to the volume the agent session containers mount read-only (ADR-23).
+RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
+    mkdir -p /out/extra && if [ "${BINARY}" = "easycode-sandbox" ]; then CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+    go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o /out/extra/agent-bridge ./cmd/easycode-agent-bridge; fi
 # Socket directories shared by easycode-gateway, easycode-sandbox and the worker, the platform key
 # directories (ADR-13) and the repositories volume: a named volume mounted here starts with this
 # ownership, so the non-root processes (uid 65532) write them; the files volume (attachments, US-03) too.
+# easycode-agent-proxy is shared by the worker (wave model sockets) and easycode-sandbox (bin/agent-bridge).
 RUN mkdir -p /out/run/easycode-gateway /out/run/easycode-gateway-key /out/run/easycode-sealing /out/run/easycode-sandbox \
+    /out/run/easycode-agent-proxy \
     /out/var/lib/easycode/repos /out/var/lib/easycode/files
 
 FROM ${GIT_RUNTIME_IMAGE} AS runtime-git
@@ -34,6 +41,7 @@ ENTRYPOINT ["/app"]
 
 FROM ${RUNTIME_IMAGE}
 COPY --from=build /out/app /app
+COPY --from=build /out/extra/ /
 COPY --from=build --chown=65532:65532 /out/run /run
 USER 65532:65532
 EXPOSE 8080

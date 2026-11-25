@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -33,6 +34,9 @@ var version = "dev"
 
 // socketMode lets only the runner and the worker group use the socket.
 const socketMode = 0o660
+
+// bridgeBinary is the agent bridge of the agent sessions, shipped next to this binary (ADR-23).
+const bridgeBinary = "agent-bridge"
 
 func main() {
 	if err := run(); err != nil {
@@ -60,6 +64,7 @@ func runnerConfig(cfg config.Sandbox) appsandbox.Config {
 	runner := appsandbox.Config{Images: cfg.Images, Runtime: cfg.Runtime, Defaults: sandbox.Limits{
 		CPU: cfg.CPU, MemoryMiB: cfg.MemoryMiB, DiskMiB: cfg.DiskMiB, Time: cfg.CommandTime, Processes: 256, MaxOutputBytes: 16 << 20,
 	}}
+	runner.AgentSession = appsandbox.AgentSessionConfig{ClaudeCodeBin: cfg.ClaudeCodeBin, ProxyVolume: cfg.AgentProxyVolume, DetectImage: cfg.Image}
 	runner.Dependencies.Network = cfg.DependenciesNetwork
 	if cfg.DependenciesProxy != "" {
 		runner.Dependencies.Env = []string{"GOPROXY=" + cfg.DependenciesProxy + "/go", "GOSUMDB=off", "GONOSUMCHECK=1",
@@ -73,6 +78,13 @@ func serve(ctx context.Context, proc process.Process) error {
 	if len(cfg.Images) == 0 {
 		return fmt.Errorf("%s is required (logical=image, e.g. go=easycode-sandbox-go:dev)", config.EnvSandboxImages)
 	}
+	if cfg.ClaudeCodeBin != "" {
+		// The agent sessions run the bridge from the shared volume (ADR-23); without it they are off.
+		if err := installBridge(bridgeSource(), cfg.AgentProxyDir); err != nil {
+			proc.Logger.Error("agent bridge not installed: Claude Code agent sessions are off", logging.ErrorAttr(err))
+			cfg.ClaudeCodeBin = ""
+		}
+	}
 	runner := appsandbox.NewRunner(docker.New(cfg.DockerSocket), specs.AgentPolicy, runnerConfig(cfg))
 	// The runner refuses to serve without the daemon and the images of the allowlist.
 	ready := false
@@ -82,6 +94,8 @@ func serve(ctx context.Context, proc process.Process) error {
 		cancel()
 		if err == nil {
 			proc.Logger.Info("sandbox images ready", slog.Any("images", images), slog.String("runtime", cfg.Runtime))
+			status := runner.ClaudeCode(ctx)
+			proc.Logger.Info("claude code", slog.Bool("available", status.Available), slog.String("version", status.Version))
 			ready = true
 			break
 		}
@@ -111,6 +125,50 @@ func serve(ctx context.Context, proc process.Process) error {
 		return fmt.Errorf("sandbox shutdown: %w", err)
 	}
 	return nil
+}
+
+// installBridge copies the agent-bridge shipped in the image (from) to <dir>/bin, the
+// directory the agent session containers mount read-only. The copy is renamed in place, so a running
+// session keeps the file it started with.
+func installBridge(from, dir string) error {
+	source, err := os.Open(from) //nolint:gosec // G304: fixed file of the image
+	if err != nil {
+		return fmt.Errorf("open bridge: %w", err)
+	}
+	defer source.Close()
+	bin := filepath.Join(dir, "bin")
+	if err := os.MkdirAll(bin, 0o755); err != nil { //nolint:gosec // G301: read by the sandbox containers (uid 10001)
+		return fmt.Errorf("create bridge directory: %w", err)
+	}
+	if err := os.Chmod(bin, 0o755); err != nil { //nolint:gosec // G302: read by the sandbox containers (uid 10001)
+		return fmt.Errorf("chmod bridge directory: %w", err)
+	}
+	temp, err := os.CreateTemp(bin, ".agent-bridge-*")
+	if err != nil {
+		return fmt.Errorf("create bridge: %w", err)
+	}
+	defer os.Remove(temp.Name())
+	if _, err := io.Copy(temp, source); err != nil {
+		_ = temp.Close()
+		return fmt.Errorf("copy bridge: %w", err)
+	}
+	if err := temp.Chmod(0o755); err != nil {
+		_ = temp.Close()
+		return fmt.Errorf("chmod bridge: %w", err)
+	}
+	if err := temp.Close(); err != nil {
+		return fmt.Errorf("close bridge: %w", err)
+	}
+	return os.Rename(temp.Name(), filepath.Join(bin, bridgeBinary))
+}
+
+// bridgeSource is the agent bridge next to this binary (/agent-bridge in the image, bin/ in development).
+func bridgeSource() string {
+	self, err := os.Executable()
+	if err != nil {
+		return bridgeBinary
+	}
+	return filepath.Join(filepath.Dir(self), bridgeBinary)
 }
 
 func listenSocket(path string) (net.Listener, error) {

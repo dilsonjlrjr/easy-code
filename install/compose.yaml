@@ -177,6 +177,7 @@ services:
       - *config-volume
       - gateway-socket:/run/easycode-gateway
       - sandbox-socket:/run/easycode-sandbox
+      - agent-proxy:/run/easycode-agent-proxy
       - repos:/var/lib/easycode/repos
       - files:/var/lib/easycode/files:ro
     depends_on:
@@ -213,12 +214,16 @@ services:
       EASYCODE_SANDBOX_RUNTIME: runc
       EASYCODE_SANDBOX_DEPENDENCIES_NETWORK: easycode-platform-dependencies
       EASYCODE_SANDBOX_DEPENDENCIES_PROXY: http://deps-proxy:8080
+      # Claude Code as the agent executor (ADR-23): host path of the binary, written by install.sh; empty = off.
+      EASYCODE_CLAUDE_CODE_BIN: ${EASYCODE_CLAUDE_CODE_BIN:-}
+      EASYCODE_AGENT_PROXY_VOLUME: easycode-platform-agent-proxy
     network_mode: none
     group_add:
       - "${EASYCODE_DOCKER_GID:-990}"
     volumes:
       - ${EASYCODE_DOCKER_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock
       - sandbox-socket:/run/easycode-sandbox
+      - agent-proxy:/run/easycode-agent-proxy
     depends_on:
       sandbox-go-image:
         condition: service_completed_successfully
@@ -277,6 +282,10 @@ volumes:
   gateway-key:
   sealing-public:
   sandbox-socket:
+  # Wave model proxy sockets of the worker and the agent bridge (ADR-23); easycode-sandbox mounts its
+  # subdirectories in the agent session containers by this name.
+  agent-proxy:
+    name: easycode-platform-agent-proxy
   repos:
   files:
   deps-cache:

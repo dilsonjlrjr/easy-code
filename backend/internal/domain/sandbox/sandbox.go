@@ -39,6 +39,10 @@ const (
 	CategoryDependencies = "install_dependencies"
 	// CategoryScanner is the security scans of the Segurança (Opengrep, Trivy, Gitleaks; US-23).
 	CategoryScanner = "scanner"
+	// CategoryAgentSession is a Claude Code run of the agent (ADR-23, US-58): the runner builds the command
+	// (bridge, binary and the Argv given by the worker as Claude Code arguments) and the mounts; it is not a
+	// command category of permissoes.yaml.
+	CategoryAgentSession = "agent_session"
 )
 
 // ImageSecurity is the logical image of the security scans (infra/sandbox/security): the scanners and
@@ -85,6 +89,8 @@ type ExecutionRequest struct {
 	Directory   string            `json:"directory"` // relative to the workspace root
 	Environment map[string]string `json:"environment"`
 	Limits      Limits            `json:"limits"`
+	// AgentSession is set only for CategoryAgentSession.
+	AgentSession *AgentSession `json:"agent_session,omitempty"`
 }
 
 // Limits of one execution (RNF-03). Zero means the runner default.
@@ -141,6 +147,8 @@ type ExecutionResult struct {
 	ImageDigest  string        `json:"image_digest"`
 	Runtime      string        `json:"runtime"`
 	Profile      string        `json:"profile"`
+	// AgentVersion is the Claude Code version of a CategoryAgentSession run (RNF-15).
+	AgentVersion string `json:"agent_version,omitempty"`
 }
 
 // Succeeded reports a completed command with exit code 0.
@@ -228,4 +236,13 @@ func CleanDirectory(directory string) (string, bool) {
 		return "", false
 	}
 	return clean, true
+}
+
+// AgentSession is what a Claude Code run needs from the worker (ADR-23): the directory of the wave model
+// proxy socket inside the shared proxy volume, the wave-scoped session token the proxy accepts (never a
+// provider key) and the paths the agent may write (enforced by the PreToolUse hook of the bridge).
+type AgentSession struct {
+	SocketDir string   `json:"socket_dir"`
+	Token     string   `json:"token"`
+	Writable  []string `json:"writable"`
 }

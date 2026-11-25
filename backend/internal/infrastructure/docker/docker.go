@@ -21,7 +21,9 @@ import (
 	appsandbox "easycode/internal/application/sandbox"
 )
 
-const apiVersion = "/v1.44"
+// apiVersion 1.45 (Docker Engine 26) is the first with VolumeOptions.Subpath, used by the agent session
+// mounts (ADR-23).
+const apiVersion = "/v1.45"
 
 // Client talks to the daemon over its Unix socket.
 type Client struct {
@@ -107,6 +109,9 @@ func (c *Client) Create(ctx context.Context, spec appsandbox.ContainerSpec) (str
 	if spec.Runtime != "" {
 		hostConfig["Runtime"] = spec.Runtime
 	}
+	if len(spec.Mounts) > 0 {
+		hostConfig["Mounts"] = mounts(spec.Mounts)
+	}
 	body := map[string]any{
 		"Image": spec.Image, "Cmd": spec.Cmd, "User": spec.User, "Env": spec.Env, "WorkingDir": spec.WorkingDir, "Labels": spec.Labels,
 		"NetworkDisabled": network == "none", "HostConfig": hostConfig, "AttachStdout": false, "AttachStderr": false, "Tty": false,
@@ -118,6 +123,27 @@ func (c *Client) Create(ctx context.Context, spec appsandbox.ContainerSpec) (str
 		return "", err
 	}
 	return created.ID, nil
+}
+
+// mounts turns the mounts of the spec into the HostConfig.Mounts of the Engine API: a bind of a host
+// path or a subdirectory of a named volume (never copied into, never created by the daemon).
+func mounts(specs []appsandbox.Mount) []map[string]any {
+	out := make([]map[string]any, 0, len(specs))
+	for _, m := range specs {
+		mount := map[string]any{"Type": m.Type, "Source": m.Source, "Target": m.Target, "ReadOnly": m.ReadOnly}
+		switch m.Type {
+		case appsandbox.MountBind:
+			mount["BindOptions"] = map[string]any{"CreateMountpoint": false}
+		case appsandbox.MountVolume:
+			options := map[string]any{"NoCopy": true}
+			if m.Subpath != "" {
+				options["Subpath"] = m.Subpath
+			}
+			mount["VolumeOptions"] = options
+		}
+		out = append(out, mount)
+	}
+	return out
 }
 
 // Start implements appsandbox.Engine.

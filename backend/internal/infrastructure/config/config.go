@@ -74,6 +74,10 @@ const (
 	EnvProjectMemoryLimit   = "EASYCODE_PROJECT_MEMORY_LIMIT_MIB"
 	EnvProjectDiskLimit     = "EASYCODE_PROJECT_DISK_LIMIT_MIB"
 	EnvProjectCommandTime   = "EASYCODE_PROJECT_COMMAND_TIME"
+	EnvClaudeCodeBin        = "EASYCODE_CLAUDE_CODE_BIN"
+	EnvAgentProxyVolume     = "EASYCODE_AGENT_PROXY_VOLUME"
+	EnvAgentProxyDir        = "EASYCODE_AGENT_PROXY_DIR"
+	EnvClaudeCodeBaseURL    = "EASYCODE_GATEWAY_CLAUDE_CODE_BASE_URL"
 )
 
 // removedVariables belonged to the marco1 development profile (fixed "dev" identity), which no
@@ -138,6 +142,14 @@ type Sandbox struct {
 	MemoryMiB   int
 	DiskMiB     int
 	CommandTime time.Duration
+	// ClaudeCodeBin is the host path of the Claude Code binary mounted read-only in agent sessions (ADR-23);
+	// empty turns the Claude Code executor off.
+	ClaudeCodeBin string
+	// AgentProxyVolume is the Docker volume shared by the worker (model proxy sockets, one directory per wave)
+	// and the agent session containers; its bin/ directory holds the agent bridge (ADR-23).
+	AgentProxyVolume string
+	// AgentProxyDir is where the worker and the runner mount that volume.
+	AgentProxyDir string
 }
 
 // Identity configures the SSO (Keycloak realm, ADR-12) and the web session.
@@ -230,6 +242,8 @@ type Gateway struct {
 	PrivateKeyFile string
 	// AnthropicBaseURL is the Anthropic API endpoint (egress proxy or test server).
 	AnthropicBaseURL string
+	// ClaudeCodeBaseURL is the upstream of the claude-code forward route (ADR-23; egress proxy or test server).
+	ClaudeCodeBaseURL string
 	// AnthropicTestModel is the model id of the minimal key test call (configured, never fixed in code).
 	AnthropicTestModel string
 	// OpenAIBaseURL is the OpenAI API endpoint (egress proxy or test server; US-24).
@@ -277,6 +291,7 @@ func Load(lookup LookupFunc) (Config, error) {
 			SessionIdle:        r.duration(EnvGatewaySessionIdle, 15*time.Minute),
 			PrivateKeyFile:     r.text(EnvGatewayPrivateKey, ""),
 			AnthropicBaseURL:   r.text(EnvAnthropicBaseURL, "https://api.anthropic.com"),
+			ClaudeCodeBaseURL:  r.text(EnvClaudeCodeBaseURL, "https://api.anthropic.com"),
 			AnthropicTestModel: r.text(EnvAnthropicTestModel, ""),
 			OpenAIBaseURL:      r.text(EnvOpenAIBaseURL, "https://api.openai.com"),
 			CallTimeout:        r.duration(EnvProviderCallTimeout, 10*time.Minute),
@@ -314,6 +329,8 @@ func Load(lookup LookupFunc) (Config, error) {
 		DependenciesNetwork: r.text(EnvSandboxDepsNetwork, ""), DependenciesProxy: r.text(EnvSandboxDepsProxy, ""),
 		CPU: float64(r.integer(EnvProjectCPULimit, 2)), MemoryMiB: r.integer(EnvProjectMemoryLimit, 4096),
 		DiskMiB: r.integer(EnvProjectDiskLimit, 10240), CommandTime: r.duration(EnvProjectCommandTime, 30*time.Minute),
+		ClaudeCodeBin: r.text(EnvClaudeCodeBin, ""), AgentProxyVolume: r.text(EnvAgentProxyVolume, "easycode-agent-proxy"),
+		AgentProxyDir: r.text(EnvAgentProxyDir, "/run/easycode-agent-proxy"),
 	}
 	for _, item := range r.list(EnvSandboxImages) {
 		logical, ref, ok := strings.Cut(item, "=")

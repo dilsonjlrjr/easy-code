@@ -24,6 +24,28 @@ if [ ! -f "$env_file" ]; then
 	echo "install/.env written with the bundled passwords."
 fi
 
+# Claude Code as the agent executor (ADR-23, US-58): the host path of the binary, resolved once. An empty
+# value is not written, so a later run finds a binary installed after this one.
+if ! grep -q '^EASYCODE_CLAUDE_CODE_BIN=' "$env_file"; then
+	claude_bin="${EASYCODE_CLAUDE_CODE_BIN:-}"
+	if [ -z "$claude_bin" ] && command -v claude >/dev/null 2>&1; then
+		claude_bin="$(readlink -f "$(command -v claude)")"
+	fi
+	case "$claude_bin" in
+	*"'"* | *'
+'*)
+		echo "Claude Code path has a quote or a line break; set EASYCODE_CLAUDE_CODE_BIN in install/.env by hand." >&2
+		claude_bin=""
+		;;
+	esac
+	if [ -n "$claude_bin" ]; then
+		echo "EASYCODE_CLAUDE_CODE_BIN='$claude_bin'" >>"$env_file"
+		echo "Claude Code found at $claude_bin: agents may run through it."
+	else
+		echo "Claude Code not found on this host: the Claude Code executor stays off (set EASYCODE_CLAUDE_CODE_BIN to turn it on)."
+	fi
+fi
+
 bundled="$(sed -n 's/^EASYCODE_BUNDLED=//p' "$env_file" | tail -n 1)"
 profiles=""
 if [ "${bundled:-true}" = "true" ]; then

@@ -25,6 +25,10 @@
 #   is deps-proxy.
 # - the git clone of a project (US-42) is served by the api at http://localhost:8081/git/<project>.git
 #   (HTTP Basic, any user, the session token as the password).
+# - Claude Code as the agent executor (ADR-23): set EASYCODE_CLAUDE_CODE_BIN to the host path of the binary
+#   (readlink -f "$(command -v claude)"); empty turns it off. The volume easycode-agent-proxy holds the wave
+#   model proxy sockets of the worker and the agent bridge easycode-sandbox installs in bin/; both run as
+#   uid 65532 and the sandbox containers (uid 10001) only read bin/ and connect to the sockets.
 
 name: easycode
 
@@ -168,6 +172,7 @@ services:
     volumes:
       - gateway-socket:/run/easycode-gateway
       - sandbox-socket:/run/easycode-sandbox
+      - agent-proxy:/run/easycode-agent-proxy
       - repos:/var/lib/easycode/repos
       - files:/var/lib/easycode/files:ro
 
@@ -203,12 +208,15 @@ services:
       EASYCODE_SANDBOX_RUNTIME: runc
       EASYCODE_SANDBOX_DEPENDENCIES_NETWORK: easycode-dependencies
       EASYCODE_SANDBOX_DEPENDENCIES_PROXY: http://deps-proxy:8080
+      EASYCODE_CLAUDE_CODE_BIN: ${EASYCODE_CLAUDE_CODE_BIN:-}
+      EASYCODE_AGENT_PROXY_VOLUME: easycode-agent-proxy
     network_mode: none
     group_add:
       - "${EASYCODE_DOCKER_GID:-990}"
     volumes:
       - ${EASYCODE_DOCKER_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock
       - sandbox-socket:/run/easycode-sandbox
+      - agent-proxy:/run/easycode-agent-proxy
     depends_on:
       sandbox-go-image:
         condition: service_completed_successfully
@@ -289,6 +297,10 @@ volumes:
   gateway-key:
   sealing-public:
   sandbox-socket:
+  # Named without the project prefix: easycode-sandbox mounts its subdirectories in the agent session
+  # containers by this name (EASYCODE_AGENT_PROXY_VOLUME).
+  agent-proxy:
+    name: easycode-agent-proxy
   repos:
   files:
   deps-cache:

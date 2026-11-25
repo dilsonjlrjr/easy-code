@@ -3,7 +3,7 @@ GO_IMAGE        ?= golang:1.26.10-bookworm
 LINT_IMAGE      ?= golangci/golangci-lint:v2.15.0
 VERSION         ?= dev
 BINARY          ?= easycode-api
-BINARIES        := easycode-api easycode-worker easycode-sandbox easycode-gateway easycode-installer
+BINARIES        := easycode-api easycode-worker easycode-sandbox easycode-gateway easycode-installer easycode-agent-bridge
 DOCKER_GO       := docker run --rm -u $(shell id -u):$(shell id -g) -e HOME=/tmp \
                    -e GOCACHE=/cache/build -e GOMODCACHE=/cache/mod -e GOLANGCI_LINT_CACHE=/cache/lint \
                    -v "$(CURDIR)":/src -w /src -v easycode-go-cache:/cache
@@ -15,10 +15,15 @@ SANDBOX_TEST_IMAGE ?= easycode-sandbox-go:ci
 SECURITY_TEST_IMAGE ?= easycode-sandbox-security:ci
 DOCKER_SOCKET   ?= /var/run/docker.sock
 DOCKER_GID      := $(shell stat -c %g $(DOCKER_SOCKET) 2>/dev/null)
+# The agent session test (ADR-23) binds a fake Claude Code from this directory (host path) and serves the
+# wave model socket in a volume shared with the sandbox containers.
+AGENT_PROXY_TEST_VOLUME ?= easycode-agent-proxy-test
+TEST_AGENT      := -e "EASYCODE_TEST_HOST_DIR=$(CURDIR)" -v $(AGENT_PROXY_TEST_VOLUME):/run/easycode-agent-proxy-test \
+                   -e EASYCODE_TEST_AGENT_PROXY_VOLUME=$(AGENT_PROXY_TEST_VOLUME) -e EASYCODE_TEST_AGENT_PROXY_DIR=/run/easycode-agent-proxy-test
 # The recovery test of RNF-11 runs the backup and restore scripts of ../infra/backup (read-only mount).
 # The realm template of easycode-installer is checked against the development realm (keycloakadmin tests).
 TEST_REALM      := -v "$(CURDIR)/../infra/keycloak":/infra/keycloak:ro -e EASYCODE_TEST_DEV_REALM=/infra/keycloak/easycode-realm.json
-TEST_DOCKER     := $(if $(DOCKER_GID),-v $(DOCKER_SOCKET):/var/run/docker.sock --group-add $(DOCKER_GID) -e EASYCODE_TEST_DOCKER_SOCKET=/var/run/docker.sock -e EASYCODE_TEST_SANDBOX_IMAGE=$(SANDBOX_TEST_IMAGE) -e EASYCODE_TEST_SECURITY_IMAGE=$(SECURITY_TEST_IMAGE) -v "$(CURDIR)/../infra/backup":/infra/backup:ro -e EASYCODE_TEST_BACKUP_SCRIPTS=/infra/backup,)
+TEST_DOCKER     := $(if $(DOCKER_GID),-v $(DOCKER_SOCKET):/var/run/docker.sock --group-add $(DOCKER_GID) -e EASYCODE_TEST_DOCKER_SOCKET=/var/run/docker.sock -e EASYCODE_TEST_SANDBOX_IMAGE=$(SANDBOX_TEST_IMAGE) -e EASYCODE_TEST_SECURITY_IMAGE=$(SECURITY_TEST_IMAGE) -v "$(CURDIR)/../infra/backup":/infra/backup:ro -e EASYCODE_TEST_BACKUP_SCRIPTS=/infra/backup $(TEST_AGENT),)
 RUN_ENV         ?= --network host -e EASYCODE_DATABASE_URL -e EASYCODE_HTTP_ADDR -e EASYCODE_LOG_LEVEL
 
 .PHONY: build test test-race test-integration lint run migrate image fmt tidy cache ci check-specs sync-specs sandbox-image load-test test-load
@@ -26,6 +31,8 @@ RUN_ENV         ?= --network host -e EASYCODE_DATABASE_URL -e EASYCODE_HTTP_ADDR
 cache:
 	@docker volume create easycode-go-cache >/dev/null
 	@docker run --rm -v easycode-go-cache:/cache $(GO_IMAGE) chown $(shell id -u):$(shell id -g) /cache
+	@docker volume create $(AGENT_PROXY_TEST_VOLUME) >/dev/null
+	@docker run --rm -v $(AGENT_PROXY_TEST_VOLUME):/v $(GO_IMAGE) chown $(shell id -u):$(shell id -g) /v
 
 build: cache
 	$(DOCKER_GO) -e CGO_ENABLED=0 $(GO_IMAGE) sh -c '$(foreach b,$(BINARIES),go build -trimpath -ldflags "-X main.version=$(VERSION)" -o bin/$(b) ./cmd/$(b) &&) go vet ./...'

@@ -51,7 +51,10 @@ func (s *Server) Handler() http.Handler {
 			s.problem(w, err)
 			return
 		}
-		s.json(w, map[string]any{"status": "ok", "images": images})
+		s.json(w, map[string]any{"status": "ok", "images": images, "claude_code": s.runner.ClaudeCode(r.Context())})
+	})
+	mux.HandleFunc("GET /v1/claude-code", func(w http.ResponseWriter, r *http.Request) {
+		s.json(w, s.runner.ClaudeCode(r.Context()))
 	})
 	mux.HandleFunc("GET /v1/images", func(w http.ResponseWriter, r *http.Request) {
 		images, err := s.runner.Health(r.Context())

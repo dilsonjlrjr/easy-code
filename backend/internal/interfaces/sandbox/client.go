@@ -73,6 +73,22 @@ func (c *Client) Health(ctx context.Context) error {
 	return err
 }
 
+// ClaudeCodeStatus says whether agent sessions can run and with which Claude Code version (ADR-23).
+type ClaudeCodeStatus = appsandbox.ClaudeCodeStatus
+
+// ClaudeCode reports whether agent sessions can run (GET /v1/claude-code).
+func (c *Client) ClaudeCode(ctx context.Context) (ClaudeCodeStatus, error) {
+	raw, err := c.do(ctx, http.MethodGet, "/v1/claude-code", "", nil)
+	if err != nil {
+		return ClaudeCodeStatus{}, err
+	}
+	var status ClaudeCodeStatus
+	if err := json.Unmarshal(raw, &status); err != nil {
+		return ClaudeCodeStatus{}, err
+	}
+	return status, nil
+}
+
 // Run implements runtime.CommandRunner: prepare the workspace from the files of the wave, execute
 // (the dependency action goes to its own route, ADR-07), fetch the full output and collect the files.
 // Canceling ctx aborts the execution in the runner.
