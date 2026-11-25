@@ -8,6 +8,7 @@ import {
   type Provider,
   type ProvidersApi,
 } from '@/features/settings/api/providersApi'
+import { providerUsable, usesSubscription } from '@/features/settings/claudeCode'
 
 let api: ProvidersApi = providersApi
 
@@ -61,8 +62,9 @@ export function useModelOptions() {
     providers.value = loadedProviders
   })
 
+  // US-58 CA-2: Claude Code models also need the binary detected on the server.
   const providersWithKey = computed(
-    () => new Set(providers.value.filter((p) => p.key.status === 'active').map((p) => p.id)),
+    () => new Set(providers.value.filter(providerUsable).map((p) => p.id)),
   )
 
   function describe(model: Model): string {
@@ -71,10 +73,14 @@ export function useModelOptions() {
       model.capabilities.prompt_cache ? t('settings.models.promptCache') : undefined,
       model.capabilities.image_input ? t('settings.models.imageInput') : undefined,
     ].filter((item) => item !== undefined)
-    const provider =
-      providers.value.find((item) => item.id === model.provider)?.name ?? model.provider
+    const found = providers.value.find((item) => item.id === model.provider)
+    const provider = found?.name ?? model.provider
     const price = model.current_price ? '' : ` · ${t('settings.prices.noCurrentPrice')}`
-    return `${provider} · ${capabilities.join(', ')}${price}`
+    // US-58 CA-4: with a subscription the cost is still estimated by the price table.
+    const subscription = usesSubscription(found)
+      ? ` · ${t('settings.providers.claudeCode.costCovered')}`
+      : ''
+    return `${provider} · ${capabilities.join(', ')}${price}${subscription}`
   }
 
   const options = computed<ModelOption[]>(() =>
@@ -92,5 +98,8 @@ export function useModelOptions() {
     return providers.value.find((provider) => provider.id === id)?.name ?? id
   }
 
-  return { options, loader, providerName }
+  /** A model of the options comes from a personal subscription (US-58 CA-4 warning). */
+  const subscriptionInUse = computed(() => providers.value.some(usesSubscription))
+
+  return { options, loader, providerName, subscriptionInUse }
 }

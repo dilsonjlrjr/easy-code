@@ -42,6 +42,20 @@ const GUIDES: Record<ProviderId, Guide> = {
     keyPrefix: 'sk-',
     images: [openaiKeys, openaiCreate, openaiCopy],
   },
+  // US-58: an API key from the Anthropic console, or a `claude setup-token` token for one person.
+  'claude-code': {
+    consoleUrl: 'https://platform.claude.com/settings/keys',
+    billingUrl: 'https://platform.claude.com/settings/billing',
+    keyPrefix: 'sk-ant-',
+    images: [anthropicKeys, anthropicCreate, anthropicCopy],
+  },
+}
+
+/** Message keys are camelCase; the provider id of Claude Code has a hyphen. */
+const MESSAGE_KEYS: Record<ProviderId, string> = {
+  anthropic: 'anthropic',
+  openai: 'openai',
+  'claude-code': 'claudeCode',
 }
 
 const props = defineProps<{ provider: Provider | undefined }>()
@@ -55,7 +69,7 @@ const providerName = computed(() => props.provider?.name ?? '')
 const steps = computed<GuideStep[]>(() => {
   const current = guide.value
   if (!current || !props.provider) return []
-  const prefix = `settings.keyGuide.${props.provider.id}`
+  const prefix = `settings.keyGuide.${MESSAGE_KEYS[props.provider.id]}`
   return [
     {
       text: t(`${prefix}.open`),

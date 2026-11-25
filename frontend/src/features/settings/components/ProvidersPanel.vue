@@ -9,6 +9,7 @@ import CanvasIcon from '@/shared/ui/CanvasIcon.vue'
 import ProblemAlert from '@/shared/ui/ProblemAlert.vue'
 import type { Model, PricesPerMillion, Provider } from '../api/providersApi'
 import { useProvidersStore } from '../stores/providersStore'
+import { CLAUDE_CODE_INSTALL, providerUsable, usesSubscription } from '../claudeCode'
 import ModelDialog from './ModelDialog.vue'
 import ProviderKeyDialog from './ProviderKeyDialog.vue'
 import ProviderKeyGuideDialog from './ProviderKeyGuideDialog.vue'
@@ -88,8 +89,31 @@ function keyTone(provider: Provider): string {
   return 'warn'
 }
 
+/** US-58 CA-4: the price still estimates the cost, which the subscription covers. */
+function coveredBySubscription(model: Model): boolean {
+  return usesSubscription(store.providers.find((provider) => provider.id === model.provider))
+}
+
 function providerName(id: string): string {
   return store.providers.find((provider) => provider.id === id)?.name ?? id
+}
+
+/** US-58 CA-1: version and moment of the last Claude Code detection, never a credential. */
+function detectionText(provider: Provider): string {
+  const detection = provider.detection
+  if (!detection) return ''
+  const parts: string[] = []
+  if (detection.detected && detection.version) {
+    parts.push(t('settings.providers.claudeCode.version', { version: detection.version }))
+  }
+  parts.push(
+    detection.checked_at
+      ? t('settings.providers.claudeCode.checkedAt', {
+          when: format.dateTime(detection.checked_at),
+        })
+      : t('settings.providers.claudeCode.notChecked'),
+  )
+  return parts.join(' · ')
 }
 
 function lastTestText(provider: Provider): string {
@@ -138,6 +162,30 @@ function lastTestText(provider: Provider): string {
           <span v-if="provider.key.last_test" class="t2 provider-sub">
             {{ lastTestText(provider) }}
           </span>
+          <!-- US-58 CA-1, CA-2: Claude Code detection on the server and the kind of credential. -->
+          <span
+            v-if="provider.detection"
+            class="t2 provider-sub detection"
+            :data-testid="`detection-${provider.id}`"
+          >
+            <span class="chip" :class="provider.detection.detected ? 'ok' : 'warn'">
+              <span class="sr-only">{{ $t('settings.providers.claudeCode.detectionLabel') }}</span>
+              {{
+                provider.detection.detected
+                  ? $t('settings.providers.claudeCode.detected')
+                  : $t('settings.providers.claudeCode.notDetected')
+              }}
+            </span>
+            <span>{{ detectionText(provider) }}</span>
+          </span>
+          <span
+            v-if="provider.detection && provider.key.credential_kind"
+            class="t2 provider-sub"
+            :data-testid="`credential-kind-${provider.id}`"
+          >
+            {{ $t('settings.providers.claudeCode.credentialKindLabel') }}
+            {{ $t(`settings.providers.claudeCode.credentialKind.${provider.key.credential_kind}`) }}
+          </span>
         </div>
         <span v-if="provider.key.status === 'active' && provider.key.last_4" class="mono t2">
           {{ $t('settings.providers.keyEnding', { last4: provider.key.last_4 }) }}
@@ -178,6 +226,38 @@ function lastTestText(provider: Provider): string {
             {{ $t('settings.providers.removeKey') }}
           </button>
         </span>
+        <div v-if="provider.detection" class="provider-notes">
+          <div
+            v-if="!provider.detection.detected"
+            class="note note-warn"
+            :data-testid="`install-${provider.id}`"
+          >
+            <CanvasIcon name="alert" />
+            <div>
+              <h4 class="install-title">{{ $t('settings.providers.claudeCode.installTitle') }}</h4>
+              <p>{{ $t('settings.providers.claudeCode.installStep') }}</p>
+              <code
+                class="mono install-command"
+                :aria-label="$t('settings.providers.claudeCode.installCommandLabel')"
+                >{{ CLAUDE_CODE_INSTALL }}</code
+              >
+            </div>
+          </div>
+          <p v-if="!providerUsable(provider)" class="t2 provider-sub">
+            {{ $t('settings.providers.claudeCode.notUsable') }}
+          </p>
+          <div
+            v-if="usesSubscription(provider)"
+            class="note note-warn"
+            :data-testid="`subscription-${provider.id}`"
+          >
+            <CanvasIcon name="alert" />
+            <div>
+              <p>{{ $t('settings.providers.claudeCode.individualUse') }}</p>
+              <p>{{ $t('settings.providers.claudeCode.costNote') }}</p>
+            </div>
+          </div>
+        </div>
       </li>
     </ul>
     <div class="note privacy">
@@ -249,6 +329,9 @@ function lastTestText(provider: Provider): string {
                 </div>
               </template>
               <span v-else class="chip warn">{{ $t('settings.prices.noCurrentPrice') }}</span>
+              <div v-if="coveredBySubscription(model)" class="t2">
+                {{ $t('settings.providers.claudeCode.costCovered') }}
+              </div>
             </td>
             <td>
               <button
@@ -355,6 +438,37 @@ function lastTestText(provider: Provider): string {
 
 .provider-sub {
   font-size: 13px;
+}
+
+.detection {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.provider-notes {
+  flex-basis: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.provider-notes p {
+  margin: 0;
+}
+
+.install-title {
+  margin: 0 0 4px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.install-command {
+  display: inline-block;
+  margin-top: 6px;
+  word-break: break-all;
 }
 
 .provider-actions {

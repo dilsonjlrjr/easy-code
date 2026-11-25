@@ -88,6 +88,9 @@ type ConfigurationRepository interface {
 // ModelLookup finds a registered model of the capability matrix.
 type ModelLookup interface {
 	Model(ctx context.Context, providerName, name string) (pricing.Model, error)
+	// ProviderUsable reports whether the organization may choose models of the provider now
+	// (claude-code: binary detected and active key, US-58 CA-2).
+	ProviderUsable(ctx context.Context, organizationID, providerName string) (bool, error)
 }
 
 // ConfigurationService implements the project configuration use cases (US-16, US-39, US-54).
@@ -144,7 +147,7 @@ func (s *ConfigurationService) Modify(ctx context.Context, principal identity.Pr
 	if stored.Version != version {
 		return Configuration{}, failure.New(failure.KindConflict, CodeFailedPrecondition, nil)
 	}
-	if err := s.validate(ctx, stored, &change); err != nil {
+	if err := s.validate(ctx, principal.OrganizationID, stored, &change); err != nil {
 		return Configuration{}, err
 	}
 	err = s.tx.InTx(ctx, func(ctx context.Context) error {
@@ -190,9 +193,9 @@ func (s *ConfigurationService) Modify(ctx context.Context, principal identity.Pr
 	return s.Get(ctx, principal, projectID)
 }
 
-func (s *ConfigurationService) validate(ctx context.Context, stored StoredConfiguration, change *Change) error {
+func (s *ConfigurationService) validate(ctx context.Context, organizationID string, stored StoredConfiguration, change *Change) error {
 	if change.ModelPair != nil {
-		if err := s.checkPair(ctx, "model_pair", *change.ModelPair); err != nil {
+		if err := s.checkPair(ctx, organizationID, "model_pair", *change.ModelPair); err != nil {
 			return err
 		}
 	}
@@ -201,7 +204,7 @@ func (s *ConfigurationService) validate(ctx context.Context, stored StoredConfig
 			return failure.Invalid(failure.FieldError{Field: "pair_by_stage." + stage, Message: "enum"})
 		}
 		if pair != nil {
-			if err := s.checkPair(ctx, "pair_by_stage."+stage, *pair); err != nil {
+			if err := s.checkPair(ctx, organizationID, "pair_by_stage."+stage, *pair); err != nil {
 				return err
 			}
 		}
@@ -241,12 +244,21 @@ func (s *ConfigurationService) validate(ctx context.Context, stored StoredConfig
 	return nil
 }
 
-// checkPair refuses a model that is unknown, inactive or lacks what the stages need (US-16 CA-2).
-func (s *ConfigurationService) checkPair(ctx context.Context, field string, pair Pair) error {
+// checkPair refuses a model that is unknown, inactive or lacks what the stages need (US-16 CA-2),
+// and a model of a provider that cannot be chosen now (US-58 CA-2: Claude Code not detected or
+// without an active key).
+func (s *ConfigurationService) checkPair(ctx context.Context, organizationID, field string, pair Pair) error {
 	for role, ref := range map[string]ModelRef{"reasoning": pair.Reasoning, "execution": pair.Execution} {
 		model, err := s.models.Model(ctx, ref.Provider, ref.Model)
 		if err != nil || !model.Active {
 			return failure.Invalid(failure.FieldError{Field: field + "." + role, Message: "invalid"})
+		}
+		usable, err := s.models.ProviderUsable(ctx, organizationID, ref.Provider)
+		if err != nil {
+			return err
+		}
+		if !usable {
+			return failure.Invalid(failure.FieldError{Field: field + "." + role, Message: "provider_unavailable"})
 		}
 		if missing := model.Missing(workflow.ModelRequirement()); missing != "" {
 			return failure.New(failure.KindConflict, pricing.CodeModelWithoutCapability, nil).With("missing_capacity", string(missing))

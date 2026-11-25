@@ -429,6 +429,35 @@ export const en: MessageSchema = {
       removeKeyTitle: 'Remove the key for {provider}?',
       removeKeyWarning:
         'Without a key, waves that use this provider stop running and fail with the reason "provider without key".',
+      claudeCode: {
+        detectionLabel: 'Claude Code on the server:',
+        detected: 'detected',
+        notDetected: 'not detected',
+        version: 'version {version}',
+        checkedAt: 'checked on {when}',
+        notChecked: 'not checked yet',
+        installTitle: 'How to install Claude Code on the server',
+        installStep:
+          'Install Claude Code on the platform server with the command below and run the installation again (make install), which finds the binary; or set EASYCODE_CLAUDE_CODE_BIN to the path of the binary and restart easycode-sandbox.',
+        installCommandLabel: 'Install command',
+        notUsable:
+          'Without Claude Code detected and an active credential, the models of this provider do not show in the model pair.',
+        credentialKindLabel: 'Credential:',
+        credentialKind: {
+          api_key: 'API key',
+          subscription_token: 'subscription token',
+        },
+        individualUse:
+          'The Claude Code credential is a subscription token (Pro or Max): it is for individual use and does not fit a team. For a team, add an API key.',
+        costCovered: 'estimated cost; covered by the subscription',
+        costNote:
+          'With the subscription, the cost of each call is estimated by the price table and covered by the subscription; the tokens are recorded and the budget still applies.',
+        keyLabel: 'API key or subscription token',
+        keyHelp:
+          'Paste an Anthropic API key (sk-ant-api…) or the token made by claude setup-token (sk-ant-oat…). The credential is tested before it is saved; after that, only its last 4 characters are shown.',
+        subscriptionTyped:
+          'This value is a subscription token: individual use, it does not fit a team.',
+      },
     },
     keyGuide: {
       howTo: 'How to get the key',
@@ -443,6 +472,11 @@ export const en: MessageSchema = {
       imageAlt: 'Step {step}: drawing of the {provider} console screen',
       anthropic: {
         open: 'Sign in to the Anthropic console and open the API keys menu.',
+        create:
+          'Click Create Key, give it a name that tells its use (for example, easy-code) and confirm.',
+      },
+      claudeCode: {
+        open: 'For a team, use an API key: sign in to the Anthropic console and open API keys. For individual use with a Pro or Max subscription, run claude setup-token on the server and copy the token (it starts with sk-ant-oat).',
         create:
           'Click Create Key, give it a name that tells its use (for example, easy-code) and confirm.',
       },
@@ -1517,6 +1551,7 @@ export const en: MessageSchema = {
       scanner: 'scanner',
       local_http_client: 'local HTTP client',
       install_dependencies: 'dependency installation',
+      agent_session: 'Claude Code run',
     },
     showOutput: 'Show the start of the output ({size})',
     partialOutput: 'Showing only the start of the output; download the file to see all of it.',
@@ -1566,6 +1601,7 @@ export const en: MessageSchema = {
   providers: {
     anthropic: 'Anthropic',
     openai: 'OpenAI',
+    'claude-code': 'Claude Code',
   },
   localClient: {
     device: 'Device',

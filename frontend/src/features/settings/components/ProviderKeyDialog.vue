@@ -1,14 +1,17 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { hasProblemSlug, isApiError } from '@/shared/api/problemDetails'
 import ProblemAlert from '@/shared/ui/ProblemAlert.vue'
 import type { Provider } from '../api/providersApi'
+import { CLAUDE_CODE, credentialKindOf } from '../claudeCode'
 import { useProvidersStore } from '../stores/providersStore'
 
 const props = defineProps<{ provider: Provider | undefined }>()
 const open = defineModel<boolean>({ required: true })
 const emit = defineEmits<{ saved: [provider: Provider]; guide: [provider: Provider] }>()
 
+const { t } = useI18n()
 const store = useProvidersStore()
 const key = ref('')
 const testing = ref(false)
@@ -17,6 +20,16 @@ const MIN_KEY_LENGTH = 8
 
 const providerName = computed(() => props.provider?.name ?? '')
 const isReplacement = computed(() => props.provider?.key.status === 'active')
+/** US-58 CA-3: Claude Code accepts an API key or a `claude setup-token` token. */
+const isClaudeCode = computed(() => props.provider?.id === CLAUDE_CODE)
+const keyLabel = computed(() =>
+  isClaudeCode.value
+    ? t('settings.providers.claudeCode.keyLabel')
+    : t('settings.providers.keyLabel'),
+)
+const subscriptionTyped = computed(
+  () => isClaudeCode.value && credentialKindOf(key.value) === 'subscription_token',
+)
 const invalidKeyMessage = computed(() =>
   hasProblemSlug(failure.value, 'invalid-key')
     ? (failure.value.problem?.provider_message ?? failure.value.problem?.detail ?? '')
@@ -74,7 +87,13 @@ async function save(): Promise<void> {
                 : $t('settings.providers.addKeyTitle', { provider: providerName })
             }}
           </h2>
-          <p class="t2 help">{{ $t('settings.providers.keyHelp') }}</p>
+          <p class="t2 help">
+            {{
+              isClaudeCode
+                ? $t('settings.providers.claudeCode.keyHelp')
+                : $t('settings.providers.keyHelp')
+            }}
+          </p>
           <button
             v-if="provider"
             type="button"
@@ -89,13 +108,16 @@ async function save(): Promise<void> {
             type="password"
             autocomplete="off"
             spellcheck="false"
-            :label="$t('settings.providers.keyLabel')"
+            :label="keyLabel"
             :disabled="testing"
             :rules="[
               (value: string) =>
                 value.length >= MIN_KEY_LENGTH || $t('settings.providers.keyTooShort'),
             ]"
           />
+          <p v-if="subscriptionTyped" class="note note-warn" data-testid="subscription-typed">
+            {{ $t('settings.providers.claudeCode.subscriptionTyped') }}
+          </p>
           <div role="status" class="t2 testing">
             <template v-if="testing">
               <v-progress-linear indeterminate color="#7C3AED" class="progress" />

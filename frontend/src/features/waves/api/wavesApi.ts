@@ -137,6 +137,7 @@ export type CommandCategory =
   | 'scanner'
   | 'local_http_client'
   | 'install_dependencies'
+  | 'agent_session'
 
 /** Why the sandbox ended the command (`EndReason` of the executor, interno.md). */
 export type EndReason =

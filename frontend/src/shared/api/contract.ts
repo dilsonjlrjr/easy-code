@@ -54,7 +54,7 @@ export type AgentId =
   | 'security-agent'
   | 'orchestrator'
 
-export type ProviderId = 'anthropic' | 'openai'
+export type ProviderId = 'anthropic' | 'openai' | 'claude-code'
 
 export type ProjectRole = 'lead' | 'approver' | 'member'
 

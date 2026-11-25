@@ -35,7 +35,7 @@ import StartRefusal from './StartRefusal.vue'
 const { t } = useI18n()
 const store = useCurrentProjectStore()
 const { message, announce } = useAnnouncer()
-const { options, loader: optionsLoader, providerName } = useModelOptions()
+const { options, loader: optionsLoader, providerName, subscriptionInUse } = useModelOptions()
 
 const configuration = ref<ProjectConfiguration>()
 const etag = ref('')
@@ -246,6 +246,11 @@ function stageName(stage: StageSummary): string {
           <div v-if="options.length === 0 && !optionsLoader.loading.value" class="note note-warn">
             <CanvasIcon name="alert" />
             <span>{{ $t('projects.configuration.noModelAvailable') }}</span>
+          </div>
+          <!-- US-58 CA-4: a Claude Code subscription is for one person, not for a team. -->
+          <div v-if="subscriptionInUse" class="note note-warn" data-testid="subscription-warning">
+            <CanvasIcon name="alert" />
+            <span>{{ $t('settings.providers.claudeCode.individualUse') }}</span>
           </div>
           <v-select
             v-model="pairForm.reasoning"

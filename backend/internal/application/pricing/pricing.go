@@ -15,7 +15,7 @@ import (
 )
 
 // Providers of the contract (ProviderId).
-var Providers = []string{"anthropic", "openai"}
+var Providers = []string{"anthropic", "openai", "claude-code"}
 
 // CodeFailedPrecondition fails a correction whose version changed (If-Match, 412).
 const CodeFailedPrecondition = "failed-precondition"

@@ -5,10 +5,21 @@ import { idempotencyHeaders } from '@/shared/api/idempotencyKey'
 
 export type KeyStatus = 'missing' | 'testing' | 'active'
 
+/** Kind of a `claude-code` credential (US-58): an API key or a `claude setup-token` token. */
+export type CredentialKind = 'api_key' | 'subscription_token'
+
+/** Claude Code detection by easycode-sandbox, only on `claude-code` (US-58 CA-1, CA-2). */
+export interface Detection {
+  detected: boolean
+  version: string | null
+  checked_at: string | null
+}
+
 /** openapi `Provider`: the key itself never comes back, only its status and last 4 characters. */
 export interface Provider {
   id: ProviderId
   name: string
+  detection?: Detection
   key: {
     status: KeyStatus
     last_test?: {
@@ -20,6 +31,7 @@ export interface Provider {
     saved_at?: string | null
     saved_by?: UserRef | null
     tested_at?: string | null
+    credential_kind?: CredentialKind
   }
 }
 

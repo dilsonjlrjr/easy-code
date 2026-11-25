@@ -91,7 +91,7 @@ func TestValidKeyIsTestedActivatedAndNeverStoredInClear(t *testing.T) {
 		t.Fatalf("CA-1: unexpected status %+v", status)
 	}
 	listed, err := f.service.List(ctx, f.dev)
-	if err != nil || len(listed) != 2 || listed[0].Status != providerkey.StatusActive || listed[1].Status != providerkey.StatusMissing {
+	if err != nil || len(listed) != 3 || listed[0].Status != providerkey.StatusActive || listed[1].Status != providerkey.StatusMissing {
 		t.Fatalf("list: %+v %v", listed, err)
 	}
 	// RNF-01 canary: the clear value is nowhere in the database.

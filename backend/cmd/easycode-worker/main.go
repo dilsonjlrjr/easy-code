@@ -34,6 +34,7 @@ import (
 	"easycode/internal/infrastructure/specs"
 	"easycode/internal/infrastructure/telemetry"
 	gatewayapi "easycode/internal/interfaces/gateway"
+	sandboxapi "easycode/internal/interfaces/sandbox"
 )
 
 const serviceName = "easycode-worker"
@@ -146,6 +147,7 @@ func work(ctx context.Context, proc process.Process) error {
 	startSSOSync(ctx, cfg, pool, jobs, proc.Logger)
 	startRetention(ctx, cfg, pool, jobs)
 	startSkillImports(ctx, cfg, pool, jobs)
+	startClaudeCodeSync(ctx, cfg, pool, jobs)
 
 	runHeartbeat(ctx, jobs, health, cfg.Worker.HeartbeatInterval)
 	return nil
@@ -367,6 +369,38 @@ func startSkillImports(ctx context.Context, cfg config.Config, pool *pgxpool.Poo
 			jobs.run(ctx, "skill_imports", true, func(ctx context.Context) ([]slog.Attr, error) {
 				done, err := appskill.ProcessImports(ctx, tx, imports, specs.AgentProfiles{}, specs.YAMLToJSON)
 				return []slog.Attr{slog.Int("imported", done)}, err
+			})
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+			}
+		}
+	}()
+}
+
+// claudeCodeSyncInterval is how often the worker records the Claude Code detection of easycode-sandbox.
+const claudeCodeSyncInterval = time.Minute
+
+// claudeCodeProbe adapts the runner client to providerkey.RuntimeProbe.
+type claudeCodeProbe struct{ client *sandboxapi.Client }
+
+func (p claudeCodeProbe) ClaudeCode(ctx context.Context) (bool, string, error) {
+	status, err := p.client.ClaudeCode(ctx)
+	return status.Available, status.Version, err
+}
+
+// startClaudeCodeSync records in claude_code_runtime whether easycode-sandbox can run agent sessions
+// (US-58 CA-1, CA-2, ADR-23), at startup and then at every interval; the api reads it for the providers.
+func startClaudeCodeSync(ctx context.Context, cfg config.Config, pool *pgxpool.Pool, jobs jobRunner) {
+	probe, store := claudeCodeProbe{client: sandboxapi.NewClient(cfg.Sandbox.Socket)}, postgres.NewProviderKeys(pool)
+	go func() {
+		ticker := time.NewTicker(claudeCodeSyncInterval)
+		defer ticker.Stop()
+		for {
+			jobs.run(ctx, "sync_claude_code_runtime", true, func(ctx context.Context) ([]slog.Attr, error) {
+				runtime, err := providerkey.SyncRuntime(ctx, probe, store)
+				return []slog.Attr{slog.Bool("detected", runtime.Detected), slog.String("version", runtime.Version)}, err
 			})
 			select {
 			case <-ctx.Done():

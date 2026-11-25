@@ -28,6 +28,8 @@ export interface ProviderState {
   id: string
   name: string
   key: Json
+  /** Only on `claude-code` (US-58). */
+  detection?: Json
 }
 
 export interface ModelState {
@@ -337,6 +339,21 @@ export class FakeApi {
   }
 
   // ------------------------------------------------------------------ seeding helpers
+
+  /** Adds the Claude Code provider (US-58) with its detection on the server. */
+  withClaudeCode(detected: boolean, version = '2.1.0 (Claude Code)'): this {
+    this.providers.push({
+      id: 'claude-code',
+      name: 'Claude Code',
+      key: { status: 'missing', last_test: null },
+      detection: {
+        detected,
+        version: detected ? version : null,
+        checked_at: '2026-11-25T10:00:00-03:00',
+      },
+    })
+    return this
+  }
 
   withActiveKey(providerId = 'anthropic', last4 = 'wxyz'): this {
     const provider = this.providers.find((item) => item.id === providerId)
@@ -666,6 +683,10 @@ export class FakeApi {
         saved_at: '2026-11-22T10:00:00-03:00',
         saved_by: { id: 'dev', name: 'Dev' },
         last_test: { result: 'valid', tested_at: '2026-11-22T10:00:00-03:00' },
+        // US-58: the api derives the kind of a claude-code credential from its prefix.
+        ...(provider.id === 'claude-code'
+          ? { credential_kind: key.startsWith('sk-ant-oat') ? 'subscription_token' : 'api_key' }
+          : {}),
       }
       return { status: 200, body: provider }
     }

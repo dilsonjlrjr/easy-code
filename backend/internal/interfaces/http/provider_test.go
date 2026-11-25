@@ -82,3 +82,32 @@ func TestListProvidersShowsStatusWithoutValue(t *testing.T) {
 		t.Fatalf("unexpected providers: %v", items)
 	}
 }
+
+type claudeCodeProviders struct{ fakeProviders }
+
+func (claudeCodeProviders) List(context.Context, identity.Principal) ([]providerkey.KeyStatus, error) {
+	return []providerkey.KeyStatus{
+		{Provider: "anthropic", Status: providerkey.StatusMissing},
+		{Provider: providerkey.ProviderClaudeCode, Status: providerkey.StatusActive, Last4: "wxyz",
+			CredentialKind: providerkey.CredentialSubscriptionToken, Runtime: &providerkey.Runtime{Detected: true, Version: "2.1.0"}},
+	}, nil
+}
+
+// US-58 CA-1, CA-4: Claude Code shows its detection and the credential kind, never the value.
+func TestListProvidersShowsClaudeCodeDetectionAndCredentialKind(t *testing.T) {
+	h := productHarness(t, withProviders(&claudeCodeProviders{}))
+	rc := h.do(fasthttp.MethodGet, "/api/v1/providers", map[string]string{"Cookie": sessionCookie(t, h)})
+	items := decode(t, rc)["items"].([]any)
+	anthropic, claudeCode := items[0].(map[string]any), items[1].(map[string]any)
+	if _, ok := anthropic["detection"]; ok {
+		t.Fatalf("detection only on claude-code: %v", anthropic)
+	}
+	if _, ok := anthropic["key"].(map[string]any)["credential_kind"]; ok {
+		t.Fatalf("credential kind only on claude-code: %v", anthropic)
+	}
+	detection := claudeCode["detection"].(map[string]any)
+	key := claudeCode["key"].(map[string]any)
+	if claudeCode["name"] != "Claude Code" || detection["detected"] != true || detection["version"] != "2.1.0" || key["credential_kind"] != "subscription_token" {
+		t.Fatalf("unexpected claude-code: %v", claudeCode)
+	}
+}

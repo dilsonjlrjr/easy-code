@@ -131,3 +131,41 @@ test('ER-23-15: someone who is not administrator sees "no permission" and no Set
       .getByRole('link', { name: 'Configurações' }),
   ).toHaveCount(0)
 })
+
+test('US-58 CA-2: Claude Code not detected shows the install step', async ({ page }) => {
+  const api = signedInApi().withClaudeCode(false)
+  await api.install(page)
+  await page.goto('/settings/providers')
+
+  const card = page.getByTestId('provider-claude-code')
+  await expect(card.getByTestId('detection-claude-code')).toContainText('não detectado')
+  await expect(card.getByTestId('install-claude-code')).toContainText('make install')
+  await expect(card).toContainText('não aparecem no par de modelos')
+  await expectNoSeriousA11yViolations(page)
+})
+
+test('US-58 CA-1/CA-3/CA-4: Claude Code detected takes a subscription token and warns it is individual use', async ({
+  page,
+}) => {
+  const api = signedInApi().withClaudeCode(true)
+  await api.install(page)
+  await page.goto('/settings/providers')
+
+  const card = page.getByTestId('provider-claude-code')
+  await expect(card.getByTestId('detection-claude-code')).toContainText('detectado')
+  await expect(card.getByTestId('detection-claude-code')).toContainText('versão 2.1.0')
+  await expect(card.getByTestId('install-claude-code')).toHaveCount(0)
+
+  await card.getByRole('button', { name: 'Cadastrar chave' }).click()
+  const dialog = page.getByRole('dialog')
+  await expect(dialog).toContainText('claude setup-token')
+  await dialog.getByLabel('Chave de API ou token da assinatura').fill('sk-ant-oat01-secret-wxyz')
+  await expect(dialog.getByTestId('subscription-typed')).toBeVisible()
+  await dialog.getByRole('button', { name: 'Testar e salvar' }).click()
+
+  await expect(card).toContainText('final wxyz')
+  await expect(card.getByTestId('credential-kind-claude-code')).toContainText('token da assinatura')
+  await expect(card.getByTestId('subscription-claude-code')).toContainText('uso individual')
+  await expect(page.locator('body')).not.toContainText('sk-ant-oat01-secret')
+  await expectNoSeriousA11yViolations(page)
+})

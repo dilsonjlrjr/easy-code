@@ -6,6 +6,7 @@ package providerkey
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"easycode/internal/application/audit"
@@ -22,8 +23,32 @@ const (
 	CodeProviderWithoutKey = "provider-without-key"
 )
 
+// ProviderClaudeCode is the Claude Code of the server run as the agent executor (US-58, ADR-23).
+const ProviderClaudeCode = "claude-code"
+
 // Providers are the provider ids of the contract (ProviderId).
-var Providers = []string{"anthropic", "openai"}
+var Providers = []string{"anthropic", "openai", ProviderClaudeCode}
+
+// Credential kinds of a claude-code key (provider_keys.credential_kind, US-58 CA-1 and CA-4).
+const (
+	CredentialAPIKey            = "api_key"
+	CredentialSubscriptionToken = "subscription_token"
+)
+
+// subscriptionPrefix starts the OAuth token made by `claude setup-token`.
+const subscriptionPrefix = "sk-ant-oat"
+
+// CredentialKind derives the kind of a key from its prefix before it is sealed: only claude-code
+// keys have a kind, the other providers answer "".
+func CredentialKind(providerName, key string) string {
+	if providerName != ProviderClaudeCode {
+		return ""
+	}
+	if strings.HasPrefix(key, subscriptionPrefix) {
+		return CredentialSubscriptionToken
+	}
+	return CredentialAPIKey
+}
 
 // Key statuses shown by the api (Provider.key.status).
 const (
@@ -63,6 +88,18 @@ type KeyStatus struct {
 	TestedAt    *time.Time
 	LastTest    *TestResult
 	ActiveKeyID int64
+	// CredentialKind is the kind of the active or testing claude-code key ("" otherwise).
+	CredentialKind string
+	// Runtime is the Claude Code detection, only on the claude-code provider.
+	Runtime *Runtime
+}
+
+// Runtime is the last Claude Code detection made by easycode-sandbox (claude_code_runtime).
+// CheckedAt is nil while no check was recorded (not detected).
+type Runtime struct {
+	Detected  bool
+	Version   string
+	CheckedAt *time.Time
 }
 
 // Sealer seals a key with the platform public key (ADR-13); the api cannot open it.
@@ -76,13 +113,16 @@ type Repository interface {
 	Statuses(ctx context.Context, organizationID string) (map[string]KeyStatus, error)
 	// StartTest stores the sealed key in testing and queues test_provider_key in the caller's
 	// transaction; a test already running for the provider is a state conflict.
-	StartTest(ctx context.Context, principal identity.Principal, providerName string, sealed []byte, keyRef, last4 string) (int64, error)
+	// credentialKind is "" for providers without kinds.
+	StartTest(ctx context.Context, principal identity.Principal, providerName string, sealed []byte, keyRef, last4, credentialKind string) (int64, error)
 	// TestState reads the state and result of a key row.
 	TestState(ctx context.Context, keyID int64) (string, TestResult, error)
 	// DiscardUntested discards a row still in testing (deadline passed); false if it had a result.
 	DiscardUntested(ctx context.Context, keyID int64, result string) (bool, error)
 	// RemoveActive moves the active key to removed and erases its value; not-found without one.
 	RemoveActive(ctx context.Context, organizationID, providerName string) error
+	// ClaudeCodeRuntime reads the last detection; without a row it is not detected.
+	ClaudeCodeRuntime(ctx context.Context) (Runtime, error)
 }
 
 // Service is the api side of provider keys.
@@ -110,11 +150,19 @@ func (s *Service) List(ctx context.Context, principal identity.Principal) ([]Key
 	if err != nil {
 		return nil, err
 	}
+	runtime, err := s.repo.ClaudeCodeRuntime(ctx)
+	if err != nil {
+		return nil, err
+	}
 	list := make([]KeyStatus, 0, len(Providers))
 	for _, name := range Providers {
 		status, ok := statuses[name]
 		if !ok {
 			status = KeyStatus{Provider: name, Status: StatusMissing}
+		}
+		if name == ProviderClaudeCode {
+			detected := runtime
+			status.Runtime = &detected
 		}
 		list = append(list, status)
 	}
@@ -135,7 +183,7 @@ func (s *Service) Save(ctx context.Context, principal identity.Principal, provid
 	}
 	var keyID int64
 	err = s.tx.InTx(ctx, func(ctx context.Context) error {
-		keyID, err = s.repo.StartTest(ctx, principal, providerName, sealed, keyRef, key[len(key)-4:])
+		keyID, err = s.repo.StartTest(ctx, principal, providerName, sealed, keyRef, key[len(key)-4:], CredentialKind(providerName, key))
 		return err
 	})
 	if err != nil {
@@ -154,7 +202,15 @@ func (s *Service) Save(ctx context.Context, principal identity.Principal, provid
 		if err != nil {
 			return KeyStatus{}, err
 		}
-		return statuses[providerName], nil
+		status := statuses[providerName]
+		if providerName == ProviderClaudeCode {
+			runtime, err := s.repo.ClaudeCodeRuntime(ctx)
+			if err != nil {
+				return KeyStatus{}, err
+			}
+			status.Runtime = &runtime
+		}
+		return status, nil
 	case result.Result == ResultInvalid:
 		return KeyStatus{}, failure.New(failure.KindConflict, CodeInvalidKey, nil).With("provider_message", result.Message)
 	default:

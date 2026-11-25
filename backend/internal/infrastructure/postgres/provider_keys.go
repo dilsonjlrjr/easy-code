@@ -38,7 +38,7 @@ func NewProviderKeys(pool *pgxpool.Pool) ProviderKeys { return ProviderKeys{pool
 func (k ProviderKeys) Statuses(ctx context.Context, organizationID string) (map[string]providerkey.KeyStatus, error) {
 	rows, err := conn(ctx, k.pool).Query(WithOperation(ctx, "provider_keys.statuses"), `
 SELECT DISTINCT ON (pk.provider) pk.id, pk.provider, pk.state, pk.last4, pk.created_at, u.sub, u.display_name,
-       pk.tested_at, pk.test_result
+       pk.tested_at, pk.test_result, pk.credential_kind
   FROM easycode.provider_keys pk
   JOIN easycode.organizations o ON o.id = pk.organization_id
   JOIN easycode.users u ON u.id = pk.created_by
@@ -56,9 +56,9 @@ SELECT DISTINCT ON (pk.provider) pk.id, pk.provider, pk.state, pk.last4, pk.crea
 			createdAt          time.Time
 			sub, display       string
 			testedAt           *time.Time
-			testResult         *string
+			testResult, kind   *string
 		)
-		if err := rows.Scan(&id, &name, &state, &last4, &createdAt, &sub, &display, &testedAt, &testResult); err != nil {
+		if err := rows.Scan(&id, &name, &state, &last4, &createdAt, &sub, &display, &testedAt, &testResult, &kind); err != nil {
 			return nil, fmt.Errorf("scan provider key: %w", err)
 		}
 		status := providerkey.KeyStatus{Provider: name, Status: providerkey.StatusMissing, TestedAt: testedAt}
@@ -72,6 +72,9 @@ SELECT DISTINCT ON (pk.provider) pk.id, pk.provider, pk.state, pk.last4, pk.crea
 			status.Last4 = last4
 			status.SavedAt = &createdAt
 			status.SavedBy = &identity.Principal{Subject: sub, Name: display}
+			if kind != nil {
+				status.CredentialKind = *kind
+			}
 			if state == providerkey.StateActive {
 				status.ActiveKeyID = id
 			}
@@ -82,15 +85,16 @@ SELECT DISTINCT ON (pk.provider) pk.id, pk.provider, pk.state, pk.last4, pk.crea
 }
 
 // StartTest implements providerkey.Repository.
-func (k ProviderKeys) StartTest(ctx context.Context, p identity.Principal, providerName string, sealed []byte, keyRef, last4 string) (int64, error) {
+// credentialKind "" is stored as NULL (providers without kinds).
+func (k ProviderKeys) StartTest(ctx context.Context, p identity.Principal, providerName string, sealed []byte, keyRef, last4, credentialKind string) (int64, error) {
 	q := conn(ctx, k.pool)
 	var keyID, organizationID, userID int64
 	err := q.QueryRow(WithOperation(ctx, "provider_keys.insert_testing"), `
-INSERT INTO easycode.provider_keys (organization_id, provider, encrypted_value, encryption_key_ref, last4, created_by)
-SELECT o.id, $3, $4, $5, $6, u.id
+INSERT INTO easycode.provider_keys (organization_id, provider, encrypted_value, encryption_key_ref, last4, created_by, credential_kind)
+SELECT o.id, $3, $4, $5, $6, u.id, nullif($7, '')
   FROM easycode.organizations o JOIN easycode.users u ON u.organization_id = o.id
  WHERE o.public_id = $1::uuid AND u.sub = $2
-RETURNING id, organization_id, created_by`, p.OrganizationID, p.Subject, providerName, sealed, keyRef, last4).Scan(&keyID, &organizationID, &userID)
+RETURNING id, organization_id, created_by`, p.OrganizationID, p.Subject, providerName, sealed, keyRef, last4, credentialKind).Scan(&keyID, &organizationID, &userID)
 	if err != nil {
 		if failure.From(classify(err)).Code == CodeDuplicate {
 			return 0, failure.New(failure.KindConflict, failure.CodeStateConflict, err).With("current_state", providerkey.StateTesting)

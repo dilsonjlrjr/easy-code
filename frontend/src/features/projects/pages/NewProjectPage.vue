@@ -31,7 +31,12 @@ const format = useFormat()
 const session = useSessionStore()
 const notices = useProjectNoticesStore()
 const { message, announce } = useAnnouncer()
-const { options: modelOptions, loader: modelsLoader, providerName } = useModelOptions()
+const {
+  options: modelOptions,
+  loader: modelsLoader,
+  providerName,
+  subscriptionInUse,
+} = useModelOptions()
 
 const STEPS = ['need', 'configuration', 'review'] as const
 type WizardStep = (typeof STEPS)[number]
@@ -396,6 +401,10 @@ const breadcrumbs = computed(() => [
         />
         <p v-else-if="modelOptions.length === 0" class="note note-warn">
           {{ $t('projects.configuration.noModelAvailable') }}
+        </p>
+        <!-- US-58 CA-4: a Claude Code subscription is for one person, not for a team. -->
+        <p v-if="subscriptionInUse" class="note note-warn" data-testid="subscription-warning">
+          {{ $t('settings.providers.claudeCode.individualUse') }}
         </p>
         <div class="field-grid">
           <template

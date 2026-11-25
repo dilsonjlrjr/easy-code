@@ -434,6 +434,35 @@ export const ptBR = {
       removeKeyTitle: 'Remover a chave de {provider}?',
       removeKeyWarning:
         'Sem chave, as ondas que usarem este provedor deixam de rodar e falham com o motivo "provedor sem chave".',
+      claudeCode: {
+        detectionLabel: 'Claude Code no servidor:',
+        detected: 'detectado',
+        notDetected: 'não detectado',
+        version: 'versão {version}',
+        checkedAt: 'verificado em {when}',
+        notChecked: 'ainda não verificado',
+        installTitle: 'Como instalar o Claude Code no servidor',
+        installStep:
+          'Instale o Claude Code no servidor da plataforma com o comando abaixo e rode de novo a instalação (make install), que encontra o binário; ou defina EASYCODE_CLAUDE_CODE_BIN com o caminho do binário e reinicie o easycode-sandbox.',
+        installCommandLabel: 'Comando de instalação',
+        notUsable:
+          'Sem o Claude Code detectado e uma credencial ativa, os modelos deste provedor não aparecem no par de modelos.',
+        credentialKindLabel: 'Credencial:',
+        credentialKind: {
+          api_key: 'chave de API',
+          subscription_token: 'token da assinatura',
+        },
+        individualUse:
+          'A credencial do Claude Code é um token de assinatura (Pro ou Max): é de uso individual e não serve para um time. Para um time, cadastre uma chave de API.',
+        costCovered: 'custo estimado; coberto pela assinatura',
+        costNote:
+          'Com a assinatura, o custo de cada chamada é estimado pela tabela de preços e coberto pela assinatura; os tokens ficam registrados e o orçamento continua valendo.',
+        keyLabel: 'Chave de API ou token da assinatura',
+        keyHelp:
+          'Cole uma chave de API da Anthropic (sk-ant-api…) ou o token gerado por claude setup-token (sk-ant-oat…). A credencial é testada antes de ser gravada; depois, só os 4 últimos caracteres aparecem.',
+        subscriptionTyped:
+          'Este valor é um token de assinatura: uso individual, não serve para um time.',
+      },
     },
     keyGuide: {
       howTo: 'Como obter a chave',
@@ -448,6 +477,11 @@ export const ptBR = {
       imageAlt: 'Passo {step}: ilustração da tela do console de {provider}',
       anthropic: {
         open: 'Entre no console da Anthropic e abra o menu API keys.',
+        create:
+          'Clique em Create Key, dê um nome que identifique o uso (por exemplo, easy-code) e confirme.',
+      },
+      claudeCode: {
+        open: 'Para um time, use uma chave de API: entre no console da Anthropic e abra o menu API keys. Para uso individual com assinatura Pro ou Max, rode claude setup-token no servidor e copie o token (começa com sk-ant-oat).',
         create:
           'Clique em Create Key, dê um nome que identifique o uso (por exemplo, easy-code) e confirme.',
       },
@@ -1530,6 +1564,7 @@ export const ptBR = {
       scanner: 'scanner',
       local_http_client: 'cliente HTTP local',
       install_dependencies: 'instalação de dependências',
+      agent_session: 'execução do Claude Code',
     },
     showOutput: 'Ver o início da saída ({size})',
     partialOutput: 'Mostrando só o início da saída; baixe o arquivo para ver tudo.',
@@ -1579,6 +1614,7 @@ export const ptBR = {
   providers: {
     anthropic: 'Anthropic',
     openai: 'OpenAI',
+    'claude-code': 'Claude Code',
   },
   localClient: {
     device: 'Dispositivo',
