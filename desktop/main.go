@@ -5,13 +5,15 @@ package main
 
 import (
 	"context"
+	_ "embed"
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
+	"runtime"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/wailsapp/wails/v3/pkg/events"
-	"github.com/wailsapp/wails/v3/pkg/icons"
 	"github.com/wailsapp/wails/v3/pkg/services/notifications"
 
 	"easycode-desktop/internal/app"
@@ -22,6 +24,22 @@ import (
 // version is set at build time (-ldflags "-X main.version=..."), sent in User-Agent and compared with the
 // server version (cliente-local.md section 6).
 var version = "dev"
+
+// The product icon everywhere the system shows one (generated from project/brand, `make -C project icons`).
+var (
+	//go:embed build/appicon.png
+	appIcon []byte
+	//go:embed build/linux/icons/hicolor/256x256/apps/easycode-desktop.png
+	notificationIcon []byte
+	//go:embed build/tray.png
+	trayIcon []byte
+	//go:embed build/tray-template.png
+	trayTemplateIcon []byte
+)
+
+// appID names the app for the system: macOS bundle, GTK/Wayland app id (matches the Linux desktop entry
+// br.easycode.desktop.desktop) and single instance.
+const appID = "br.easycode.desktop"
 
 func main() {
 	if len(os.Args) > 1 {
@@ -42,6 +60,7 @@ func main() {
 	wails := application.New(application.Options{
 		Name:        "Easy Code",
 		Description: "Easy Code — acompanhamento de ondas e notificações",
+		Icon:        appIcon,
 		Services: []application.Service{
 			application.NewService(notifier),
 			application.NewService(service),
@@ -49,9 +68,10 @@ func main() {
 		},
 		Assets: application.AssetOptions{Handler: application.AssetFileServerFS(ui.Assets())},
 		SingleInstance: &application.SingleInstanceOptions{
-			UniqueID: "br.easycode.desktop",
+			UniqueID: appID,
 		},
-		Mac: application.MacOptions{ApplicationShouldTerminateAfterLastWindowClosed: false},
+		Mac:   application.MacOptions{ApplicationShouldTerminateAfterLastWindowClosed: false},
+		Linux: application.LinuxOptions{ApplicationID: appID, ProgramName: "easycode-desktop"},
 	})
 
 	window := wails.Window.NewWithOptions(application.WebviewWindowOptions{
@@ -73,11 +93,17 @@ func main() {
 	menu.AddSeparator()
 	menu.Add(labels.quit).OnClick(func(*application.Context) { wails.Quit() })
 	tray := wails.SystemTray.New()
-	tray.SetIcon(icons.SystrayLight).SetDarkModeIcon(icons.SystrayDark).SetMenu(menu)
+	// macOS tints the template icon for the menu bar; Linux and Windows show the colored one on any bar.
+	if runtime.GOOS == "darwin" {
+		tray.SetTemplateIcon(trayTemplateIcon)
+	} else {
+		tray.SetIcon(trayIcon).SetDarkModeIcon(trayIcon)
+	}
+	tray.SetMenu(menu)
 	tray.SetTooltip("Easy Code")
 	tray.OnClick(func() { window.Show(); window.Focus() })
 
-	host.SetPlatform(&platform{app: wails, notifier: notifier, window: window})
+	host.SetPlatform(&platform{app: wails, notifier: notifier, window: window, icon: notificationIconPath(logger)})
 	notifier.OnNotificationResponse(func(result notifications.NotificationResult) {
 		if result.Error != nil {
 			logger.Warn("notification response unreadable", "error", result.Error)
@@ -110,6 +136,9 @@ type platform struct {
 	app      *application.App
 	notifier *notifications.NotificationService
 	window   *application.WebviewWindow
+	// icon is the PNG file of the product icon for the notifications on Linux and Windows; empty if it
+	// could not be written.
+	icon string
 }
 
 func (p *platform) Emit(name string, data any) { p.app.Event.Emit(name, data) }
@@ -118,6 +147,7 @@ func (p *platform) OpenURL(address string) error { return p.app.Browser.OpenURL(
 
 func (p *platform) Notify(id, title, body string, silent bool) error {
 	options := notifications.NotificationOptions{ID: id, Title: title, Body: body}
+	options.Attachments = notificationAttachments(runtime.GOOS, p.icon)
 	if silent {
 		options.Sound = &notifications.NotificationSound{Silent: true}
 	}
@@ -145,4 +175,44 @@ func trayLabels(locale string) labels {
 		return labels{open: "Open Easy Code", quit: "Quit"}
 	}
 	return labels{open: "Abrir o Easy Code", quit: "Sair do app"}
+}
+
+// notificationAttachments puts the product icon on the notification where the system does not take it from
+// the app: Linux sends it as the image of the notification (the image-path hint) and Windows as the app
+// logo of the toast. macOS shows the icon of the app bundle by itself; an attachment there would be a
+// second image.
+func notificationAttachments(goos, icon string) []notifications.NotificationAttachment {
+	if icon == "" {
+		return nil
+	}
+	switch goos {
+	case "linux":
+		return []notifications.NotificationAttachment{{Path: icon}}
+	case "windows":
+		return []notifications.NotificationAttachment{{Path: icon, Type: "appLogoOverride"}}
+	}
+	return nil
+}
+
+// notificationIconPath writes the notification icon to the user cache folder, since the notification
+// daemons read it from a file. Without it the notification still goes, with the system icon.
+func notificationIconPath(logger *slog.Logger) string {
+	if runtime.GOOS != "linux" && runtime.GOOS != "windows" {
+		return ""
+	}
+	dir, err := os.UserCacheDir()
+	if err == nil {
+		dir = filepath.Join(dir, "easycode")
+		err = os.MkdirAll(dir, 0o700)
+	}
+	if err != nil {
+		logger.Warn("notification icon not written", "error", err)
+		return ""
+	}
+	path := filepath.Join(dir, "notification-icon.png")
+	if err := os.WriteFile(path, notificationIcon, 0o600); err != nil {
+		logger.Warn("notification icon not written", "error", err)
+		return ""
+	}
+	return path
 }

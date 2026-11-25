@@ -93,6 +93,14 @@ install-down:
 install-logs:
 	$(INSTALL_COMPOSE) $(INSTALL_BUNDLED) logs -f --tail 100
 
+# Renders every product icon (web favicon and manifest, desktop app, tray, macOS .icns, Windows .ico, Linux
+# hicolor) from the SVG masters in brand/. The outputs are committed; run it after changing a master, then
+# `make -C desktop syso` for the Windows resources.
+.PHONY: icons
+icons:
+	docker run --rm -v "$(CURDIR)":/w -w /w alpine:3.22.2 sh -c 'apk add -q --no-cache rsvg-convert font-inter python3 \
+		&& python3 brand/generate.py && chown -R $(UID_GID) frontend/public desktop/build'
+
 # Refreshes the Trivy vulnerability database of the security sandbox image (run weekly, e.g. from cron).
 # The sandbox has no network, so the database only changes when the image is rebuilt; the REL-SEG records
 # its date. Only the database layer is rebuilt; the next scan uses the new image.

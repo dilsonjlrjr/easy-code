@@ -60,6 +60,7 @@ const connectionText = computed(() => {
   <a class="skip-link" href="#main">{{ t('app.skipToContent') }}</a>
   <header class="top-bar">
     <p class="brand">
+      <img class="brand-mark" src="/logo.svg" alt="" width="24" height="24" />
       <span>{{ t('app.title') }}</span>
       <span class="subtitle">{{ t('app.subtitle') }}</span>
     </p>

@@ -67,8 +67,28 @@ go build -tags production -trimpath -ldflags "-s -w -X main.version=$VERSION" -o
 ```
 
 macOS precisa do Xcode Command Line Tools; Windows precisa do runtime WebView2 (já presente no Windows 11).
-Empacotamento (AppImage/.deb, .dmg assinado, instalador assinado) e atualização automática ainda não existem.
-O caminho previsto é `wails3 package`.
+
+### Ícone do produto
+
+Os ícones saem dos SVG de `project/brand/` (`make -C project icons`) e ficam versionados. Cada sistema recebe
+o ícone assim:
+
+| Onde | macOS | Windows | Linux |
+|---|---|---|---|
+| App, Dock, barra de tarefas, alternador | `EasyCode.app` com `icons.icns` | `.exe` com `icon.ico` (`rsrc_windows_*.syso`) | atalho `br.easycode.desktop.desktop` e ícones hicolor |
+| Janela | ícone do bundle | ícone do `.exe` | ícone embutido no binário |
+| Bandeja / barra de menus | ícone template (o macOS pinta claro/escuro) | ícone colorido | ícone colorido |
+| Notificações | ícone do bundle (exige o identificador `br.easycode.desktop`) | logo do toast (`appLogoOverride`) | imagem da notificação (`image-path`) |
+| Cabeçalho do app | marca no topo | marca no topo | marca no topo |
+
+```sh
+make package-darwin        # no Mac (Apple Silicon): bin/EasyCode.app e bin/EasyCode-macos-arm64.zip
+make build install-linux   # no Linux: binário em ~/.local/bin, atalho e ícones em ~/.local/share
+make syso                  # depois de mudar o ícone: recria os recursos do .exe
+```
+
+Sem assinatura Developer ID, o macOS bloqueia a primeira abertura: `xattr -dr com.apple.quarantine EasyCode.app`.
+Instalador assinado (.dmg, MSIX) e atualização automática ainda não existem.
 
 ## Estado da validação
 

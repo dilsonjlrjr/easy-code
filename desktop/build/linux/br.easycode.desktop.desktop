@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Easy Code
+Comment=Acompanhamento de ondas e notificações do Easy Code
+Comment[en]=Easy Code wave tracking and notifications
+Exec=easycode-desktop
+Icon=easycode-desktop
+Terminal=false
+Categories=Development;
+StartupWMClass=easycode-desktop
+X-GNOME-UsesNotifications=true

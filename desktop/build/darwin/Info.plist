@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Info.plist of EasyCode.app (make -C project/desktop package-darwin, on macOS). The bundle identifier is
+     required by macOS notifications; the icon of the bundle is the icon of the app, the Dock and every
+     notification. VERSION is replaced at packaging. -->
+<plist version="1.0">
+<dict>
+  <key>CFBundlePackageType</key>
+  <string>APPL</string>
+  <key>CFBundleName</key>
+  <string>Easy Code</string>
+  <key>CFBundleDisplayName</key>
+  <string>Easy Code</string>
+  <key>CFBundleExecutable</key>
+  <string>easycode-desktop</string>
+  <key>CFBundleIdentifier</key>
+  <string>br.easycode.desktop</string>
+  <key>CFBundleIconFile</key>
+  <string>icons</string>
+  <key>CFBundleVersion</key>
+  <string>VERSION</string>
+  <key>CFBundleShortVersionString</key>
+  <string>VERSION</string>
+  <key>LSMinimumSystemVersion</key>
+  <string>11.0</string>
+  <key>NSHighResolutionCapable</key>
+  <true/>
+  <key>NSHumanReadableCopyright</key>
+  <string>Easy Code</string>
+</dict>
+</plist>
