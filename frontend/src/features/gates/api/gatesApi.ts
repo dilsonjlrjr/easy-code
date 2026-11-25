@@ -63,6 +63,8 @@ export interface GateRound extends GateRoundSummary {
   /** ESP-12 6: the round went back to evaluating because a finding was opened (US-31 CA-3). */
   reevaluation?: { cause: 'finding_opened'; finding: string; evaluation?: unknown } | null
   non_blocking_findings?: FindingSummary[]
+  /** ER-12-14: the rework wave the rejection created, with the reason as input; null otherwise. */
+  rework_wave?: string | null
   available_actions: AvailableAction[]
 }
 

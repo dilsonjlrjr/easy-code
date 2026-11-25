@@ -29,6 +29,7 @@ import {
   type GateRoundSummary,
 } from '../api/gatesApi'
 import { savePendingApproval, takePendingApproval } from '../composables/pendingApproval'
+import { evidenceTarget } from '../evidence'
 
 /**
  * ESP-12: the report of a gate round and, for the approver only, the decision (US-06). Approving is a
@@ -55,6 +56,8 @@ const noRound = ref(false)
 const deciding = ref(false)
 const reauthenticating = ref(false)
 const decisionFailure = ref<unknown>()
+/** The decision this page just recorded: the canvas notice with "Voltar ao projeto". */
+const recorded = ref<'approved' | 'rejected'>()
 let refreshTimer: ReturnType<typeof setTimeout> | undefined
 let approveKey = newIdempotencyKey()
 let rejectKey = newIdempotencyKey()
@@ -104,6 +107,16 @@ const breadcrumbs = computed(() => [
   },
   { title: t('gates.heading', { stage: stageName.value }) },
 ])
+/** ESP-11 section 2: the prototype viewer on the TELAS version this gate.design round decides. */
+const prototypeRoute = computed(() => {
+  if (round.value?.gate !== 'gate.design') return undefined
+  const telas = round.value.outputs.find((output) => output.artifact === 'TELAS')
+  return {
+    name: ROUTE_NAMES.prototype,
+    params: { projectId: projectId.value },
+    query: telas ? { version: String(telas.version) } : {},
+  }
+})
 const notFound = computed(() => isApiError(loader.error.value) && loader.error.value.status === 404)
 /** ER-12-8 / ER-12-9: the refusal says which separation rule applied (openapi `Problem.reason`). */
 const separationOfDuties = computed(() => {
@@ -161,7 +174,14 @@ const loader = useLoader(async () => {
   await resumeApprovalAfterStepUp()
 })
 
-watch([projectId, gateId, requestedRound], () => void loader.run(), { immediate: true })
+watch(
+  [projectId, gateId, requestedRound],
+  () => {
+    recorded.value = undefined
+    void loader.run()
+  },
+  { immediate: true },
+)
 
 /** ESP-12 section 6: round, check and finding changes show live and are announced (RNF-08). */
 function handleEvent(event: CloudEvent, eventClass: EventClass): void {
@@ -221,6 +241,7 @@ async function approve(decision: ApprovalDecision, afterStepUp = false): Promise
       csrfToken: session.csrfToken,
     })
     approveDialog.value = false
+    recorded.value = 'approved'
     announce(t('gates.approved'))
     void loadRound().catch(() => undefined)
   } catch (error) {
@@ -306,6 +327,7 @@ async function reject(): Promise<void> {
       { idempotencyKey: rejectKey, csrfToken: session.csrfToken },
     )
     rejectDialog.value = false
+    recorded.value = 'rejected'
     announce(t('gates.rejected'))
     void loadRound().catch(() => undefined)
   } catch (error) {
@@ -329,11 +351,10 @@ function origin(record: DecisionRecord): string {
   return record.origin ? t(`waves.origin.${record.origin}`) : t('agents.orchestrator')
 }
 
-/** openapi `WaveId`: evidence that points at a wave links to its sandbox evidence (US-41). */
-const WAVE_REFERENCE = /^(REQ|ARQ|DBA|DSG|VAL|DEV|QA|SEG|REL)-[0-9]{2,}$/
-
-function isWaveReference(reference: string): boolean {
-  return WAVE_REFERENCE.test(reference)
+/** The item inside an artifact an evidence points at ("TELAS/S-01" → "S-01"), "" when none. */
+function evidenceItem(reference: string): string {
+  const target = evidenceTarget(reference)
+  return target.kind === 'artifact' ? (target.item ?? '') : ''
 }
 
 /** ESP-15 3.2: a failed alert reads "alert", a failed blocking check "failed (blocks)". */
@@ -423,6 +444,51 @@ const DECISION_TONES: Record<string, ChipTone> = {
             {{ $t('gates.openStage', { stage: stageName }) }}
           </router-link>
         </span>
+        <!-- ESP-11 section 2: the gate.design round opens the prototype of the TELAS it decides. -->
+        <span v-if="prototypeRoute">
+          <router-link class="btn" :to="prototypeRoute" data-testid="gate-open-prototype">
+            {{ $t('designStage.openPrototype') }}
+          </router-link>
+        </span>
+      </div>
+
+      <!-- Canvas "Gate": the decision just recorded on this page, with the way back to the project. -->
+      <div
+        v-if="recorded && round.decision"
+        class="note recorded-note"
+        :class="recorded === 'approved' ? 'n-ok' : 'n-warn'"
+        data-testid="gate-recorded"
+      >
+        <span class="note-icon" :class="recorded === 'approved' ? 'fg-ok' : 'fg-warn'">
+          <CanvasIcon :name="recorded === 'approved' ? 'check' : 'alert'" />
+        </span>
+        <span class="note-body">
+          <span>
+            <strong>{{ $t(`gates.recorded.${recorded}Title`) }}</strong>
+            {{
+              $t(`gates.recorded.${recorded}`, {
+                who: who(round.decision.record),
+                when: format.age(round.decision.record.when),
+                origin: origin(round.decision.record),
+              })
+            }}
+          </span>
+          <span v-if="recorded === 'rejected' && round.rework_wave">
+            {{ $t('gates.recorded.reworkWave') }}
+            <router-link
+              :to="{ name: ROUTE_NAMES.wave, params: { projectId, waveId: round.rework_wave } }"
+              class="mono"
+              >{{ round.rework_wave }}</router-link
+            >
+          </span>
+        </span>
+        <router-link
+          class="btn recorded-back"
+          :to="{ name: ROUTE_NAMES.project, params: { projectId } }"
+          data-testid="gate-back-to-project"
+        >
+          {{ $t('gates.recorded.backToProject') }}
+        </router-link>
       </div>
 
       <!-- ESP-12 section 6: who waits for whom, in text. -->
@@ -543,24 +609,68 @@ const DECISION_TONES: Record<string, ChipTone> = {
                     {{ $t('gates.checkType') }}: {{ $t(`gates.checkTypes.${check.type}`) }} ·
                     {{ $t('gates.status') }}: {{ checkStatus(check) }}
                   </span>
-                  <ul v-if="check.evidence?.length" class="list">
-                    <li v-for="(item, index) in check.evidence" :key="index" class="t2 item-detail">
-                      <!-- PT-48: a wave reference opens the build and test evidence of that wave. -->
-                      <router-link
-                        v-if="item.reference && isWaveReference(item.reference)"
-                        :to="{
-                          name: ROUTE_NAMES.wave,
-                          params: { projectId, waveId: item.reference },
-                          hash: '#evidence',
-                        }"
-                        class="mono"
-                        :aria-label="$t('evidence.openOf', { wave: item.reference })"
-                      >
-                        {{ item.reference }}
-                      </router-link>
-                      <span v-else-if="item.reference" class="mono">{{ item.reference }}</span>
-                      <span v-if="item.path" class="mono"> {{ item.path }}</span>
-                      {{ item.message }}
+                  <!-- ESP-12: one detail line per evidence item, its reference navigable. -->
+                  <ul
+                    v-if="check.evidence?.length"
+                    class="list evidence-list"
+                    :data-testid="`evidence-${check.check}`"
+                  >
+                    <li
+                      v-for="(item, index) in check.evidence"
+                      :key="index"
+                      class="t2 evidence-line"
+                    >
+                      <template v-if="item.reference">
+                        <!-- PT-48: a wave reference opens the build and test evidence of that wave. -->
+                        <router-link
+                          v-if="evidenceTarget(item.reference).kind === 'wave'"
+                          :to="{
+                            name: ROUTE_NAMES.wave,
+                            params: { projectId, waveId: item.reference },
+                            hash: '#evidence',
+                          }"
+                          class="mono"
+                          :aria-label="$t('evidence.openOf', { wave: item.reference })"
+                        >
+                          {{ item.reference }}
+                        </router-link>
+                        <router-link
+                          v-else-if="evidenceTarget(item.reference).kind === 'finding'"
+                          :to="{
+                            name: ROUTE_NAMES.finding,
+                            params: { projectId, findingId: item.reference },
+                          }"
+                          class="mono"
+                        >
+                          {{ item.reference }}
+                        </router-link>
+                        <template v-else-if="evidenceTarget(item.reference).kind === 'artifact'">
+                          <router-link
+                            :to="{
+                              name: ROUTE_NAMES.artifact,
+                              params: { projectId, artifactId: evidenceTarget(item.reference).id },
+                            }"
+                            class="mono"
+                          >
+                            {{ evidenceTarget(item.reference).id }}
+                          </router-link>
+                          <span v-if="evidenceItem(item.reference)" class="mono">
+                            {{
+                              ' ' + $t('gates.evidenceItem', { item: evidenceItem(item.reference) })
+                            }}
+                          </span>
+                        </template>
+                        <abbr
+                          v-else-if="evidenceTarget(item.reference).kind === 'commit'"
+                          class="mono"
+                          :title="$t('gates.commitTitle', { sha: item.reference })"
+                          >{{ item.reference.slice(0, 7) }}</abbr
+                        >
+                        <span v-else class="mono">{{ item.reference }}</span>
+                        ·
+                      </template>
+                      <span v-if="item.path" class="mono">{{ item.path }} · </span>
+                      <span class="evidence-message">{{ item.message }}</span>
                     </li>
                   </ul>
                 </span>
@@ -717,6 +827,21 @@ const DECISION_TONES: Record<string, ChipTone> = {
                       >,
                     </span>
                   </template>
+                </dd>
+              </div>
+              <!-- ER-12-14 / CA-12-3: the rework wave the rejection created. -->
+              <div v-if="round.rework_wave" class="kv">
+                <dt class="t2">{{ $t('gates.reworkWave') }}</dt>
+                <dd>
+                  <router-link
+                    :to="{
+                      name: ROUTE_NAMES.wave,
+                      params: { projectId, waveId: round.rework_wave },
+                    }"
+                    class="mono"
+                    data-testid="decision-rework-wave"
+                    >{{ round.rework_wave }}</router-link
+                  >
                 </dd>
               </div>
               <div v-if="round.decision.comment" class="kv kv-stack">
@@ -942,6 +1067,29 @@ const DECISION_TONES: Record<string, ChipTone> = {
 
 .fg-info {
   color: #c7d2fe;
+}
+
+.fg-ok {
+  color: #86efac;
+}
+
+.recorded-note {
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.recorded-back {
+  flex: none;
+}
+
+.evidence-list {
+  margin-top: 2px;
+}
+
+.evidence-line {
+  font-size: 12px;
+  line-height: 16px;
+  overflow-wrap: anywhere;
 }
 
 .fg-warn {
