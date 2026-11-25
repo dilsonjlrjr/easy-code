@@ -34,6 +34,8 @@ type Dependencies struct {
 	Providers ProviderUseCases
 	Pricing   PricingUseCases
 	Projects  ProjectUseCases
+	// Attachments serves listAttachments and attachFile (US-03).
+	Attachments AttachmentUseCases
 	// Members is required with Projects for the role routes (US-02).
 	Members MemberUseCases
 	// Configuration is required with Projects.
@@ -46,14 +48,20 @@ type Dependencies struct {
 	SkillImports  SkillImportUseCases // US-44
 	Agents        AgentUseCases       // US-43
 	Gates         GateUseCases
-	Release       ReleaseUseCases      // US-08
-	Findings      FindingUseCases      // US-32, US-33
-	Traceability  TraceabilityUseCases // US-28
-	Pending       PendingUseCases
-	Costs         CostUseCases  // US-38, US-40
-	Audit         AuditUseCases // US-35
+	// GateChecks are the checks of the gate of a stage and their catalog names (getStage, ESP-12).
+	GateChecks   GateCheckUseCases
+	Release      ReleaseUseCases      // US-08
+	Findings     FindingUseCases      // US-32, US-33
+	Traceability TraceabilityUseCases // US-28
+	Pending      PendingUseCases
+	// Search is searchPlatform, the header search (US-56).
+	Search SearchUseCases
+	Costs  CostUseCases  // US-38, US-40
+	Audit  AuditUseCases // US-35
 	// Repository serves getRepository and the git clone (US-42).
 	Repository RepositoryUseCases
+	// ContentURLs serves getArtifactContentUrl, the signed URL of the content origin (ADR-19, US-21).
+	ContentURLs ContentURLUseCases
 	// Notices serves watchNotices (/me/events) together with Events.
 	Notices NoticeHistory
 	// Events, History and Access serve the SSE stream; Shutdown closes when the api stops.
@@ -68,6 +76,9 @@ type ServerSettings struct {
 	ReadTimeout  time.Duration
 	WriteTimeout time.Duration
 	IdleTimeout  time.Duration
+	// MaxBodyBytes bounds a request body (0 keeps the fasthttp default, 4 MiB); the api sets it above the
+	// attachment limit so attachFile answers 413 too-large-attachment instead of dropping the connection.
+	MaxBodyBytes int
 }
 
 // NewHandler builds the routed handler with the middleware chain.
@@ -117,6 +128,7 @@ func NewServer(handler fasthttp.RequestHandler, settings ServerSettings, logger 
 		// (sse.md); a dead client is detected by the heartbeat write instead.
 		WriteTimeout:          0,
 		IdleTimeout:           settings.IdleTimeout,
+		MaxRequestBodySize:    settings.MaxBodyBytes,
 		NoDefaultServerHeader: true,
 		Logger:                serverLogger{logger: logger},
 	}

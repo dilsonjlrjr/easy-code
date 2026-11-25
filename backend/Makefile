@@ -11,12 +11,14 @@ TEST_NETWORK    ?=
 # The sandbox tests (RNF-02, RNF-03, US-41) and the MARCO-3 end-to-end test drive the host Docker daemon
 # through its socket, like easycode-sandbox does; without the socket they are skipped.
 SANDBOX_TEST_IMAGE ?= easycode-sandbox-go:ci
+# Security scan image of the Segurança (US-23): Opengrep, Trivy and Gitleaks with their offline database.
+SECURITY_TEST_IMAGE ?= easycode-sandbox-security:ci
 DOCKER_SOCKET   ?= /var/run/docker.sock
 DOCKER_GID      := $(shell stat -c %g $(DOCKER_SOCKET) 2>/dev/null)
 # The recovery test of RNF-11 runs the backup and restore scripts of ../infra/backup (read-only mount).
 # The realm template of easycode-installer is checked against the development realm (keycloakadmin tests).
 TEST_REALM      := -v "$(CURDIR)/../infra/keycloak":/infra/keycloak:ro -e EASYCODE_TEST_DEV_REALM=/infra/keycloak/easycode-realm.json
-TEST_DOCKER     := $(if $(DOCKER_GID),-v $(DOCKER_SOCKET):/var/run/docker.sock --group-add $(DOCKER_GID) -e EASYCODE_TEST_DOCKER_SOCKET=/var/run/docker.sock -e EASYCODE_TEST_SANDBOX_IMAGE=$(SANDBOX_TEST_IMAGE) -v "$(CURDIR)/../infra/backup":/infra/backup:ro -e EASYCODE_TEST_BACKUP_SCRIPTS=/infra/backup,)
+TEST_DOCKER     := $(if $(DOCKER_GID),-v $(DOCKER_SOCKET):/var/run/docker.sock --group-add $(DOCKER_GID) -e EASYCODE_TEST_DOCKER_SOCKET=/var/run/docker.sock -e EASYCODE_TEST_SANDBOX_IMAGE=$(SANDBOX_TEST_IMAGE) -e EASYCODE_TEST_SECURITY_IMAGE=$(SECURITY_TEST_IMAGE) -v "$(CURDIR)/../infra/backup":/infra/backup:ro -e EASYCODE_TEST_BACKUP_SCRIPTS=/infra/backup,)
 RUN_ENV         ?= --network host -e EASYCODE_DATABASE_URL -e EASYCODE_HTTP_ADDR -e EASYCODE_LOG_LEVEL
 
 .PHONY: build test test-race test-integration lint run migrate image fmt tidy cache ci check-specs sync-specs sandbox-image load-test test-load
@@ -48,9 +50,10 @@ load-test:
 test-load: cache
 	$(DOCKER_GO) -e EASYCODE_TEST_DATABASE_URL -e EASYCODE_LOAD_TEST=1 $(TEST_NETWORK) $(GO_IMAGE) go test -count=1 -timeout 20m -run 'TestRNF09' -v ./internal/interfaces/http/
 
-# Go sandbox image with the warm build cache (ADR-07), used by the sandbox tests.
+# Sandbox images used by the sandbox tests: Go with the warm build cache (ADR-07) and the security scans (US-23).
 sandbox-image:
 	docker build -q -t $(SANDBOX_TEST_IMAGE) ../infra/sandbox/go >/dev/null
+	docker build -q -t $(SECURITY_TEST_IMAGE) ../infra/sandbox/security >/dev/null
 
 # The binaries embed copies of domain specs (workflow, artifact schemas, permissions) and agent
 # instructions, so builds are reproducible from this repository alone. The sources live in a separate

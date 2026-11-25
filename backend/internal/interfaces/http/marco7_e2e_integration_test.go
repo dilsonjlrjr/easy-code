@@ -170,6 +170,20 @@ func TestMarco7Visibility(t *testing.T) {
 	for _, item := range waves {
 		waveTotals = append(waveTotals, money(t, item.(map[string]any)["cost_total"]))
 	}
+	// ESP-06 CA-06-11: each wave of the list carries its tokens, the same as getWave.
+	var listedInput float64
+	for _, item := range waves {
+		summary := item.(map[string]any)
+		detail := live.json(t, "GET", base+"/waves/"+summary["id"].(string), "", nil, 200)
+		tokens, ok := summary["tokens"].(map[string]any)
+		if !ok || fmt.Sprint(tokens) != fmt.Sprint(detail["tokens"]) {
+			t.Fatalf("CA-06-11: list tokens %v, wave tokens %v", summary["tokens"], detail["tokens"])
+		}
+		listedInput += tokens["input"].(float64)
+	}
+	if listedInput <= 0 {
+		t.Fatalf("CA-06-11: the listed waves carry no input tokens: %v", waves)
+	}
 	for _, groupBy := range []string{"stage", "agent", "model", "provider"} {
 		costs := live.json(t, "GET", base+"/costs?group_by="+groupBy, "", nil, 200)
 		total := costs["total"].(map[string]any)

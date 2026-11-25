@@ -80,6 +80,15 @@ func TestRecoveryFromBackup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The files volume: an attachment of the business need (US-03).
+	filesDir := t.TempDir()
+	attachment := filepath.Join("attachments", project.ProjectID, "0192f0aa-0000-7000-8000-000000000001")
+	if err := os.MkdirAll(filepath.Join(filesDir, filepath.Dir(attachment)), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(filesDir, attachment), []byte("# Ata\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	before := snapshot(ctx, t, db.Admin)
 
 	parsed, err := url.Parse(db.URL)
@@ -131,7 +140,7 @@ func TestRecoveryFromBackup(t *testing.T) {
 	started := time.Now()
 	run := lastLine(inContainer(backupScript, pgEnv(source), destination))
 	reposBackup := t.TempDir()
-	reposRun := lastLine(local("backup.sh", []string{"EASYCODE_REPOS_DIR=" + reposDir}, reposBackup))
+	reposRun := lastLine(local("backup.sh", []string{"EASYCODE_REPOS_DIR=" + reposDir, "EASYCODE_FILES_DIR=" + filesDir}, reposBackup))
 	t.Cleanup(func() {
 		_, _ = client.Exec(context.Background(), container, appsandbox.ExecSpec{Cmd: []string{"rm", "-rf", destination}}, nil, &bytes.Buffer{})
 	})
@@ -151,7 +160,8 @@ func TestRecoveryFromBackup(t *testing.T) {
 	})
 	inContainer(restoreScript, pgEnv(restored), run)
 	newRepos := filepath.Join(t.TempDir(), "repos")
-	local("restore.sh", []string{"EASYCODE_REPOS_DIR=" + newRepos}, reposRun)
+	newFiles := filepath.Join(t.TempDir(), "files")
+	local("restore.sh", []string{"EASYCODE_REPOS_DIR=" + newRepos, "EASYCODE_FILES_DIR=" + newFiles}, reposRun)
 	elapsed := time.Since(started)
 
 	target, err := pgx.Connect(ctx, strings.Replace(db.URL, "/"+source, "/"+restored, 1))
@@ -192,6 +202,9 @@ func TestRecoveryFromBackup(t *testing.T) {
 	restoredHead, err := git.New(newRepos).Head(ctx, project.ProjectID)
 	if err != nil || restoredHead.SHA != head || restoredHead.Wave != "REQ-01" {
 		t.Fatalf("RNF-11: repository after the restore: %+v %v (want %s)", restoredHead, err, head)
+	}
+	if content, err := os.ReadFile(filepath.Join(newFiles, attachment)); err != nil || string(content) != "# Ata\n" {
+		t.Fatalf("RNF-11: files volume after the restore: %q %v", content, err)
 	}
 	if elapsed > 4*time.Hour {
 		t.Fatalf("RNF-11: RTO %s", elapsed)

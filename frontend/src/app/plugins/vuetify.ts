@@ -57,12 +57,24 @@ const lightTheme: ThemeDefinition = {
   },
 }
 
+/**
+ * The nonce of this page (ADR-19): the build puts it on a `csp-nonce` meta and nginx fills it per
+ * response. Vuetify needs it for the theme stylesheet it injects; the browser hides the attribute,
+ * so it is read from the property.
+ */
+function cspNonce(): string | undefined {
+  if (typeof document === 'undefined') return undefined
+  const meta = document.querySelector<HTMLMetaElement>('meta[property="csp-nonce"]')
+  return meta?.nonce || undefined
+}
+
 export const vuetify = createVuetify({
   icons: { defaultSet: 'mdi', aliases, sets: { mdi } },
   // The adapter is typed for an untyped i18n instance; ours is typed by the catalog schema.
   locale: { adapter: createVueI18nAdapter({ i18n: i18n as unknown as VueI18nInstance, useI18n }) },
   theme: {
     defaultTheme: 'dark',
+    cspNonce: cspNonce(),
     themes: { light: lightTheme, dark: darkTheme },
   },
   defaults: {

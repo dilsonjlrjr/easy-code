@@ -33,6 +33,13 @@ export const routes: RouteRecordRaw[] = [
     meta: { titleKey: 'pages.gate.title', layout: 'shell' },
   },
   {
+    // ESP-11: the prototype of TELAS (query: version, screen, state).
+    path: '/projects/:projectId/artifacts/TELAS/prototype',
+    name: ROUTE_NAMES.prototype,
+    component: () => import('@/features/prototype/pages/PrototypePage.vue'),
+    meta: { titleKey: 'pages.prototype.title', layout: 'shell' },
+  },
+  {
     path: '/projects/:projectId/artifacts/:artifactId',
     name: ROUTE_NAMES.artifact,
     component: () => import('@/features/artifacts/pages/ArtifactPage.vue'),

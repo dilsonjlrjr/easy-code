@@ -85,6 +85,15 @@ export interface ProjectState {
   audit?: Json[]
   /** `ArtifactComparison` by `<artifact>:<from>:<to>` (US-27). */
   comparisons?: Partial<Record<string, Json>>
+  /** `Attachment` items of the business need (US-03, `listAttachments`). */
+  attachments?: Json[]
+  /** Text of the artifact attachments by `<artifact>:<version>:<path>` (`getArtifactAttachment`, PL-24). */
+  attachmentContent?: Partial<Record<string, string>>
+  /**
+   * Prototype files of each TELAS version served by the content origin (getArtifactContentUrl, ADR-19),
+   * by path relative to the folder that holds `prototipo/` (`prototipo/login.html`).
+   */
+  prototype?: Partial<Record<number, Record<string, string>>>
 }
 
 export function problem(slug: string, status: number, extra: Json = {}): Json {
@@ -144,6 +153,8 @@ export class FakeApi {
   sessionExpired = false
   /** `authenticated_at` within 10 min; otherwise approving a gate asks for the step-up (ADR-19). */
   recentlyAuthenticated = true
+  /** The rework wave a gate rejection creates (`GateRound.rework_wave`, ER-12-14); none by default. */
+  reworkWaveOnRejection: string | undefined = undefined
   /** The user assigned the approver role to themselves less than 24 h ago (US-02 CA-8). */
   selfAssignedApprover = false
   /** The user accepted a risk in this cycle: they do not approve gate.release (US-33 RN-2). */
@@ -164,6 +175,8 @@ export class FakeApi {
   projects: Partial<Record<string, ProjectState>> = {}
   commands: Record<string, Json> = {}
   pendingItems: Json[] = []
+  /** `searchPlatform` answers 500 (US-56, error state of the header search). */
+  searchFailure = false
   /** `CurrentUser.organization.currency` (budget currency); absent like older api builds. */
   organizationCurrency?: string
   /** `getUserCosts` (`/me/costs`, PL-02); null answers zero in the organization currency. */
@@ -198,8 +211,54 @@ export class FakeApi {
     body: unknown
   }> = []
   private nextId = 1
+  /** Content origin of the prototypes (ADR-19): another origin than the web, without cookie. */
+  readonly contentOrigin = 'http://content.easycode.test'
+  /** Requests the content origin answered (path and the Cookie header it got). */
+  readonly contentRequests: Array<{ path: string; cookie: string | undefined }> = []
+  /**
+   * Content-Security-Policy violations of the web page (ADR-19): `vite preview` sends the policy of
+   * the web image, so anything the app loads or injects that the policy blocks shows up here.
+   */
+  readonly cspViolations: string[] = []
 
   async install(page: Page): Promise<void> {
+    await page.exposeFunction('__easyCodeCspViolation', (violation: string) => {
+      this.cspViolations.push(violation)
+    })
+    await page.addInitScript(() => {
+      // Only the web page: a prototype frame answers to the closed CSP of the content origin.
+      if (window.self !== window.top) return
+      document.addEventListener('securitypolicyviolation', (event) => {
+        const report = (window as unknown as Record<string, ((text: string) => void) | undefined>)
+          .__easyCodeCspViolation
+        report?.(
+          `${event.violatedDirective} ${event.blockedURI} at ${event.sourceFile}:${String(event.lineNumber)} ${event.sample}`,
+        )
+      })
+    })
+    // ER-11-12: the content origin answers with the closed CSP, never a cookie, and has no /api.
+    await page.route(`${this.contentOrigin}/**`, async (route, request) => {
+      const url = new URL(request.url())
+      this.contentRequests.push({ path: url.pathname, cookie: request.headers().cookie })
+      const [, prefix, token, ...rest] = url.pathname.split('/')
+      const [projectId, version] = token.split('.')
+      const file =
+        prefix === 'c'
+          ? this.projects[projectId]?.prototype?.[Number(version)]?.[rest.join('/')]
+          : undefined
+      await route.fulfill({
+        status: file === undefined ? 404 : 200,
+        headers: {
+          'Content-Type':
+            file === undefined ? 'text/plain; charset=utf-8' : 'text/html; charset=utf-8',
+          'Content-Security-Policy':
+            "sandbox allow-scripts; default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'none'; form-action 'none'",
+          'X-Content-Type-Options': 'nosniff',
+          'Referrer-Policy': 'no-referrer',
+        },
+        body: file ?? 'Not Found',
+      })
+    })
     await page.route('**/config.js', (route) =>
       route.fulfill({
         contentType: 'application/javascript',
@@ -215,6 +274,66 @@ export class FakeApi {
         await route.fulfill({ status: 500, body: String(error) })
       }
     })
+  }
+
+  /**
+   * `searchPlatform` (US-56) over the seeded projects where the user has a role: project name, artifact
+   * and finding title and id, case-insensitive substring, at most 10 per group with the total.
+   */
+  private search(raw: string): { status: number; body: Json } {
+    const term = raw.trim()
+    if (Array.from(term).length < 2 || Array.from(term).length > 100) {
+      return {
+        status: 400,
+        body: problem('validation', 400, { errors: [{ field: 'search', message: 'length' }] }),
+      }
+    }
+    if (this.searchFailure) return { status: 500, body: problem('internal', 500) }
+    const needle = term.toLowerCase()
+    const matches = (...texts: unknown[]) =>
+      texts.some((text) => typeof text === 'string' && text.toLowerCase().includes(needle))
+    const projects: Json[] = []
+    const artifacts: Json[] = []
+    const findings: Json[] = []
+    for (const state of Object.values(this.projects)) {
+      if (!state) continue
+      const roles = state.project.my_roles as unknown[] | undefined
+      if (roles && roles.length === 0) continue
+      const ref = { id: state.project.id, name: state.project.name, state: state.project.state }
+      if (matches(state.project.name)) projects.push(ref)
+      for (const [id, artifact] of Object.entries(state.artifacts)) {
+        const current = artifact?.current
+        if (!current || current.type === 'ACH' || !matches(id, current.title)) continue
+        artifacts.push({
+          id,
+          type: current.type,
+          title: current.title,
+          state: current.state,
+          project: ref,
+        })
+      }
+      for (const item of state.findings) {
+        if (!matches(item.id, item.title)) continue
+        findings.push({
+          id: item.id,
+          title: item.title,
+          status: item.status,
+          severity: item.severity,
+          project: ref,
+        })
+      }
+    }
+    const group = (items: Json[]) => ({
+      items: items.slice(0, 10),
+      total: items.length,
+      project_count: new Set(
+        items.map((item) => String((item.project as Json | undefined)?.id ?? item.id)),
+      ).size,
+    })
+    return {
+      status: 200,
+      body: { projects: group(projects), artifacts: group(artifacts), findings: group(findings) },
+    }
   }
 
   // ------------------------------------------------------------------ seeding helpers
@@ -474,6 +593,9 @@ export class FakeApi {
       this.signedIn = false
       return { status: 204 }
     }
+    if (first === 'search' && !second) {
+      return this.search(url.searchParams.get('search') ?? '')
+    }
     if (first === 'pending-items') {
       const types = url.searchParams.getAll('type')
       const items = this.pendingItems.filter(
@@ -642,6 +764,8 @@ export class FakeApi {
       return { status: 404, body: problem('not-found', 404) }
     if (!state) return { status: 404, body: problem('not-found', 404) }
     if (!third) return { status: 200, body: state.project }
+    if (third === 'attachments' && method === 'GET')
+      return { status: 200, body: { items: state.attachments ?? [] } }
     if (third === 'attachments') {
       return {
         status: 201,
@@ -790,11 +914,13 @@ export class FakeApi {
       const stage = url.searchParams.get('stage')
       const task = url.searchParams.get('task')
       const agent = url.searchParams.get('agent')
+      const purpose = url.searchParams.get('purpose')
       const items = state.waves.filter(
         (wave) =>
           (!stage || wave.stage === stage) &&
           (!task || wave.task === task) &&
-          (!agent || wave.agent === agent),
+          (!agent || wave.agent === agent) &&
+          (!purpose || wave.purpose === purpose),
       )
       return { status: 200, body: { items, next_cursor: null } }
     }
@@ -858,7 +984,34 @@ export class FakeApi {
       const artifact = state.artifacts[fourth]
       if (!artifact) return { status: 404, body: problem('not-found', 404) }
       if (!fifth) return { status: 200, body: artifact.current }
+      // getArtifactContentUrl (ADR-19): a new signed URL of a prototype page that exists in the version.
+      if (fifth === 'versions' && sixth && seventh === 'content-url') {
+        const path = url.searchParams.get('path') ?? 'prototipo/index.html'
+        if (!path.startsWith('prototipo/') || path.includes('..'))
+          return { status: 400, body: problem('validation', 400) }
+        if (state.prototype?.[Number(sixth)]?.[path] === undefined)
+          return { status: 404, body: problem('not-found', 404) }
+        const token = `${String(state.project.id)}.${sixth}.${String(this.nextId++)}`
+        return {
+          status: 200,
+          body: {
+            url: `${this.contentOrigin}/c/${token}/${path}`,
+            prefix: 'prototipo/',
+            expires_at: new Date(Date.now() + 5 * 60_000).toISOString(),
+          },
+        }
+      }
       if (fifth === 'versions' && !sixth) return { status: 200, body: { items: artifact.versions } }
+      if (fifth === 'versions' && sixth && seventh === 'attachment') {
+        const path = url.searchParams.get('path') ?? ''
+        const listed = (artifact.byVersion[Number(sixth)]?.attachments as Json[] | undefined) ?? []
+        const entry = listed.find((item) => item.path === path)
+        if (!entry) return { status: 404, body: problem('not-found', 404) }
+        const content = state.attachmentContent?.[`${fourth}:${sixth}:${path}`]
+        if (content === undefined || !/^text\/|yaml|json|sql/.test(String(entry.media_type)))
+          return { status: 409, body: problem('state-conflict', 409) }
+        return { text: content }
+      }
       if (fifth === 'comparison') {
         const key = `${fourth}:${url.searchParams.get('from') ?? ''}:${url.searchParams.get('to') ?? ''}`
         const comparison = state.comparisons?.[key]
@@ -1637,8 +1790,24 @@ export class FakeApi {
     } else if (action === 'rejection') {
       const reason = typeof input.reason === 'string' ? input.reason.trim() : ''
       if (!reason) return { status: 400, body: problem('validation', 400) }
+      // US-57 (PD-25 option a): the prototype annotations go only with the rejection of gate.design.
+      const annotations = Array.isArray(input.annotations) ? (input.annotations as Json[]) : []
+      if (annotations.length > 0 && gateId !== 'gate.design')
+        return { status: 400, body: problem('validation', 400) }
+      const telas = ((round.outputs as Json[] | undefined) ?? []).find(
+        (output) => output.type === 'TELAS',
+      )
       round.state = 'rejected'
       round.decision = { result: 'rejected', record, reason }
+      if (gateId === 'gate.design')
+        (round.decision as Json).annotations = annotations.map((item, index) => ({
+          ...item,
+          number: index + 1,
+          artifact: 'TELAS',
+          version: telas?.version ?? 1,
+        }))
+      // ER-12-14: the rejection creates a rework wave of the stage agent (openapi `GateRound.rework_wave`).
+      round.rework_wave = this.reworkWaveOnRejection ?? null
       const stage = stages[stageIndex] as Json | undefined
       if (stage) stage.state = 'returned'
     } else {
@@ -1925,6 +2094,23 @@ export class FakeApi {
         detailed_cost: { useful: zero, lost: zero, total: zero },
         time: { execution_ms: 0, cycle_ms: 0 },
         approval: { mode: 'human', required_role: 'approver' },
+        // openapi `Stage.gate_checks` (PC-20, PL-46): the checks of the stage gate, before any round.
+        gate_checks: summary.gate
+          ? [
+              {
+                check: 'artifact.schema_valid',
+                name: 'Cabeçalho YAML válido no esquema do tipo',
+                type: 'automatic',
+                failure_severity: 'blocks',
+              },
+              {
+                check: 'finding.no_open_blocking',
+                name: 'Nenhum ACH Crítico ou Alto ativo',
+                type: 'automatic',
+                failure_severity: 'blocks',
+              },
+            ]
+          : [],
         ...(state.stageDetails[stageId] ?? {}),
       },
     }
@@ -2114,6 +2300,7 @@ export function waveSummary(id: string, state: string): Json {
     attempt: 1,
     created_at: '2026-11-22T10:00:00-03:00',
     cost_total: { value: '0', currency: 'BRL' },
+    tokens: { input: 0, output: 0, read_cache: 0, write_cache: 0 },
   }
 }
 

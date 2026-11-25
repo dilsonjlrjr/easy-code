@@ -128,6 +128,10 @@ services:
       <<: [*backend-env, *sso]
       EASYCODE_HTTP_ADDR: ":8080"
       EASYCODE_GIT_BASE_URL: ${EASYCODE_GIT_BASE_URL:-http://localhost:8081}
+      # Content origin of the prototypes (ADR-19): own listener, no /api, no cookie. 127.0.0.1 is another
+      # host than localhost for the browser, so the platform cookie never reaches it.
+      EASYCODE_CONTENT_ADDR: ":8082"
+      EASYCODE_CONTENT_ORIGIN: ${EASYCODE_CONTENT_ORIGIN:-http://127.0.0.1:8082}
       EASYCODE_PUBLIC_ORIGIN: ${EASYCODE_PUBLIC_ORIGIN:-http://localhost:8080}
       EASYCODE_SEALING_PUBLIC_KEY_FILE: /run/easycode-sealing/public.pem
       EASYCODE_OIDC_CLIENT_ID: easycode-api
@@ -136,6 +140,7 @@ services:
     volumes:
       - sealing-public:/run/easycode-sealing:ro
       - repos:/var/lib/easycode/repos:ro
+      - files:/var/lib/easycode/files
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -145,6 +150,7 @@ services:
         condition: service_healthy
     ports:
       - "127.0.0.1:8081:8080"
+      - "127.0.0.1:8082:8082"
 
   worker:
     <<: *backend
@@ -163,12 +169,23 @@ services:
       - gateway-socket:/run/easycode-gateway
       - sandbox-socket:/run/easycode-sandbox
       - repos:/var/lib/easycode/repos
+      - files:/var/lib/easycode/files:ro
 
   # Go sandbox image with the warm build cache (ADR-07); built once, never runs a service.
   sandbox-go-image:
     build:
       context: ./infra/sandbox/go
     image: easycode-sandbox-go:dev
+    entrypoint: ["true"]
+    network_mode: none
+    restart: "no"
+
+  # Security scan image (US-23): Opengrep, Trivy and Gitleaks at fixed versions with their offline rules and
+  # vulnerability database (about 2.3 GB); the worker asks for it only for the scanner category.
+  sandbox-security-image:
+    build:
+      context: ./infra/sandbox/security
+    image: easycode-sandbox-security:dev
     entrypoint: ["true"]
     network_mode: none
     restart: "no"
@@ -182,7 +199,7 @@ services:
         VERSION: ${EASYCODE_VERSION:-dev}
     environment:
       EASYCODE_LOG_LEVEL: ${EASYCODE_LOG_LEVEL:-debug}
-      EASYCODE_SANDBOX_IMAGES: go=easycode-sandbox-go:dev
+      EASYCODE_SANDBOX_IMAGES: go=easycode-sandbox-go:dev,security=easycode-sandbox-security:dev
       EASYCODE_SANDBOX_RUNTIME: runc
       EASYCODE_SANDBOX_DEPENDENCIES_NETWORK: easycode-dependencies
       EASYCODE_SANDBOX_DEPENDENCIES_PROXY: http://deps-proxy:8080
@@ -194,6 +211,8 @@ services:
       - sandbox-socket:/run/easycode-sandbox
     depends_on:
       sandbox-go-image:
+        condition: service_completed_successfully
+      sandbox-security-image:
         condition: service_completed_successfully
 
   # Package cache of the dependency action (ADR-07): internal network with the sandbox containers of
@@ -232,13 +251,15 @@ services:
       context: ./frontend
     environment:
       API_BASE_URL: /api/v1
+      # ADR-19 / ER-11-2: the SPA frames only the content origin (Content-Security-Policy frame-src).
+      EASYCODE_CONTENT_ORIGIN: ${EASYCODE_CONTENT_ORIGIN:-http://127.0.0.1:8082}
     depends_on:
       - api
     ports:
       - "127.0.0.1:8080:8080"
 
   # Daily backup (RNF-11: RPO 24 h; ADR-16 v2, PERSIST.md backup): pg_dump of the database and a copy of the
-  # project repositories into the backups volume, kept 30 days. Opt-in in development: docker compose --profile
+  # project repositories and of the files volume into the backups volume, kept 30 days. Opt-in in development: docker compose --profile
   # backup up backup. Production points the destination outside the server and connects as easycode_backup.
   # Restore: infra/backup/restore.sh <run folder> (tested by TestRecoveryFromBackup in the backend CI).
   backup:
@@ -253,10 +274,12 @@ services:
       PGPASSWORD: easycode # DEV ONLY
       PGDATABASE: easycode
       EASYCODE_REPOS_DIR: /var/lib/easycode/repos
+      EASYCODE_FILES_DIR: /var/lib/easycode/files
       EASYCODE_BACKUP_RETENTION_DAYS: "30"
     volumes:
       - ./infra/backup:/opt/easycode-backup:ro
       - repos:/var/lib/easycode/repos:ro
+      - files:/var/lib/easycode/files:ro
       - backups:/backups
     entrypoint: ["sh", "-c", "while true; do sh /opt/easycode-backup/backup.sh /backups; sleep 86400; done"]
 
@@ -267,6 +290,7 @@ volumes:
   sealing-public:
   sandbox-socket:
   repos:
+  files:
   deps-cache:
   backups:
 

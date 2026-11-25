@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	appartifact "easycode/internal/application/artifact"
+	domainartifact "easycode/internal/domain/artifact"
 	"easycode/internal/domain/failure"
 )
 
@@ -59,6 +60,10 @@ SELECT pr.id, w.id FROM easycode.projects pr JOIN easycode.waves w ON w.project_
 	if err != nil {
 		return fmt.Errorf("resolve wave: %w", classify(err))
 	}
+	attachments, err := attachmentsJSON(v.Attachments)
+	if err != nil {
+		return err
+	}
 	var artifactID int64
 	err = q.QueryRow(WithOperation(ctx, "artifacts.upsert"), `
 INSERT INTO easycode.artifacts (project_id, code, type, title, current_version) VALUES ($1, $2, $3, $4, $5)
@@ -69,16 +74,16 @@ RETURNING id`, projectID, v.Code, v.Type, v.Title, v.Version).Scan(&artifactID)
 	}
 	if v.Rewrite {
 		_, err = q.Exec(WithOperation(ctx, "artifact_versions.rewrite"), `
-UPDATE easycode.artifact_versions SET description = $3, path = $4, header = $5::jsonb, body = $6, content_hash = $7, created_at = now()
- WHERE artifact_id = $1 AND version = $2 AND git_commit IS NULL`, artifactID, v.Version, v.Description, v.Path, string(v.Header), v.Body, v.ContentHash)
+UPDATE easycode.artifact_versions SET description = $3, path = $4, header = $5::jsonb, body = $6, content_hash = $7, attachments = $8::jsonb, created_at = now()
+ WHERE artifact_id = $1 AND version = $2 AND git_commit IS NULL`, artifactID, v.Version, v.Description, v.Path, string(v.Header), v.Body, v.ContentHash, attachments)
 	} else {
 		_, err = q.Exec(WithOperation(ctx, "artifact_versions.insert"), `
 INSERT INTO easycode.artifact_versions (artifact_id, version, wave_id, author, author_user_id, reviewed_by, wave_code, description, path, header, body,
-                                       content_hash, finding_id)
+                                       content_hash, finding_id, attachments)
 SELECT $1, $2, $3, CASE WHEN ed.id IS NULL THEN $4 ELSE 'human' END, ed.requested_by, CASE WHEN ed.id IS NULL THEN NULL ELSE $4 END,
-       $5, $6, $7, $8::jsonb, $9, $10, (SELECT w.finding_id FROM easycode.waves w WHERE w.id = $3 AND w.purpose = 'rework' AND $11 <> 'ACH')
+       $5, $6, $7, $8::jsonb, $9, $10, (SELECT w.finding_id FROM easycode.waves w WHERE w.id = $3 AND w.purpose = 'rework' AND $11 <> 'ACH'), $12::jsonb
   FROM (SELECT 1) one LEFT JOIN easycode.artifact_edits ed ON ed.wave_id = $3`, // US-53: the version of an edit_review wave is the human edit, reviewed by the agent
-			artifactID, v.Version, waveID, v.Author, v.WaveCode, v.Description, v.Path, string(v.Header), v.Body, v.ContentHash, v.Type)
+			artifactID, v.Version, waveID, v.Author, v.WaveCode, v.Description, v.Path, string(v.Header), v.Body, v.ContentHash, v.Type, attachments)
 	}
 	if err != nil {
 		return fmt.Errorf("save artifact version: %w", classify(err))
@@ -143,12 +148,13 @@ func splitPair(raw string) (string, string) {
 func (a Artifacts) Version(ctx context.Context, projectID, code string, version int) (appartifact.View, error) {
 	var view appartifact.View
 	var commit *string
+	var attachments []byte
 	err := conn(ctx, a.pool).QueryRow(WithOperation(ctx, "artifacts.version"), `
-SELECT `+summaryColumns+`, ar.updated_at, v.header, v.body, v.git_commit
+SELECT `+summaryColumns+`, ar.updated_at, v.header, v.body, v.git_commit, v.attachments
   FROM easycode.artifacts ar JOIN easycode.projects pr ON pr.id = ar.project_id
   JOIN easycode.artifact_versions v ON v.artifact_id = ar.id AND v.version = CASE WHEN $3 = 0 THEN ar.current_version ELSE $3 END
  WHERE pr.public_id = $1::uuid AND ar.code = $2`, projectID, code, version).Scan(&view.Code, &view.Type, &view.Title, &view.State,
-		&view.Version, &view.Stage, &view.Author, &view.WaveCode, &view.Path, &view.UpdatedAt, &view.Header, &view.Body, &commit)
+		&view.Version, &view.Stage, &view.Author, &view.WaveCode, &view.Path, &view.UpdatedAt, &view.Header, &view.Body, &commit, &attachments)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return view, failure.New(failure.KindNotFound, failure.CodeNotFound, nil)
 	}
@@ -157,6 +163,9 @@ SELECT `+summaryColumns+`, ar.updated_at, v.header, v.body, v.git_commit
 	}
 	if commit != nil {
 		view.Commit = *commit
+	}
+	if err := json.Unmarshal(attachments, &view.Attachments); err != nil {
+		return view, fmt.Errorf("decode attachments: %w", err)
 	}
 	return view, nil
 }
@@ -323,11 +332,21 @@ UPDATE easycode.artifacts SET state = 'draft', current_version = $2, updated_at 
 		return fmt.Errorf("reopen artifact: %w", classify(err))
 	}
 	_, err = q.Exec(WithOperation(ctx, "artifact_versions.reopen"), `
-INSERT INTO easycode.artifact_versions (artifact_id, version, wave_id, author, wave_code, description, path, header, body, content_hash, finding_id)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, (SELECT f.id FROM easycode.artifacts f WHERE f.project_id = (SELECT project_id FROM easycode.artifacts WHERE id = $1) AND f.code = $11))`,
+INSERT INTO easycode.artifact_versions (artifact_id, version, wave_id, author, wave_code, description, path, header, body, content_hash, finding_id, attachments)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, (SELECT f.id FROM easycode.artifacts f WHERE f.project_id = (SELECT project_id FROM easycode.artifacts WHERE id = $1) AND f.code = $11),
+        coalesce((SELECT p.attachments FROM easycode.artifact_versions p WHERE p.artifact_id = $1 AND p.version = $2 - 1), '[]'))`, // the reopened copy keeps the attachments
 		artifactID, v.Version, waveID, v.Author, v.WaveCode, v.Description, v.Path, string(v.Header), v.Body, v.ContentHash, finding)
 	if err != nil {
 		return fmt.Errorf("reopened version: %w", classify(err))
 	}
 	return nil
+}
+
+// attachmentsJSON encodes the attachments of a version (artifact_versions.attachments, PL-24).
+func attachmentsJSON(attachments []domainartifact.Attachment) (string, error) {
+	if attachments == nil {
+		attachments = []domainartifact.Attachment{}
+	}
+	encoded, err := json.Marshal(attachments)
+	return string(encoded), err
 }

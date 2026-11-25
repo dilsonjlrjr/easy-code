@@ -215,6 +215,8 @@ export interface WaveSummary {
   started_at?: string | null
   ended_at?: string | null
   cost_total?: Money
+  /** Tokens of the wave so far, the same as `getWave` (ESP-06 CA-06-11). */
+  tokens?: Tokens
 }
 
 export type { FindingSummary }
@@ -228,6 +230,16 @@ export interface Stage extends StageSummary {
   detailed_cost: DetailedCost
   time: TimeSpent
   approval?: { mode?: 'human' | 'automatic'; required_role?: 'approver' }
+  /** openapi `GateCheck[]`: the checks of the stage gate, the exit criteria before any round (PC-20, PL-46). */
+  gate_checks?: GateCheck[]
+}
+
+/** openapi `GateCheck`: a check the gate of the stage runs, with its catalog name. */
+export interface GateCheck {
+  check: string
+  name: string
+  type: 'automatic' | 'human'
+  failure_severity: 'blocks' | 'alert'
 }
 
 /** openapi `ProjectCosts` (US-38, US-39): totals, groups and the budget with its balance. */

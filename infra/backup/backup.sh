@@ -1,6 +1,7 @@
 #!/bin/sh
 # Daily backup of Easy Code (RNF-11: RPO 24 h; docs/dados/PERSIST.md, backup): a logical dump of the
-# PostgreSQL database in custom format and a copy of the git repositories of the projects, in one folder per
+# PostgreSQL database in custom format, a copy of the git repositories of the projects and a copy of the files
+# volume (attachments of the business need, US-03; ARQ section 9), in one folder per
 # run under the destination, which must live outside the server. Runs taken more than
 # EASYCODE_BACKUP_RETENTION_DAYS ago are removed (default and maximum 30 days, RNF-20, D-30).
 #
@@ -8,6 +9,7 @@
 #   Database: PGHOST, PGPORT, PGUSER (easycode_backup in production), PGPASSWORD or PGPASSFILE, PGDATABASE.
 #             Without PGDATABASE the database part is skipped.
 #   Repositories: EASYCODE_REPOS_DIR (the repos volume, read-only). Without it the part is skipped.
+#   Files: EASYCODE_FILES_DIR (the files volume, read-only). Without it the part is skipped.
 # The private key of easycode-gateway is never copied here: it has its own backup (ADR-13).
 set -eu
 
@@ -27,6 +29,9 @@ if [ -n "${PGDATABASE:-}" ]; then
 fi
 if [ -n "${EASYCODE_REPOS_DIR:-}" ]; then
 	tar -C "$EASYCODE_REPOS_DIR" -czf "$run.partial/repos.tar.gz" .
+fi
+if [ -n "${EASYCODE_FILES_DIR:-}" ]; then
+	tar -C "$EASYCODE_FILES_DIR" -czf "$run.partial/files.tar.gz" .
 fi
 (cd "$run.partial" && sha256sum ./* >SHA256SUMS)
 mv "$run.partial" "$run" # a run only exists once complete

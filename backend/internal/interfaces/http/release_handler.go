@@ -31,7 +31,7 @@ func (a *api) getReleaseSummary(rc *fasthttp.RequestCtx, principal identity.Prin
 	for _, g := range summary.Gates {
 		item := map[string]any{"gate": g.Gate, "state": nil, "decision": nil}
 		if g.Round != nil {
-			round := roundOf(*g.Round)
+			round := a.namedRound(*g.Round)
 			item["state"], item["decision"], item["round"] = round["state"], round["decision"], g.Round.Round
 		}
 		gates = append(gates, item)

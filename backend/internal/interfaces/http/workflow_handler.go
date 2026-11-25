@@ -237,6 +237,15 @@ type stageJSON struct {
 	DetailedCost  detailedCostJSON      `json:"detailed_cost"`
 	Time          map[string]int64      `json:"time"`
 	Approval      stageApprovalJSON     `json:"approval"`
+	GateChecks    []gateCheckJSON       `json:"gate_checks"`
+}
+
+// gateCheckJSON is openapi `GateCheck`: a check the gate of the stage runs (PC-20, PL-46).
+type gateCheckJSON struct {
+	Check           string `json:"check"`
+	Name            string `json:"name"`
+	Type            string `json:"type"`
+	FailureSeverity string `json:"failure_severity"`
 }
 
 // maxStageItems bounds the waves and artifacts of the stage view (a stage has a handful of each).
@@ -265,7 +274,27 @@ func (a *api) getStage(rc *fasthttp.RequestCtx, principal identity.Principal) er
 		return failure.New(failure.KindNotFound, failure.CodeNotFound, nil)
 	}
 	out := stageJSON{stageSummaryJSON: summary, Waves: []waveSummaryJSON{}, Artifacts: []artifactSummaryJSON{}, Findings: []any{},
-		VersionInputs: []any{}, Approval: stageApprovalJSON{Mode: "human", RequiredRole: "approver"}}
+		VersionInputs: []any{}, Approval: stageApprovalJSON{Mode: "human", RequiredRole: "approver"}, GateChecks: []gateCheckJSON{}}
+	if summary.Gate != nil && a.deps.Configuration != nil {
+		// The mode a new round of the gate takes: the project choice (gate_configurations) where the workflow
+		// stage allows it, else its default (PD-05; gate.validation is automatic by default).
+		config, err := a.deps.Configuration.Get(ctx, principal, projectID)
+		if err != nil {
+			return err
+		}
+		if mode, ok := config.GateApproval[*summary.Gate]; ok && mode.Mode != "" {
+			out.Approval.Mode = mode.Mode
+		}
+	}
+	if summary.Gate != nil && a.deps.GateChecks != nil {
+		checks, err := a.deps.GateChecks.Checks(ctx, principal, projectID, *summary.Gate)
+		if err != nil {
+			return err
+		}
+		for _, c := range checks {
+			out.GateChecks = append(out.GateChecks, gateCheckJSON{Check: c.Check, Name: c.Name, Type: c.Type, FailureSeverity: c.Severity})
+		}
+	}
 	waves, err := a.deps.Waves.List(ctx, principal, projectID, stageID, "", nil, maxStageItems)
 	if err != nil {
 		return err

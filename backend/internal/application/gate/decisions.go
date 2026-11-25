@@ -68,6 +68,8 @@ type RoundView struct {
 	// evaluate again (US-31 CA-3), "" when none.
 	Evaluation    int
 	ReevaluatedBy string
+	// Annotations are the prototype pins recorded with the rejection of a gate.design round (US-57).
+	Annotations []Annotation
 }
 
 // FindingRef is a finding listed in a round (FindingSummary).
@@ -104,6 +106,8 @@ type Decision struct {
 	Reason          string
 	Comment         string
 	CSRFToken       string
+	// Annotations go with the rejection of gate.design (US-57, PD-25).
+	Annotations []Annotation
 }
 
 // Decisions are the synchronous human decisions of the api (interno.md section 1).
@@ -115,6 +119,8 @@ type Decisions struct {
 	trail    audit.Trail
 	now      func() time.Time
 	release  *ReleaseQueries
+	// annotations keeps the prototype annotations of gate.design (US-57); nil refuses them.
+	annotations AnnotationStore
 }
 
 // WithRelease makes the approval of gate.release check the Release blocks at the decision (US-08 CA-2, CA-6).
@@ -149,7 +155,11 @@ func (d *Decisions) Rounds(ctx context.Context, principal identity.Principal, pr
 	if _, err := appproject.Authorize(ctx, d.projects, principal, projectID); err != nil {
 		return nil, err
 	}
-	return d.store.Rounds(ctx, projectID, stage)
+	views, err := d.store.Rounds(ctx, projectID, stage)
+	if err != nil {
+		return nil, err
+	}
+	return views, d.attachAnnotations(ctx, projectID, stage, views)
 }
 
 // Round is getGateRound.
@@ -161,7 +171,19 @@ func (d *Decisions) Round(ctx context.Context, principal identity.Principal, pro
 	if _, err := appproject.Authorize(ctx, d.projects, principal, projectID); err != nil {
 		return RoundView{}, err
 	}
-	return d.store.Round(ctx, projectID, stage, round)
+	return d.roundWithAnnotations(ctx, projectID, stage, round)
+}
+
+func (d *Decisions) roundWithAnnotations(ctx context.Context, projectID, stage string, round int) (RoundView, error) {
+	view, err := d.store.Round(ctx, projectID, stage, round)
+	if err != nil {
+		return view, err
+	}
+	views := []RoundView{view}
+	if err := d.attachAnnotations(ctx, projectID, stage, views); err != nil {
+		return view, err
+	}
+	return views[0], nil
 }
 
 // Decide applies approve or reject in one transaction with audit and outbox (US-06 basics, ADR-19:
@@ -182,6 +204,12 @@ func (d *Decisions) Decide(ctx context.Context, principal identity.Principal, se
 	}
 	if !decision.Approve && strings.TrimSpace(decision.Reason) == "" {
 		return RoundView{}, failure.Invalid(failure.FieldError{Field: "reason", Message: "required"})
+	}
+	if err := validateAnnotations(stage, decision.Approve, decision.Annotations); err != nil {
+		return RoundView{}, err
+	}
+	if len(decision.Annotations) > 0 && d.annotations == nil {
+		return RoundView{}, failure.Invalid(failure.FieldError{Field: "annotations", Message: "invalid"})
 	}
 	current, err := d.store.Round(ctx, decision.ProjectID, stage, decision.Round)
 	if err != nil {
@@ -205,6 +233,10 @@ func (d *Decisions) Decide(ctx context.Context, principal identity.Principal, se
 			return RoundView{}, failure.New(failure.KindConflict, CodeBlockingFinding, nil).With("findings", findings)
 		}
 	}
+	annotatedArtifact, annotatedVersionNumber, hasTelas := annotatedVersion(current.Outputs)
+	if len(decision.Annotations) > 0 && !hasTelas {
+		return RoundView{}, failure.Invalid(failure.FieldError{Field: "annotations", Message: "invalid"})
+	}
 	if decision.Approve {
 		if missing, unknown := humanChecks(current.Checks, decision.ConfirmedChecks); len(missing) > 0 || len(unknown) > 0 {
 			// missing_checks: human checks of the round still to confirm; checks: confirmed ids the round does not have.
@@ -215,6 +247,12 @@ func (d *Decisions) Decide(ctx context.Context, principal identity.Principal, se
 	err = d.tx.InTx(ctx, func(ctx context.Context) error {
 		if err := d.store.Decide(ctx, principal, decision.ProjectID, stage, decision.Round, decision.Approve, decision.Reason, decision.ConfirmedChecks); err != nil {
 			return err
+		}
+		if len(decision.Annotations) > 0 {
+			if err := d.annotations.RecordAnnotations(ctx, principal, decision.ProjectID, stage, decision.Round,
+				annotatedArtifact, annotatedVersionNumber, decision.Annotations); err != nil {
+				return err
+			}
 		}
 		eventType, action, to := "br.easycode.gate.approved.v1", "gate.approve", StateApproved
 		confirmed := orEmpty(decision.ConfirmedChecks)
@@ -246,7 +284,7 @@ func (d *Decisions) Decide(ctx context.Context, principal identity.Principal, se
 	if err != nil {
 		return RoundView{}, err
 	}
-	return d.store.Round(ctx, decision.ProjectID, stage, decision.Round)
+	return d.roundWithAnnotations(ctx, decision.ProjectID, stage, decision.Round)
 }
 
 // deterministicUUID derives a UUID (version 8) from a key, so the decision and its effects share

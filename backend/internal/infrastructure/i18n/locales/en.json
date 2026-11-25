@@ -89,6 +89,8 @@
   "problem.project-not-ended.detail": "Only a completed or canceled project can be deleted. Cancel the project before deleting it.",
   "problem.invalid-skill-package.title": "Invalid skill package",
   "problem.invalid-skill-package.detail": "The package needs SKILL.md with name and description in the front matter ({reason}).",
+  "problem.too-large-attachment.title": "Attachment too large",
+  "problem.too-large-attachment.detail": "The file passes the limit of {limit_bytes} bytes.",
   "problem.too-large-package.title": "Package too large",
   "problem.too-large-package.detail": "The package passes the limit of {limit_bytes} bytes.",
   "problem.outdated-version.title": "Outdated version",

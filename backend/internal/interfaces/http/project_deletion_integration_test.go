@@ -8,6 +8,7 @@ import (
 
 	"easycode/internal/application/retention"
 	domainaudit "easycode/internal/domain/audit"
+	"easycode/internal/infrastructure/files"
 	"easycode/internal/infrastructure/git"
 	"easycode/internal/infrastructure/oidc/oidctest"
 	"easycode/internal/infrastructure/postgres"
@@ -27,6 +28,17 @@ func TestDeleteProjectAnonymizesIt(t *testing.T) {
 	rc := live.send("POST", base+"/deletion", deletion, key())
 	if rc.Response.StatusCode() != 409 || decode(t, rc)["type"] != "urn:easycode:problem:project-not-ended" {
 		t.Fatalf("CA-2: %d %s", rc.Response.StatusCode(), rc.Response.Body())
+	}
+	// An attachment of the business need, stored in the files volume while the project was created.
+	volume := t.TempDir()
+	attachment := "attachments/" + projectID + "/0192f0aa-0000-7000-8000-000000000001"
+	if err := files.New(volume).Write(ctx, attachment, []byte("Ata com o nome de Fulano da Silva")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := live.db.Admin.Exec(ctx, `INSERT INTO easycode.project_attachments (project_id, file_name, media_type, size_bytes, sha256, path, submitted_by)
+SELECT pr.id, 'ata.md', 'text/markdown', 33, repeat('a', 64), $2, u.id FROM easycode.projects pr
+  JOIN easycode.users u ON u.organization_id = pr.organization_id AND u.sub = 'dev' WHERE pr.public_id = $1::uuid`, projectID, attachment); err != nil {
+		t.Fatal(err)
 	}
 	member := live.as(t, oidctest.User{Subject: "carla", Name: "Carla"})
 	live.json(t, "PUT", base+"/members/carla", `{"roles":["approver"]}`, nil, 200)
@@ -71,7 +83,7 @@ func TestDeleteProjectAnonymizesIt(t *testing.T) {
 		t.Fatal(err)
 	}
 	worker := live.db.PoolOf("easycode_worker", 2)
-	job := retention.NewJob(postgres.NewTxRunner(worker), postgres.NewRetention(worker), git.New(repos), postgres.NewOutbox(worker))
+	job := retention.NewJob(postgres.NewTxRunner(worker), postgres.NewRetention(worker), git.New(repos), files.New(volume), postgres.NewOutbox(worker))
 	if done, err := job.Run(ctx); err != nil || done != 1 {
 		t.Fatalf("retention: %d %v", done, err)
 	}
@@ -81,6 +93,13 @@ func TestDeleteProjectAnonymizesIt(t *testing.T) {
 	if n := count(t, live.db, `SELECT count(*) FROM easycode.audit_records a JOIN easycode.projects p ON p.id = a.project_id
 	   WHERE p.public_id = '`+projectID+`' AND a.justification LIKE '%Fulano%'`); n != 0 {
 		t.Fatal("personal data kept after the anonymization")
+	}
+	// RNF-20: the file of the attachment leaves the files volume; the record keeps name and hash, purge marked.
+	if _, err := os.Stat(filepath.Join(volume, filepath.FromSlash(attachment))); !os.IsNotExist(err) {
+		t.Fatalf("attachment file kept: %v", err)
+	}
+	if n := count(t, live.db, `SELECT count(*) FROM easycode.project_attachments WHERE path = '`+attachment+`' AND content_purged_at IS NOT NULL`); n != 1 {
+		t.Fatal("attachment content_purged_at not set")
 	}
 	if n := count(t, live.db, `SELECT count(*) FROM easycode.projects WHERE public_id = '`+projectID+`' AND data_anonymized_at IS NOT NULL`); n != 1 {
 		t.Fatal("project not marked anonymized")

@@ -29,6 +29,7 @@ import (
 	appsandbox "easycode/internal/application/sandbox"
 	appwave "easycode/internal/application/wave"
 	appworkflow "easycode/internal/application/workflow"
+	domainartifact "easycode/internal/domain/artifact"
 	"easycode/internal/domain/provider"
 	"easycode/internal/domain/sandbox"
 	"easycode/internal/infrastructure/docker"
@@ -211,7 +212,11 @@ func startRunner(t *testing.T) *sandboxapi.Client {
 	if socket == "" || image == "" {
 		t.Skip("EASYCODE_TEST_DOCKER_SOCKET and EASYCODE_TEST_SANDBOX_IMAGE not set: the MARCO-3 flow needs the sandbox")
 	}
-	runner := appsandbox.NewRunner(docker.New(socket), specs.AgentPolicy, appsandbox.Config{Images: map[string]string{"go": image}, Runtime: "runc",
+	images := map[string]string{"go": image}
+	if security := os.Getenv("EASYCODE_TEST_SECURITY_IMAGE"); security != "" {
+		images[sandbox.ImageSecurity] = security // scans of the Segurança (US-23)
+	}
+	runner := appsandbox.NewRunner(docker.New(socket), specs.AgentPolicy, appsandbox.Config{Images: images, Runtime: "runc",
 		Defaults: sandbox.Limits{CPU: 2, MemoryMiB: 4096, DiskMiB: 1024, Time: 5 * time.Minute, Processes: 256, MaxOutputBytes: 1 << 20}})
 	path := filepath.Join(t.TempDir(), "runner.sock")
 	listener, err := net.Listen("unix", path)
@@ -288,7 +293,14 @@ func newPhase1Worker(t *testing.T, db *postgrestest.Database, gateway runtime.Ga
 	}, outbox, postgres.NewTelemetryNotifier(pool), store, progress, outputs,
 		runtime.Settings{Worker: "worker-1", Lease: 15 * time.Second, MaxCorrections: 3, RetryBackoff: 10 * time.Millisecond, Poll: 50 * time.Millisecond,
 			Image: "go", ProjectLimits: sandbox.Limits{CPU: 1, MemoryMiB: 2048, DiskMiB: 512, Time: 3 * time.Minute}},
-		slog.New(slog.NewJSONHandler(io.Discard, nil))).WithRepository(repos, attachments)
+		slog.New(slog.NewJSONHandler(io.Discard, nil))).WithRepository(repos, attachments).
+		WithAttachmentSpecs(func(stage string) []domainartifact.AttachmentSpec { // PL-24: the attachments of every version
+			if stage != "architecture" {
+				return nil
+			}
+			return []domainartifact.AttachmentSpec{{Type: "ARQ", Path: "docs/arquitetura/estrutura.md"},
+				{Type: "ARQ", Path: "docs/arquitetura/api/openapi.yaml"}, {Type: "ARQ", Path: "docs/arquitetura/api/"}}
+		})
 	return phase1Worker{dispatcher: dispatcher, progress: progress, executor: executor}
 }
 
@@ -361,6 +373,7 @@ func TestMarco3RequirementsToCodeEndToEnd(t *testing.T) {
 		wf, _ := specs.BasicWorkflow()
 		projects := postgres.NewProjects(db.PoolAs("easycode_api"), wf.Definition.ID, len(wf.Definition.Stages))
 		d.Repository = apprepository.NewService(projects, repos, "https://easycode.test", git.MainBranch)
+		d.Artifacts = appartifact.NewQueries(projects, postgres.NewArtifacts(db.PoolAs("easycode_api"))).WithFiles(repos)
 	})
 	db, ctx := live.db, context.Background()
 
@@ -452,6 +465,25 @@ SELECT organization_id, 'anthropic', $1, $2, '0000', id FROM easycode.users WHER
 	}
 	if types["ARQ"] != 1 || types["ADR"] != 1 || types["T"] != 1 {
 		t.Fatalf("US-18 CA-1: ARQ, at least one ADR and the T: %v", types)
+	}
+	// PL-24, CA-21-16: the ARQ version lists its attachments and serves the text one as a download (RNF-05).
+	arq := live.json(t, "GET", base+"/artifacts/ARQ", "", nil, 200)
+	attached := map[string]string{}
+	for _, item := range arq["attachments"].([]any) {
+		a := item.(map[string]any)
+		attached[a["path"].(string)] = a["media_type"].(string)
+	}
+	if attached["estrutura.md"] != "text/markdown" || attached["api/openapi.yaml"] != "application/yaml" {
+		t.Fatalf("ARQ attachments: %v", arq["attachments"])
+	}
+	file := live.send("GET", base+"/artifacts/ARQ/versions/1/attachment?path=api/openapi.yaml", "", nil)
+	if file.Response.StatusCode() != 200 || !strings.Contains(string(file.Response.Body()), "openapi") ||
+		!strings.HasPrefix(string(file.Response.Header.Peek("Content-Disposition")), "attachment") ||
+		string(file.Response.Header.Peek("Content-Security-Policy")) != "sandbox" || string(file.Response.Header.Peek("X-Content-Type-Options")) != "nosniff" {
+		t.Fatalf("getArtifactAttachment: %d %s %s", file.Response.StatusCode(), file.Response.Header.String(), file.Response.Body())
+	}
+	if rc := live.send("GET", base+"/artifacts/ARQ/versions/1/attachment?path=ARQ.md", "", nil); rc.Response.StatusCode() != 404 {
+		t.Fatalf("a path out of the attachments: %d", rc.Response.StatusCode())
 	}
 	round := live.json(t, "GET", base+"/gates/gate.architecture/rounds/1", "", nil, 200)
 	if checks := checksOf(t, round); round["state"] != "awaiting_human" || checks["artifact.schema_valid"] != "passed" || checks["traceability.t_points_to_us"] != "passed" {

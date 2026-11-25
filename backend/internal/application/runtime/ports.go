@@ -79,6 +79,28 @@ type Inputs struct {
 	Finding *FindingBrief
 	// Edit is the human edit an edit_review wave validates and formats (US-53).
 	Edit *EditBrief
+	// Attachments are the attachments of the business need, in the Requisitos stage (US-03).
+	Attachments []SourceAttachment
+}
+
+// SourceAttachment is an attachment of the business need, its content in the files volume (US-03).
+type SourceAttachment struct {
+	FileName  string
+	MediaType string
+	Path      string
+}
+
+// SourceFile is an attachment given to the agent: its text, or no text for a binary file.
+type SourceFile struct {
+	Name      string
+	MediaType string
+	Text      string
+	Binary    bool
+}
+
+// SourceReader reads the content of the attachments of the business need (volume files).
+type SourceReader interface {
+	Read(ctx context.Context, path string) ([]byte, error)
 }
 
 // Totals are the accumulated tokens and costs of the wave (exact decimals, RNF-16).

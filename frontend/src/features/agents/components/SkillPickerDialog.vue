@@ -268,8 +268,10 @@ input[type='radio']:disabled {
   cursor: default;
 }
 
+/* A blocked skill: dashed outline and muted label, keeping every text at 4.5:1 (RNF-18). */
 .op.off {
-  opacity: 0.6;
+  border-style: dashed;
+  color: #a9b0d6;
 }
 
 .op-text {

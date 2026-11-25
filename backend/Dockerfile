@@ -18,9 +18,9 @@ RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache
     go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o /out/app ./cmd/${BINARY}
 # Socket directories shared by easycode-gateway, easycode-sandbox and the worker, the platform key
 # directories (ADR-13) and the repositories volume: a named volume mounted here starts with this
-# ownership, so the non-root processes (uid 65532) write them.
+# ownership, so the non-root processes (uid 65532) write them; the files volume (attachments, US-03) too.
 RUN mkdir -p /out/run/easycode-gateway /out/run/easycode-gateway-key /out/run/easycode-sealing /out/run/easycode-sandbox \
-    /out/var/lib/easycode/repos
+    /out/var/lib/easycode/repos /out/var/lib/easycode/files
 
 FROM ${GIT_RUNTIME_IMAGE} AS runtime-git
 RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/* \

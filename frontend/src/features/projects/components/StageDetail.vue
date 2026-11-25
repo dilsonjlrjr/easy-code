@@ -14,6 +14,7 @@ import RepositoryPanel from '@/features/repository/components/RepositoryPanel.vu
 import TaskPlan from '@/features/tasks/components/TaskPlan.vue'
 import { STAGE_VIEWS } from '@/features/stages/stageViews'
 import StageEstimate from '@/features/costs/components/StageEstimate.vue'
+import StageExitCriteria from '@/features/gates/components/StageExitCriteria.vue'
 import { subtractMoney } from '@/shared/format/money'
 import type { Stage } from '../api/projectsApi'
 import { parallelStages } from '../composables/parallelStages'
@@ -232,7 +233,10 @@ watch([stageId, () => store.revision], () => void loader.run(), { immediate: tru
         </span>
       </p>
 
-      <!-- Canvas "Critério de saída" strip: the approval, time, tokens and cost of the stage. -->
+      <!-- Canvas "Critério de saída" strip: the gate checks of the stage (PC-20, PL-46). -->
+      <StageExitCriteria :project-id="projectId" :stage="stage" :revision="store.revision" />
+
+      <!-- The approval, time, tokens and cost of the stage. -->
       <dl class="card stage-strip" data-testid="stage-summary">
         <div class="strip-item">
           <dt class="t2">{{ $t('projects.stage.approval') }}</dt>

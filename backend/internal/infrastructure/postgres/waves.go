@@ -43,11 +43,13 @@ const waveSummary = `w.code, w.stage, w.agent, w.state, w.purpose, w.attempt, co
   CASE WHEN w.state IN ('completed','canceled') THEN w.finished_at
        WHEN w.state = 'failed' THEN (SELECT max(e.occurred_at) FROM easycode.events e WHERE e.project_id = w.project_id AND e.waveid = w.code AND e.type = 'br.easycode.wave.failed.v1')
   END,
-  w.useful_cost::text, w.lost_cost::text, w.currency, w.estimated_lost_cost, coalesce(w.task, '')`
+  w.useful_cost::text, w.lost_cost::text, w.currency, w.estimated_lost_cost, coalesce(w.task, ''),
+  w.input_tokens, w.output_tokens, w.read_cache_tokens, w.write_cache_tokens`
 
 func scanSummary(row pgx.Row, s *appwave.Summary, extra ...any) error {
 	args := append([]any{&s.Code, &s.Stage, &s.Agent, &s.State, &s.Purpose, &s.Attempt, &s.ConfigVersion, &s.CreatedAt, &s.StartedAt, &s.EndedAt,
-		&s.Cost.Useful, &s.Cost.Lost, &s.Cost.Currency, &s.Cost.EstimatedLost, &s.Task}, extra...)
+		&s.Cost.Useful, &s.Cost.Lost, &s.Cost.Currency, &s.Cost.EstimatedLost, &s.Task,
+		&s.Tokens.Input, &s.Tokens.Output, &s.Tokens.CacheRead, &s.Tokens.CacheWrite}, extra...)
 	if err := row.Scan(args...); err != nil {
 		return err
 	}
@@ -87,7 +89,7 @@ func (w Waves) Get(ctx context.Context, projectID, code string) (appwave.View, e
 	var step int
 	var buildOrTestFailed bool
 	err := scanSummary(q.QueryRow(WithOperation(ctx, "waves.get"), `
-SELECT `+waveSummary+`, w.id, w.inputs_digest, w.failure_cause, w.input_tokens, w.output_tokens, w.read_cache_tokens, w.write_cache_tokens,
+SELECT `+waveSummary+`, w.id, w.inputs_digest, w.failure_cause,
        w.execution_duration_ms, (extract(epoch FROM coalesce(w.finished_at, now()) - coalesce(w.started_at, w.created_at)) * 1000)::bigint,
        w.current_step, ac.instruction_version,
        (SELECT q.code FROM easycode.wave_questions q WHERE q.wave_id = w.id AND q.answered_at IS NULL ORDER BY q.opened_at DESC LIMIT 1),
@@ -96,7 +98,7 @@ SELECT `+waveSummary+`, w.id, w.inputs_digest, w.failure_cause, w.input_tokens, 
   FROM easycode.waves w JOIN easycode.projects pr ON pr.id = w.project_id
   LEFT JOIN easycode.agent_configurations ac ON ac.id = w.agent_configuration_id
  WHERE pr.public_id = $1::uuid AND w.code = $2`, projectID, code), &v.Summary, &waveID, &digest, &cause,
-		&v.Tokens.Input, &v.Tokens.Output, &v.Tokens.CacheRead, &v.Tokens.CacheWrite, &v.ExecutionMs, &v.CycleMs, &step, &instruction, &question,
+		&v.ExecutionMs, &v.CycleMs, &step, &instruction, &question,
 		&v.GitCommit, &buildOrTestFailed)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return v, failure.New(failure.KindNotFound, failure.CodeNotFound, nil)

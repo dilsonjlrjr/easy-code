@@ -13,6 +13,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	appartifact "easycode/internal/application/artifact"
+	appattachment "easycode/internal/application/attachment"
+	appcontent "easycode/internal/application/content"
 	appcost "easycode/internal/application/cost"
 	appevent "easycode/internal/application/event"
 	appfinding "easycode/internal/application/finding"
@@ -25,6 +27,7 @@ import (
 	appproject "easycode/internal/application/project"
 	"easycode/internal/application/providerkey"
 	apprepository "easycode/internal/application/repository"
+	appsearch "easycode/internal/application/search"
 	appsession "easycode/internal/application/session"
 	appskill "easycode/internal/application/skill"
 	apptraceability "easycode/internal/application/traceability"
@@ -32,6 +35,7 @@ import (
 	appwave "easycode/internal/application/wave"
 	appworkflow "easycode/internal/application/workflow"
 	"easycode/internal/infrastructure/config"
+	"easycode/internal/infrastructure/files"
 	"easycode/internal/infrastructure/git"
 	"easycode/internal/infrastructure/i18n"
 	"easycode/internal/infrastructure/logging"
@@ -159,8 +163,33 @@ func serve(ctx context.Context, proc process.Process) error {
 	handler := httpapi.NewHandler(deps)
 	server := httpapi.NewServer(handler, httpapi.ServerSettings{
 		ReadTimeout: cfg.HTTP.ReadTimeout, WriteTimeout: cfg.HTTP.WriteTimeout, IdleTimeout: cfg.HTTP.IdleTimeout,
+		MaxBodyBytes: max(4<<20, cfg.Providers.AttachmentLimitBytes+1<<20), // attachFile answers 413 itself (US-03 CA-4)
 	}, proc.Logger)
+	if pages, ok := deps.ContentURLs.(httpapi.ContentPages); ok {
+		defer serveContentOrigin(cfg.Content, cfg.HTTP, pages, proc.Logger)()
+	}
 	return listenUntilDone(ctx, proc, server.ListenAndServe, server.ShutdownWithContext)
+}
+
+// serveContentOrigin starts the content origin on its own listener (ADR-19: no /api, no cookie, GET only)
+// and returns its shutdown.
+func serveContentOrigin(content config.Content, settings config.HTTP, pages httpapi.ContentPages, logger *slog.Logger) func() {
+	server := httpapi.NewServer(httpapi.NewContentOriginHandler(pages, logger), httpapi.ServerSettings{
+		ReadTimeout: settings.ReadTimeout, WriteTimeout: settings.WriteTimeout, IdleTimeout: settings.IdleTimeout,
+	}, logger)
+	go func() {
+		logger.Info("content origin listening", slog.String("addr", content.Addr), slog.String("origin", content.Origin))
+		if err := server.ListenAndServe(content.Addr); err != nil {
+			logger.Error("content origin stopped", logging.ErrorAttr(err))
+		}
+	}()
+	return func() {
+		ctx, cancel := context.WithTimeout(context.Background(), settings.ShutdownTimeout)
+		defer cancel()
+		if err := server.ShutdownWithContext(ctx); err != nil && !errors.Is(err, context.Canceled) {
+			logger.Error("content origin shutdown failed", logging.ErrorAttr(err))
+		}
+	}
 }
 
 // productDependencies wires the use cases of the product routes over PostgreSQL.
@@ -179,6 +208,11 @@ func productDependencies(cfg config.Config, pool *pgxpool.Pool, logger *slog.Log
 		return httpapi.Dependencies{}, err
 	}
 	definition := wf.Definition
+	// PC-20, PL-46: the exit criteria of a stage list the checks of its gate before any round.
+	composition, err := specs.Governance()
+	if err != nil {
+		return httpapi.Dependencies{}, err
+	}
 	projects := postgres.NewProjects(pool, definition.ID, len(definition.Stages))
 	workflows := postgres.NewWorkflow(pool, definition)
 	waveStore := postgres.NewWaves(pool, definition)
@@ -188,6 +222,7 @@ func productDependencies(cfg config.Config, pool *pgxpool.Pool, logger *slog.Log
 	members := appproject.NewMemberService(tx, projects, postgres.NewMembers(pool), oidc.NewPeopleDirectory(oidc.NewAdmin(realm)),
 		postgres.NewOutbox(pool), trail)
 	provider := oidc.NewProvider(realm)
+	artifacts := appartifact.NewQueries(projects, postgres.NewArtifacts(pool)).WithFiles(git.New(cfg.ReposDir))
 	deps := httpapi.Dependencies{
 		Sessions: sessions,
 		// US-45: the read-only token of the desktop app (ADR-20), checked by the realm keys and the SSO session.
@@ -201,22 +236,33 @@ func productDependencies(cfg config.Config, pool *pgxpool.Pool, logger *slog.Log
 		Members:              members,
 		Configuration:        appproject.NewConfigurationService(tx, projects, projects, postgres.NewCatalog(pool), trail, definition),
 		Workflow:             appworkflow.NewService(tx, projects, workflows, workflows, workflows, trail).WithLifecycle(workflows, members),
-		Artifacts:            appartifact.NewQueries(projects, postgres.NewArtifacts(pool)),
-		ArtifactEdits:        appartifact.NewEditor(tx, projects, postgres.NewArtifactEdits(pool), trail),
-		Gates:                appgate.NewDecisions(tx, projects, postgres.NewGates(pool), postgres.NewOutbox(pool), trail).WithRelease(release),
-		Release:              release,
-		Findings:             appfinding.NewDecisions(tx, projects, postgres.NewFindings(pool), postgres.NewOutbox(pool), trail),
-		Traceability:         apptraceability.NewService(projects, postgres.NewTraceability(pool)),
-		History:              postgres.NewOutbox(pool),
-		Pending:              apppending.NewService(postgres.NewPending(pool, definition)),
-		Waves:                waves,
-		Access:               waves,
-		Skills:               appskill.NewService(postgres.NewSkills(pool)),
-		SkillImports:         appskill.NewImporter(tx, postgres.NewSkillImports(pool), postgres.NewSkills(pool), trail, specs.YAMLToJSON),
-		Agents:               appskill.NewAgents(tx, projects, specs.AgentProfiles{}, postgres.NewSkills(pool), postgres.NewSkills(pool), trail),
-		Repository:           apprepository.NewService(projects, git.New(cfg.ReposDir), cfg.GitBaseURL, git.MainBranch),
-		Costs:                appcost.NewService(projects, postgres.NewCosts(pool, definition), definition.StageIDs()),
-		Audit:                apptrail.NewQueries(projects, postgres.NewAuditReader(pool)),
+		Artifacts:            artifacts,
+		Attachments: appattachment.NewService(tx, projects, postgres.NewAttachments(pool), files.New(cfg.FilesDir), trail,
+			cfg.Providers.AttachmentLimitBytes),
+		ArtifactEdits: appartifact.NewEditor(tx, projects, postgres.NewArtifactEdits(pool), trail),
+		Gates: appgate.NewDecisions(tx, projects, postgres.NewGates(pool), postgres.NewOutbox(pool), trail).WithRelease(release).
+			WithAnnotations(postgres.NewGateAnnotations(pool)), // US-57
+		Release:      release,
+		GateChecks:   appgate.NewExitCriteria(projects, composition, postgres.NewGates(pool)),
+		Findings:     appfinding.NewDecisions(tx, projects, postgres.NewFindings(pool), postgres.NewOutbox(pool), trail),
+		Traceability: apptraceability.NewService(projects, postgres.NewTraceability(pool)),
+		History:      postgres.NewOutbox(pool),
+		Pending:      apppending.NewService(postgres.NewPending(pool, definition)),
+		Search:       appsearch.NewService(postgres.NewSearch(pool)),
+		Waves:        waves,
+		Access:       waves,
+		Skills:       appskill.NewService(postgres.NewSkills(pool)),
+		SkillImports: appskill.NewImporter(tx, postgres.NewSkillImports(pool), postgres.NewSkills(pool), trail, specs.YAMLToJSON),
+		Agents:       appskill.NewAgents(tx, projects, specs.AgentProfiles{}, postgres.NewSkills(pool), postgres.NewSkills(pool), trail),
+		Repository:   apprepository.NewService(projects, git.New(cfg.ReposDir), cfg.GitBaseURL, git.MainBranch),
+		Costs:        appcost.NewService(projects, postgres.NewCosts(pool, definition), definition.StageIDs()),
+		Audit:        apptrail.NewQueries(projects, postgres.NewAuditReader(pool)),
+	}
+	if cfg.Content.Origin == "" {
+		logger.Warn("prototype viewer disabled: no content origin", slog.String("variable", config.EnvContentOrigin))
+	} else {
+		// ADR-19, ESP-11: signed URLs of the prototype, served by the content origin listener (serve).
+		deps.ContentURLs = appcontent.NewService(artifacts, git.New(cfg.ReposDir), cfg.Content.Origin, appcontent.DeriveKey(id.SessionSecret))
 	}
 	if cfg.Providers.SealingPublicKeyFile == "" {
 		logger.Warn("provider key routes disabled: no sealing public key", slog.String("variable", config.EnvSealingPublicKey))

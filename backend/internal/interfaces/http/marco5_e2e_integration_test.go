@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
 	"os/exec"
 	"regexp"
 	"strings"
@@ -337,8 +338,9 @@ func withHeaderField(content, lines string) string {
 }
 
 // scannerRunner runs build, tests and lint in the real sandbox and answers the scanners of the
-// Segurança with a recorded output: the image with opengrep, trivy and gitleaks and their offline
-// databases is not built in CI yet (pending item of MARCO-5).
+// Segurança with a recorded output. It is used only when the security image is not given
+// (EASYCODE_TEST_SECURITY_IMAGE unset, as on a host that runs the test by hand); make test-integration
+// builds the image, so the CI runs the real Opengrep, Trivy and Gitleaks.
 type scannerRunner struct {
 	real runtime.CommandRunner
 }
@@ -494,7 +496,7 @@ func TestMarco5QualityAndFindings(t *testing.T) {
 	qaTests := func(id string) provider.ToolCall { return exec(id, "tests", "go", "test", "-count=1", "-v", "./...") }
 	scans := func(prefix string) []provider.ToolCall {
 		return []provider.ToolCall{
-			exec(prefix+"1", "scanner", "opengrep", "scan", "--config", "auto", "app"),
+			exec(prefix+"1", "scanner", "opengrep", "scan", "--config", "/opt/easycode/opengrep-rules", "app"),
 			exec(prefix+"2", "scanner", "trivy", "fs", "--offline-scan", "--skip-db-update", "app"),
 			exec(prefix+"3", "scanner", "gitleaks", "dir", "app"),
 		}
@@ -571,7 +573,10 @@ func TestMarco5QualityAndFindings(t *testing.T) {
 				fixed(provider.Message{Calls: append(scans("w"), write("w4", "docs/seguranca/REL-SEG-02.md", security2), finish("wf"))}),
 			},
 		}}
-	runner := scannerRunner{real: sandboxRunner}
+	var runner runtime.CommandRunner = sandboxRunner
+	if os.Getenv("EASYCODE_TEST_SECURITY_IMAGE") == "" {
+		runner = scannerRunner{real: sandboxRunner}
+	}
 	gateway := localGateway{service: appgateway.NewService(opener, time.Minute, script)}
 	work := newQualityWorker(t, db, gateway, runner, repos)
 	registerModels(t, live, "anthropic")

@@ -14,4 +14,13 @@ export interface StageViewProps {
  * view of the current stage, when there is one, between its header and the common waves, artifacts and
  * findings cards. Each view is lazy, so a stage page only loads its own code.
  */
-export const STAGE_VIEWS: Partial<Record<string, () => Promise<Component>>> = {}
+export const STAGE_VIEWS: Partial<Record<string, () => Promise<Component>>> = {
+  requirements: () => import('./requirements/RequirementsStageView.vue'),
+  architecture: () => import('./architecture/ArchitectureStageView.vue'),
+  data: () => import('./data/DataStageView.vue'),
+  design: () => import('./design/DesignStageView.vue'),
+  implementation: () => import('./implementation/ImplementationStageView.vue'),
+  qa: () => import('./qa/QaStageView.vue'),
+  security: () => import('./security/SecurityStageView.vue'),
+  validation: () => import('./validation/ValidationStageView.vue'),
+}

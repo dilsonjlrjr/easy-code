@@ -55,6 +55,8 @@ var anonymizations = []string{
 	`UPDATE easycode.gate_rounds SET reason = $2 WHERE project_id = $1 AND reason IS NOT NULL`,
 	`UPDATE easycode.gate_confirmations c SET reason = $2 FROM easycode.gate_rounds r
   WHERE r.id = c.round_id AND r.project_id = $1 AND c.reason IS NOT NULL`,
+	`UPDATE easycode.gate_round_annotations a SET comment = $2 FROM easycode.gate_rounds r
+  WHERE r.id = a.round_id AND r.project_id = $1`,
 	`UPDATE easycode.question_items i SET answer = $2 FROM easycode.wave_questions q
   WHERE q.id = i.question_id AND q.project_id = $1 AND i.answer IS NOT NULL`,
 	`UPDATE easycode.audit_records SET justification = $2 WHERE project_id = $1 AND justification IS NOT NULL`,
@@ -66,28 +68,56 @@ var anonymizations = []string{
 }
 
 // Anonymize implements retention.Store.
-func (r Retention) Anonymize(ctx context.Context, projectID string) (int, error) {
+func (r Retention) Anonymize(ctx context.Context, projectID string) (retention.Anonymized, error) {
 	q := conn(ctx, r.pool)
 	if _, err := q.Exec(ctx, "SET LOCAL ROLE easycode_retention"); err != nil {
-		return 0, fmt.Errorf("retention role: %w", classify(err))
+		return retention.Anonymized{}, fmt.Errorf("retention role: %w", classify(err))
 	}
 	var internalID int64
 	if err := q.QueryRow(WithOperation(ctx, "projects.lock_for_anonymization"),
 		"SELECT id FROM easycode.projects WHERE public_id = $1::uuid AND deletion_requested_at IS NOT NULL AND data_anonymized_at IS NULL FOR UPDATE",
 		projectID).Scan(&internalID); err != nil {
-		return 0, fmt.Errorf("project to anonymize: %w", classify(err))
+		return retention.Anonymized{}, fmt.Errorf("project to anonymize: %w", classify(err))
 	}
 	total := 0
 	for i, statement := range anonymizations {
 		tag, err := q.Exec(WithOperation(ctx, fmt.Sprintf("anonymize.%d", i)), statement, internalID, AnonymizedText)
 		if err != nil {
-			return total, fmt.Errorf("anonymize project data: %w", classify(err))
+			return retention.Anonymized{Records: total}, fmt.Errorf("anonymize project data: %w", classify(err))
 		}
 		total += int(tag.RowsAffected())
 	}
+	// The attachments of the business need: the job deletes the files from the volume; the record, the name
+	// and the hash stay (US-03, RNF-20).
+	files, err := purgeAttachments(ctx, q, internalID)
+	if err != nil {
+		return retention.Anonymized{Records: total}, err
+	}
+	total += len(files)
 	if _, err := q.Exec(WithOperation(ctx, "projects.anonymized"),
 		"UPDATE easycode.projects SET data_anonymized_at = now() WHERE id = $1", internalID); err != nil {
-		return total, fmt.Errorf("mark project anonymized: %w", classify(err))
+		return retention.Anonymized{Records: total}, fmt.Errorf("mark project anonymized: %w", classify(err))
 	}
-	return total, nil
+	return retention.Anonymized{Records: total, Files: files}, nil
+}
+
+func purgeAttachments(ctx context.Context, q querier, projectID int64) ([]string, error) {
+	rows, err := q.Query(WithOperation(ctx, "project_attachments.purge"),
+		"UPDATE easycode.project_attachments SET content_purged_at = now() WHERE project_id = $1 AND content_purged_at IS NULL RETURNING path", projectID)
+	if err != nil {
+		return nil, fmt.Errorf("purge attachments: %w", classify(err))
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var path string
+		if err := rows.Scan(&path); err != nil {
+			return nil, err
+		}
+		out = append(out, path)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("purge attachments: %w", classify(err))
+	}
+	return out, nil
 }

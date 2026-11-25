@@ -249,7 +249,7 @@ test('US-22 CA-2 / US-23 CA-2: REL-QA and REL-SEG show their matrix, scans, OWAS
   await expect(page.getByRole('heading', { name: 'Relatório de segurança' })).toBeVisible()
   await expect(page.getByTestId('rel-seg-summary')).toContainText('Alto')
   await expect(page.getByTestId('rel-seg-scans')).toContainText('trivy 0.58')
-  await expect(page.getByTestId('rel-seg-owasp')).toContainText('Falhas criptográficas')
+  await expect(page.getByTestId('rel-seg-owasp')).toContainText('Configuração insegura')
   await expectNoSeriousA11yViolations(page)
   await page.getByTestId('rel-seg-scans').getByRole('link', { name: 'ACH-09' }).click()
   await expect(page).toHaveURL(new RegExp(`/projects/${PROJECT_ID}/findings/ACH-09$`))

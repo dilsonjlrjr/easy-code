@@ -2,8 +2,11 @@ package artifact
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"slices"
+	"strings"
 	"time"
 
 	appproject "easycode/internal/application/project"
@@ -33,6 +36,8 @@ type View struct {
 	Header json.RawMessage
 	Body   string
 	Commit string // "" until the wave commit (git arrives with US-42)
+	// Attachments are the other files of the version (PL-24).
+	Attachments []domainartifact.Attachment
 }
 
 // VersionSummary is a history entry (ArtifactVersionSummary).
@@ -81,10 +86,69 @@ type Reader interface {
 	Versions(ctx context.Context, projectID, code string) ([]VersionSummary, error)
 }
 
+// Files reads a file of the project repository at a commit (the content of an attachment, PL-24).
+type Files interface {
+	// FileAt returns the file content, or not-found when the commit has no such file.
+	FileAt(ctx context.Context, projectID, commit, path string) ([]byte, error)
+}
+
 // Queries are the artifact reads of the api (US-26), for members of the project.
 type Queries struct {
 	projects appproject.Repository
 	reader   Reader
+	files    Files
+}
+
+// WithFiles gives the queries the project repository, for getArtifactAttachment (PL-24).
+func (q *Queries) WithFiles(files Files) *Queries {
+	q.files = files
+	return q
+}
+
+// AttachmentContent is a text attachment of a version (getArtifactAttachment).
+type AttachmentContent struct {
+	Attachment domainartifact.Attachment
+	Content    []byte
+}
+
+// Attachment is getArtifactAttachment (PL-24, RNF-05): a text attachment listed in the version, in the
+// exact content of its commit. A path out of the attachments is not-found; HTML, script, style, image
+// or font (the prototype) is a state-conflict, they only leave through the content origin (ADR-19).
+func (q *Queries) Attachment(ctx context.Context, principal identity.Principal, projectID, code string, version int, path string) (AttachmentContent, error) {
+	if _, err := appproject.Authorize(ctx, q.projects, principal, projectID); err != nil {
+		return AttachmentContent{}, err
+	}
+	if !domainartifact.ValidCode(code) || version < 1 {
+		return AttachmentContent{}, failure.New(failure.KindNotFound, failure.CodeNotFound, nil)
+	}
+	if path == "" || len(path) > 512 || strings.HasPrefix(path, "/") || strings.Contains(path, "..") || strings.Contains(path, "\\") {
+		return AttachmentContent{}, failure.Invalid(failure.FieldError{Field: "path", Message: "pattern"})
+	}
+	view, err := q.reader.Version(ctx, projectID, code, version)
+	if err != nil {
+		return AttachmentContent{}, err
+	}
+	attachment, ok := domainartifact.FindAttachment(view.Attachments, path)
+	if !ok {
+		return AttachmentContent{}, failure.New(failure.KindNotFound, failure.CodeNotFound, nil)
+	}
+	if !domainartifact.TextAttachment(attachment.MediaType) {
+		return AttachmentContent{}, failure.New(failure.KindConflict, failure.CodeStateConflict, nil).
+			With("reason", "the attachment is not text: it opens only through getArtifactContentUrl")
+	}
+	if view.Commit == "" || q.files == nil {
+		return AttachmentContent{}, failure.New(failure.KindConflict, failure.CodeStateConflict, nil).
+			With("reason", "the version has no commit in the project repository yet")
+	}
+	content, err := q.files.FileAt(ctx, projectID, view.Commit, attachment.RepositoryPath)
+	if err != nil {
+		return AttachmentContent{}, err
+	}
+	sum := sha256.Sum256(content)
+	if hex.EncodeToString(sum[:]) != attachment.SHA256 {
+		return AttachmentContent{}, failure.New(failure.KindInternal, failure.CodeInternal, nil)
+	}
+	return AttachmentContent{Attachment: attachment, Content: content}, nil
 }
 
 // NewQueries builds the queries.

@@ -27,6 +27,7 @@ import (
 	"easycode/internal/application/gate"
 	apprepository "easycode/internal/application/repository"
 	"easycode/internal/application/runtime"
+	"easycode/internal/domain/failure"
 )
 
 // MainBranch is the branch of every project repository.
@@ -400,4 +401,32 @@ func (r Repositories) Marks(ctx context.Context, projectID string) ([]gate.Mark,
 		marks = append(marks, gate.Mark{Name: parts[0], Commit: commit, When: when})
 	}
 	return marks, nil
+}
+
+// maxAttachmentBytes bounds a file read for getArtifactAttachment.
+const maxAttachmentBytes = 8 << 20
+
+// FileAt implements the artifact Files port (getArtifactAttachment, PL-24): the content of a file at a
+// recorded commit. An unknown commit or path is not-found.
+func (r Repositories) FileAt(ctx context.Context, projectID, commit, path string) ([]byte, error) {
+	if !shaPattern.MatchString(commit) || path == "" || strings.HasPrefix(path, "/") || strings.Contains(path, "..") ||
+		strings.ContainsAny(path, "\n\x00") {
+		return nil, failure.New(failure.KindNotFound, failure.CodeNotFound, nil)
+	}
+	dir, err := r.Path(projectID)
+	if err != nil {
+		return nil, failure.New(failure.KindNotFound, failure.CodeNotFound, nil)
+	}
+	if !r.hasHead(ctx, dir) {
+		return nil, failure.New(failure.KindNotFound, failure.CodeNotFound, nil)
+	}
+	object := commit + ":" + path
+	size, err := r.run(ctx, dir, nil, "cat-file", "-s", object)
+	if err != nil {
+		return nil, failure.New(failure.KindNotFound, failure.CodeNotFound, nil)
+	}
+	if n, err := strconv.Atoi(strings.TrimSpace(string(size))); err != nil || n > maxAttachmentBytes {
+		return nil, failure.New(failure.KindConflict, failure.CodeStateConflict, nil).With("reason", "attachment too large to show")
+	}
+	return r.run(ctx, dir, nil, "cat-file", "blob", object)
 }

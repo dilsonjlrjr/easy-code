@@ -59,7 +59,10 @@ const (
 	EnvWorkerMaxTokens      = "EASYCODE_WORKER_MAX_OUTPUT_TOKENS"
 	EnvWorkerID             = "EASYCODE_WORKER_ID"
 	EnvReposDir             = "EASYCODE_REPOS_DIR"
+	EnvFilesDir             = "EASYCODE_FILES_DIR"
 	EnvGitBaseURL           = "EASYCODE_GIT_BASE_URL"
+	EnvContentAddr          = "EASYCODE_CONTENT_ADDR"
+	EnvContentOrigin        = "EASYCODE_CONTENT_ORIGIN"
 	EnvSandboxSocket        = "EASYCODE_SANDBOX_SOCKET"
 	EnvSandboxImage         = "EASYCODE_SANDBOX_IMAGE"
 	EnvSandboxImages        = "EASYCODE_SANDBOX_IMAGES"
@@ -97,8 +100,21 @@ type Config struct {
 	Sandbox   Sandbox
 	// ReposDir is the directory of the project git repositories (volume repos, US-42).
 	ReposDir string
+	// FilesDir is the directory of the files volume: attachments of the business need (US-03) and evidence.
+	FilesDir string
 	// GitBaseURL is the public base of the clone URLs (Repository.clone_url); "" = PublicOrigin.
 	GitBaseURL string
+	// Content is the content origin of the prototypes (ADR-19, content.<domain>).
+	Content Content
+}
+
+// Content configures the content origin served by easycode-api on its own listener (ADR-19): no route to
+// /api, no cookie, signed URLs only. Origin "" turns it off (getArtifactContentUrl is not served).
+type Content struct {
+	// Addr is the listen address of the content origin.
+	Addr string
+	// Origin is its public origin (https://content.<domain>), the base of the signed URLs.
+	Origin string
 }
 
 // Sandbox configures easycode-sandbox and its use by the worker (ADR-05, ADR-06, RNF-03).
@@ -284,7 +300,14 @@ func Load(lookup LookupFunc) (Config, error) {
 		},
 	}
 	cfg.ReposDir = r.text(EnvReposDir, "/var/lib/easycode/repos")
+	cfg.FilesDir = r.text(EnvFilesDir, "/var/lib/easycode/files")
 	cfg.GitBaseURL = strings.TrimRight(r.text(EnvGitBaseURL, cfg.Identity.PublicOrigin), "/")
+	cfg.Content = Content{Addr: r.text(EnvContentAddr, ":8082"), Origin: strings.TrimRight(r.text(EnvContentOrigin, ""), "/")}
+	if o := cfg.Content.Origin; o != "" && (!strings.HasPrefix(o, "https://") && !strings.HasPrefix(o, "http://") ||
+		strings.EqualFold(o, cfg.Identity.PublicOrigin)) {
+		// ER-11-1: the prototype never runs on the platform origin.
+		r.fail(EnvContentOrigin, o, errors.New("want an http(s) origin other than the platform origin"))
+	}
 	cfg.Sandbox = Sandbox{
 		Socket: r.text(EnvSandboxSocket, "/run/easycode-sandbox/runner.sock"), Image: r.text(EnvSandboxImage, "go"),
 		Images: map[string]string{}, Runtime: r.text(EnvSandboxRuntime, "runc"), DockerSocket: r.text(EnvDockerSocket, "/var/run/docker.sock"),

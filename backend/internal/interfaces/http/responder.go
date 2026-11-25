@@ -172,6 +172,7 @@ var statusByCode = map[string]int{
 	codeRequiredPrecondition: fasthttp.StatusPreconditionRequired,
 	codeFailedPrecondition:   fasthttp.StatusPreconditionFailed,
 	"too-large-package":      fasthttp.StatusRequestEntityTooLarge, // US-44 CA-3
+	"too-large-attachment":   fasthttp.StatusRequestEntityTooLarge, // US-03 CA-4
 }
 
 // statusFor maps a failure to its HTTP status: first by code, then by kind (ADR-17).

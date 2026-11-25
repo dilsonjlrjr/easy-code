@@ -19,6 +19,28 @@ type GateUseCases interface {
 	Decide(ctx context.Context, principal identity.Principal, session identity.Session, decision appgate.Decision) (appgate.RoundView, error)
 }
 
+// GateCheckUseCases are the checks of the gate of a stage before any round (getStage `gate_checks`,
+// PENDENCIAS PC-20, PL-46) and the catalog names the rounds show (ESP-12).
+type GateCheckUseCases interface {
+	Checks(ctx context.Context, principal identity.Principal, projectID, gate string) ([]appgate.StageCheck, error)
+	NameOf(check string) string
+}
+
+// namedRound is roundOf with the catalog name of every check (ESP-12: "com o nome do catálogo").
+func (a *api) namedRound(r appgate.RoundView) map[string]any {
+	out := roundOf(r)
+	if a.deps.GateChecks == nil {
+		return out
+	}
+	checks, _ := out["checks"].([]map[string]any)
+	for _, check := range checks {
+		if id, ok := check["check"].(string); ok {
+			check["name"] = a.deps.GateChecks.NameOf(id)
+		}
+	}
+	return out
+}
+
 func roundOf(r appgate.RoundView) map[string]any {
 	out := map[string]any{"gate": r.Gate, "stage": r.Stage, "round": r.Round, "state": r.State, "opened_at": r.OpenedAt,
 		"approval_mode": r.ApprovalMode, "min_approvals": 1, "partial_approvals": []any{}, "blocking_findings": findingRefs(r.BlockingFindings, true),
@@ -65,6 +87,9 @@ func roundOf(r appgate.RoundView) map[string]any {
 			"failed_checks": orEmpty(d.FailedChecks), "blocking_findings": findingCodes(r.BlockingFindings)}
 		if d.Reason != "" {
 			decision["reason"] = d.Reason
+		}
+		if r.Gate == "gate."+appgate.AnnotationStage {
+			decision["annotations"] = annotationsJSON(r.Annotations)
 		}
 		out["decision"] = decision
 	}
@@ -125,7 +150,7 @@ func (a *api) getGateRound(rc *fasthttp.RequestCtx, principal identity.Principal
 	if err != nil {
 		return err
 	}
-	a.responder.JSON(rc, fasthttp.StatusOK, roundOf(view))
+	a.responder.JSON(rc, fasthttp.StatusOK, a.namedRound(view))
 	return nil
 }
 
@@ -147,13 +172,18 @@ func (a *api) decideGate(rc *fasthttp.RequestCtx, principal identity.Principal, 
 		decision.ConfirmedChecks, decision.Comment = body.Confirmed, body.Comment
 	} else {
 		var body struct {
-			Reason      string   `json:"reason"`
-			Unconfirmed []string `json:"unconfirmed_human_checks"`
+			Reason      string           `json:"reason"`
+			Unconfirmed []string         `json:"unconfirmed_human_checks"`
+			Annotations []annotationJSON `json:"annotations"`
 		}
 		if err := decodeJSON(rc, &body); err != nil {
 			return err
 		}
 		decision.Reason = body.Reason
+		for _, a := range body.Annotations {
+			decision.Annotations = append(decision.Annotations, appgate.Annotation{Screen: a.Screen, State: optionalText(a.State),
+				Width: a.Width, X: a.X, Y: a.Y, Comment: a.Comment})
+		}
 	}
 	operation := "approveGate"
 	if !approve {
@@ -165,7 +195,7 @@ func (a *api) decideGate(rc *fasthttp.RequestCtx, principal identity.Principal, 
 		if err != nil {
 			return created{}, err
 		}
-		return created{status: fasthttp.StatusOK, body: roundOf(view)}, nil
+		return created{status: fasthttp.StatusOK, body: a.namedRound(view)}, nil
 	})
 }
 

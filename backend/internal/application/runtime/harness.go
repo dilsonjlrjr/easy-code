@@ -134,6 +134,13 @@ func verifies(policy permission.Policy) bool {
 	return policy.Execute && build && tests
 }
 
+// untrustedText neutralizes the angle brackets of a free text a person or an agent wrote for the rework
+// input (the rejection reason, the finding, the edit reason), as the gate annotations are, so the text
+// cannot close the untrusted input block it goes in (RNF-05).
+func untrustedText(text string) string {
+	return strings.NewReplacer("<", "‹", ">", "›").Replace(text)
+}
+
 // Start implements Steps: system prompt from the pinned instruction, user message with the inputs
 // fenced as untrusted data.
 func (a *ToolAgent) Start(_ context.Context, wave WaveContext) (Checkpoint, string, error) {
@@ -148,6 +155,16 @@ func (a *ToolAgent) Start(_ context.Context, wave WaveContext) (Checkpoint, stri
 	if strings.TrimSpace(wave.BusinessNeed) != "" {
 		user.WriteString("Necessidade de negócio do projeto:\n<entrada_nao_confiavel>\n" + wave.BusinessNeed + "\n</entrada_nao_confiavel>")
 	}
+	for _, source := range wave.Sources {
+		if user.Len() > 0 {
+			user.WriteString("\n\n")
+		}
+		if source.Binary {
+			fmt.Fprintf(&user, "Anexo da necessidade de negócio %q (%s): arquivo binário ou grande demais, não lido.", source.Name, source.MediaType)
+			continue
+		}
+		fmt.Fprintf(&user, "Anexo da necessidade de negócio %q (%s):\n<entrada_nao_confiavel>\n%s\n</entrada_nao_confiavel>", source.Name, source.MediaType, source.Text)
+	}
 	if readable := readableFiles(wave, policy, agentState{}); len(readable) > 0 {
 		if user.Len() > 0 {
 			user.WriteString("\n\n")
@@ -161,12 +178,13 @@ func (a *ToolAgent) Start(_ context.Context, wave WaveContext) (Checkpoint, stri
 		user.WriteString("\nTarefa desta onda: " + wave.Task + ". Implemente só esta tarefa, no escopo de arquivos dela.")
 	}
 	if strings.TrimSpace(wave.Feedback) != "" {
-		user.WriteString("\n\nO gate desta etapa foi reprovado. Motivo do aprovador:\n<entrada_nao_confiavel>\n" + wave.Feedback +
+		user.WriteString("\n\nO gate desta etapa foi reprovado. Motivo do aprovador:\n<entrada_nao_confiavel>\n" + untrustedText(wave.Feedback) +
 			"\n</entrada_nao_confiavel>\nCorrija o que foi apontado; artefato reescrito sobe a versao e registra no historico.")
 	}
 	if f := wave.Finding; f != nil {
 		fmt.Fprintf(&user, "\n\nAchado %s (severidade %s, ciclo %d): %s\n<entrada_nao_confiavel>\nEvidência: %s\nCorreção sugerida: %s\nArtefatos afetados: %s\n</entrada_nao_confiavel>",
-			f.Code, f.Severity, f.Cycle, f.Title, f.Evidence, f.Suggestion, strings.Join(f.Affected, ", "))
+			f.Code, f.Severity, f.Cycle, untrustedText(f.Title), untrustedText(f.Evidence), untrustedText(f.Suggestion),
+			untrustedText(strings.Join(f.Affected, ", ")))
 		switch wave.Purpose {
 		case PurposeRework:
 			user.WriteString("\nEsta é uma onda de retrabalho do achado: corrija o que ele aponta no que é da sua etapa. Artefato reescrito sobe a " +
@@ -182,7 +200,7 @@ func (a *ToolAgent) Start(_ context.Context, wave WaveContext) (Checkpoint, stri
 			"Valide a edição contra o esquema do tipo e as regras da etapa e formate-a sem mudar o sentido. Se for válida, grave o artefato "+
 			"com versao igual à anterior mais 1 (1 na criação), `autor: humano`, `editado_por: %s` e `revisado_por: %s`; na exclusão, grave a nova "+
 			"versão sem o item. Se não for válida, não grave nada e explique o motivo com a sugestão de correção em finish().",
-			e.Operation, e.Type, orNone(e.Artifact), e.BaseVersion, e.Reason, e.Content, e.Editor, wave.Agent)
+			e.Operation, e.Type, orNone(e.Artifact), e.BaseVersion, untrustedText(e.Reason), e.Content, e.Editor, wave.Agent)
 	}
 	if wave.Purpose == PurposeReevaluation {
 		user.WriteString("\n\nEsta é uma onda de reavaliação: uma dependência desta etapa foi reaberta e aprovada de novo. Compare as entradas " +
@@ -210,6 +228,9 @@ func (a *ToolAgent) Start(_ context.Context, wave WaveContext) (Checkpoint, stri
 	for _, opinion := range wave.Opinions {
 		encoded, _ := json.Marshal(opinion)
 		digest.Write(append(encoded, 0))
+	}
+	for _, source := range wave.Sources {
+		digest.Write([]byte(source.Name + "\x00" + source.Text + "\x00"))
 	}
 	if wave.Edit != nil {
 		encoded, _ := json.Marshal(wave.Edit)
@@ -661,7 +682,7 @@ func (a *ToolAgent) execute(ctx context.Context, wave WaveContext, policy permis
 	}
 	request := sandbox.ExecutionRequest{
 		ExecutionID: executionID(wave, number), ProjectID: wave.ProjectID, WaveID: wave.WaveID, Agent: wave.Agent, Attempt: wave.Attempt,
-		Image: wave.Image, Category: args.Category, Argv: args.Argv, Directory: directory, Limits: wave.Limits,
+		Image: sandbox.ImageFor(args.Category, wave.Image), Category: args.Category, Argv: args.Argv, Directory: directory, Limits: wave.Limits,
 	}
 	outcome, err := a.runner.Run(ctx, request, files)
 	if err != nil {

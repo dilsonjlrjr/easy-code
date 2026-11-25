@@ -1,11 +1,13 @@
 #!/bin/sh
 # Restores one backup run of backup.sh (RNF-11: RTO 4 h, restore tested every quarter; docs/dados/PERSIST.md):
-# the dump into an empty database and the repositories into an empty folder. Checksums are verified first.
+# the dump into an empty database, the repositories and the files volume into empty folders. Checksums are
+# verified first.
 #
 # Usage: restore.sh <run folder>
 #   Database: PGHOST, PGPORT, PGUSER (a superuser of the new server: objects keep their owner roles, which the
 #             first migration creates), PGPASSWORD, PGDATABASE (empty database). Skipped without PGDATABASE.
 #   Repositories: EASYCODE_REPOS_DIR (empty folder of the new repos volume). Skipped without it.
+#   Files: EASYCODE_FILES_DIR (empty folder of the new files volume). Skipped without it.
 # A dump restored outside production goes through the anonymization job before use (PERSIST.md).
 set -eu
 
@@ -18,5 +20,9 @@ fi
 if [ -n "${EASYCODE_REPOS_DIR:-}" ] && [ -f "$run/repos.tar.gz" ]; then
 	mkdir -p "$EASYCODE_REPOS_DIR"
 	tar -C "$EASYCODE_REPOS_DIR" -xzf "$run/repos.tar.gz"
+fi
+if [ -n "${EASYCODE_FILES_DIR:-}" ] && [ -f "$run/files.tar.gz" ]; then
+	mkdir -p "$EASYCODE_FILES_DIR"
+	tar -C "$EASYCODE_FILES_DIR" -xzf "$run/files.tar.gz"
 fi
 echo "restored $run"

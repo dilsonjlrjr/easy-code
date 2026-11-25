@@ -16,9 +16,9 @@ resumo:
   medio: {abertos: 0, fechados: 0, aceitos: 0}
   baixo: {abertos: 0, fechados: 0, aceitos: 0}
 varreduras:
-  - {ferramenta: opengrep, versao: "1.2.0", comando: "opengrep scan --config auto app", achados: [], falsos_positivos: 0}
-  - {ferramenta: trivy, versao: "0.60.0", comando: "trivy fs --offline-scan --skip-db-update app", achados: [ACH-04], falsos_positivos: 0}
-  - {ferramenta: gitleaks, versao: "8.24.0", comando: "gitleaks dir app", achados: [], falsos_positivos: 0}
+  - {ferramenta: opengrep, versao: "1.33.1", comando: "opengrep scan --config /opt/easycode/opengrep-rules app", achados: [], falsos_positivos: 0}
+  - {ferramenta: trivy, versao: "0.76.2", comando: "trivy fs --offline-scan --skip-db-update app", achados: [ACH-04], falsos_positivos: 0}
+  - {ferramenta: gitleaks, versao: "8.30.1", comando: "gitleaks dir app", achados: [], falsos_positivos: 0}
 owasp:
   - {categoria: A01, verificado: true, resultado: sem problema, achados: []}
   - {categoria: A02, verificado: true, resultado: sem problema, achados: []}
@@ -32,7 +32,7 @@ owasp:
   - {categoria: A10, verificado: true, resultado: sem problema, achados: []}
 ameacas_conferidas: []
 falsos_positivos: []
-comandos: ["opengrep scan --config auto app", "trivy fs --offline-scan --skip-db-update app", "gitleaks dir app"]
+comandos: ["opengrep scan --config /opt/easycode/opengrep-rules app", "trivy fs --offline-scan --skip-db-update app", "gitleaks dir app"]
 veredito: reprovado
 ---
 # REL-SEG-01

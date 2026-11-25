@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"easycode/internal/application/artifact"
 	"easycode/internal/application/event"
@@ -121,8 +122,12 @@ type Executor struct {
 	now          func() time.Time
 	repository   Repository
 	attachments  func(stage string) []string
-	findings     FindingProgress
-	budget       Budget
+	// attachmentSpecs gives, per stage, the attachment outputs with the artifact type they belong to, to
+	// record the attachments of every version (Artifact.attachments, PL-24).
+	attachmentSpecs func(stage string) []domainartifact.AttachmentSpec
+	sources         SourceReader
+	findings        FindingProgress
+	budget          Budget
 }
 
 // WithBudget makes the executor apply the project budget after every recorded cost (US-39, RNF-16).
@@ -168,6 +173,56 @@ func (e *Executor) WithFindings(findings FindingProgress) *Executor {
 func (e *Executor) WithRepository(repository Repository, attachments func(stage string) []string) *Executor {
 	e.repository, e.attachments = repository, attachments
 	return e
+}
+
+// WithAttachmentSpecs makes the executor record, with every artifact version, the other files of the
+// artifact folder after the wave (openapi.yaml, estrutura.md, prototipo/; PL-24).
+func (e *Executor) WithAttachmentSpecs(specs func(stage string) []domainartifact.AttachmentSpec) *Executor {
+	e.attachmentSpecs = specs
+	return e
+}
+
+// WithSources makes the executor give the attachments of the business need to the Requisitos waves (US-03).
+func (e *Executor) WithSources(sources SourceReader) *Executor {
+	e.sources = sources
+	return e
+}
+
+// maxSourceBytes bounds the text of one attachment given to the agent.
+const maxSourceBytes = 512 << 10
+
+// sourceFiles reads the attachments of the business need; a binary or too large file goes by name only.
+func (e *Executor) sourceFiles(ctx context.Context, attachments []SourceAttachment) ([]SourceFile, error) {
+	if e.sources == nil || len(attachments) == 0 {
+		return nil, nil
+	}
+	files := make([]SourceFile, 0, len(attachments))
+	for _, a := range attachments {
+		content, err := e.sources.Read(ctx, a.Path)
+		if err != nil {
+			return nil, err
+		}
+		file := SourceFile{Name: a.FileName, MediaType: a.MediaType}
+		if len(content) > maxSourceBytes || !utf8.Valid(content) {
+			file.Binary = true
+		} else {
+			file.Text = string(content)
+		}
+		files = append(files, file)
+	}
+	return files, nil
+}
+
+// versionFiles is the repository after the wave: the base and the outputs of the wave over it.
+func versionFiles(wave WaveContext, outputs []Output) map[string][]byte {
+	files := make(map[string][]byte, len(wave.Base)+len(outputs))
+	for p, content := range wave.Base {
+		files[p] = []byte(content)
+	}
+	for _, output := range outputs {
+		files[output.Path] = output.Content
+	}
+	return files
 }
 
 // NewExecutor builds the executor. outputs gives the artifact types each stage must deliver.
@@ -353,6 +408,9 @@ func (e *Executor) execute(ctx context.Context, c Claimed) error {
 	}
 	if wave.Purpose == "" {
 		wave.Purpose = PurposeExecution
+	}
+	if wave.Sources, err = e.sourceFiles(ctx, inputs.Attachments); err != nil {
+		return err
 	}
 	if wave.Reviewing() || wave.Purpose != PurposeExecution {
 		// the delivery of a participant, rework, revalidation, reevaluation or edit review wave is not the full stage output
@@ -781,9 +839,22 @@ func (e *Executor) deliver(ctx context.Context, c Claimed, agent Agent, wave Wav
 				return err
 			}
 		}
+		var tree map[string][]byte
+		var specs []domainartifact.AttachmentSpec
+		if e.attachmentSpecs != nil {
+			if specs = e.attachmentSpecs(c.Stage); len(specs) > 0 {
+				tree = versionFiles(wave, result.Outputs)
+			}
+		}
 		for _, output := range artifacts {
+			var attachments []domainartifact.Attachment
+			if tree != nil {
+				if _, artifactType, err := e.artifacts.Parse(output.Content); err == nil {
+					attachments = domainartifact.VersionAttachments(artifactType, output.Path, specs, tree)
+				}
+			}
 			stored, err := e.artifacts.StoreVersion(ctx, artifact.Input{ProjectID: c.ProjectID, WaveCode: c.Code, Agent: c.Agent,
-				Path: output.Path, Content: output.Content, CorrelationID: correlation(c)})
+				Path: output.Path, Content: output.Content, CorrelationID: correlation(c), Attachments: attachments})
 			if err != nil {
 				return err
 			}

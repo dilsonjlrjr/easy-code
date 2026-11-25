@@ -30,14 +30,16 @@ const (
 
 // WaveContext is what the harness knows of the wave it runs.
 type WaveContext struct {
-	ProjectID     string
-	WaveID        string // public id
-	Code          string // REQ-01
-	Stage         string
-	Agent         string
-	Attempt       int
-	Instruction   string // instruction text in the pinned version
-	BusinessNeed  string // untrusted input (RNF-05)
+	ProjectID    string
+	WaveID       string // public id
+	Code         string // REQ-01
+	Stage        string
+	Agent        string
+	Attempt      int
+	Instruction  string // instruction text in the pinned version
+	BusinessNeed string // untrusted input (RNF-05)
+	// Sources are the attachments of the business need (US-03), only in the Requisitos stage; untrusted.
+	Sources       []SourceFile
 	Constraints   string // rendered technical constraints, untrusted
 	Skills        string // skills of the agent in the project, by description (US-43 RN-1)
 	Language      string // artifact language (RNF-21)

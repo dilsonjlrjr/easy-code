@@ -25,6 +25,7 @@ const (
 // CatalogCheck is one check of checagens.yaml.
 type CatalogCheck struct {
 	ID              string `json:"id"`
+	Name            string `json:"name"` // the catalog name the interface shows (ESP-12, PC-20)
 	Type            string `json:"type"`
 	FailureSeverity string `json:"failure_severity"`
 }
@@ -136,6 +137,14 @@ func (c Composition) ChecksOf(gate string, promoted []string) []Spec {
 	}
 	sort.SliceStable(specs, func(i, j int) bool { return specs[i].Severity == SeverityBlocks && specs[j].Severity != SeverityBlocks })
 	return specs
+}
+
+// NameOf is the catalog name of a check; the id when the catalog has no name for it.
+func (c Composition) NameOf(check string) string {
+	if name := c.Catalog[check].Name; name != "" {
+		return name
+	}
+	return check
 }
 
 // RequiresHuman reports whether a failed alert takes an automatic round to awaiting_human (PC-06).

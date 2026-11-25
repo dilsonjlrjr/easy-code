@@ -17,9 +17,11 @@ import (
 	"easycode/internal/application/runtime"
 	appwave "easycode/internal/application/wave"
 	appworkflow "easycode/internal/application/workflow"
+	domainartifact "easycode/internal/domain/artifact"
 	"easycode/internal/domain/sandbox"
 	domainworkflow "easycode/internal/domain/workflow"
 	"easycode/internal/infrastructure/config"
+	"easycode/internal/infrastructure/files"
 	"easycode/internal/infrastructure/git"
 	"easycode/internal/infrastructure/postgres"
 	"easycode/internal/infrastructure/specs"
@@ -88,7 +90,7 @@ func newRuntime(cfg config.Config, pool *pgxpool.Pool, propagator propagation.Te
 		stageOutputs(wf), runtime.Settings{Worker: worker, Lease: cfg.Worker.WaveLease, MaxCorrections: cfg.Worker.MaxArtifactCorrections,
 			RetryBackoff: 2 * time.Second, Poll: cfg.Worker.CommandPollInterval, Image: cfg.Sandbox.Image,
 			ProjectLimits: sandbox.Limits{CPU: cfg.Sandbox.CPU, MemoryMiB: cfg.Sandbox.MemoryMiB, DiskMiB: cfg.Sandbox.DiskMiB, Time: cfg.Sandbox.CommandTime}}, logger).
-		WithRepository(repository, stageAttachments(wf)).WithFindings(findings).WithBudget(orchestrator)
+		WithRepository(repository, stageAttachments(wf)).WithAttachmentSpecs(stageAttachmentSpecs(wf)).WithSources(files.New(cfg.FilesDir)).WithFindings(findings).WithBudget(orchestrator)
 	return runtimeParts{executor: executor, progress: progress, findings: findings, orchestrator: orchestrator,
 		answers: appwave.NewAnswerHandler(postgres.NewWaves(pool, wf.Definition), outbox)}, nil
 }
@@ -154,6 +156,24 @@ func stageAttachments(wf specs.Workflow) func(string) []string {
 			}
 		}
 		return paths
+	}
+}
+
+// stageAttachmentSpecs lists the attachment outputs of a stage with the artifact type they belong to
+// (Artifact.attachments, PL-24); the api/ folder of openapi.yaml comes along, as in stageAttachments.
+func stageAttachmentSpecs(wf specs.Workflow) func(string) []domainartifact.AttachmentSpec {
+	return func(stage string) []domainartifact.AttachmentSpec {
+		var out []domainartifact.AttachmentSpec
+		for _, output := range stageOutputList(wf, stage) {
+			if !output.Attachment || output.Type == "" {
+				continue
+			}
+			out = append(out, domainartifact.AttachmentSpec{Type: output.Type, Path: output.Path})
+			if dir := path.Dir(output.Path); strings.HasSuffix(dir, "/api") {
+				out = append(out, domainartifact.AttachmentSpec{Type: output.Type, Path: dir + "/"})
+			}
+		}
+		return out
 	}
 }
 

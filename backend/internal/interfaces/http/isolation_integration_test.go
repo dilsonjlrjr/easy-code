@@ -56,12 +56,16 @@ func TestEveryProjectRouteIsIsolatedBetweenProjects(t *testing.T) {
 	if checked < 25 {
 		t.Fatalf("only %d project routes walked", checked)
 	}
-	for _, list := range []string{"/api/v1/projects", "/api/v1/pending-items"} {
+	// US-56 CA-1: the header search finds nothing of B, though both names match.
+	for _, list := range []string{"/api/v1/projects", "/api/v1/pending-items", "/api/v1/search?search=Projeto"} {
 		if strings.Contains(string(anaAPI.send("GET", list, "", nil).Response.Body()), projectB) {
 			t.Errorf("%s shows project B", list)
 		}
 	}
 	if n := anaAPI.json(t, "GET", "/api/v1/projects", "", nil, 200)["items"].([]any); len(n) != 1 {
 		t.Fatalf("ana sees only project A: %v", n)
+	}
+	if found := anaAPI.json(t, "GET", "/api/v1/search?search=Projeto", "", nil, 200)["projects"].(map[string]any); found["total"] != float64(1) {
+		t.Fatalf("US-56 CA-1: the search counts only project A: %v", found)
 	}
 }

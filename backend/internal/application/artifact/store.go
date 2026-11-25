@@ -55,6 +55,8 @@ type NewVersion struct {
 	Header      json.RawMessage
 	Body        string
 	ContentHash string
+	// Attachments are the other files of the version in the artifact folder (PL-24).
+	Attachments []domainartifact.Attachment
 }
 
 // Repository stores artifacts and versions (worker role).
@@ -105,6 +107,8 @@ type Input struct {
 	Description string // historico entry of this version
 	// CorrelationID ties the artifact.created event to the wave flow; empty creates a new one.
 	CorrelationID string
+	// Attachments are the other files of the version in the artifact folder (PL-24); nil is none.
+	Attachments []domainartifact.Attachment
 }
 
 // Stored is the recorded version.
@@ -176,6 +180,7 @@ func (s *Store) StoreVersion(ctx context.Context, in Input) (Stored, error) {
 		next := NewVersion{
 			ProjectID: in.ProjectID, Code: code, Type: artifactType, Title: title, Version: 1, WaveCode: in.WaveCode,
 			Author: in.Agent, Description: strings.TrimSpace(in.Description), Path: in.Path, Body: document.Body,
+			Attachments: in.Attachments,
 		}
 		switch {
 		case latest == nil:

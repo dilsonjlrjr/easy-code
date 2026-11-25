@@ -17,6 +17,7 @@ export const ROUTE_NAMES = {
   wave: 'wave',
   gate: 'gate',
   artifact: 'artifact',
+  prototype: 'prototype',
   pendingItems: 'pending-items',
   agents: 'agents',
   projectAgents: 'project-agents',
@@ -46,6 +47,7 @@ export const NAVIGATION_SECTIONS: Partial<Record<RouteName, RouteName>> = {
   [ROUTE_NAMES.wave]: ROUTE_NAMES.projects,
   [ROUTE_NAMES.gate]: ROUTE_NAMES.projects,
   [ROUTE_NAMES.artifact]: ROUTE_NAMES.projects,
+  [ROUTE_NAMES.prototype]: ROUTE_NAMES.projects,
   [ROUTE_NAMES.projectAgents]: ROUTE_NAMES.agents,
 }
 

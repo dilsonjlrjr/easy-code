@@ -449,6 +449,13 @@ func runTeam(t *testing.T, live liveAPI, work teamWorker, base string) teamOutco
 		t.Fatalf("US-20 CA-4: gate.validation %v", validation)
 	}
 	record("gate.validation", validation)
+	// getStage shows the mode the gate takes (workflow default plus gate_configurations), not a fixed human.
+	if a := live.json(t, "GET", base+"/stages/validation", "", nil, 200)["approval"].(map[string]any); a["mode"] != "automatic" {
+		t.Fatalf("getStage approval of the validation: %v", a)
+	}
+	if a := live.json(t, "GET", base+"/stages/design", "", nil, 200)["approval"].(map[string]any); a["mode"] != "human" {
+		t.Fatalf("getStage approval of the design: %v", a)
+	}
 	work.reconcile(t)
 	if states := waveStates(t, live, base); states["DEV-01"] != "queued" {
 		t.Fatalf("implementation unblocked after the validation: %v", states)

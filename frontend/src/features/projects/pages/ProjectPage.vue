@@ -22,6 +22,9 @@ import { useFormat } from '@/shared/format/useFormat'
 import { moneyShare } from '@/shared/format/formatters'
 import { subtractMoney } from '@/shared/format/money'
 import type { Money } from '@/shared/api/contract'
+import { repositoryApi } from '@/features/repository/api/repositoryApi'
+import { costsApi } from '@/features/costs/api/costsApi'
+import { nextStageOf } from '@/features/costs/composables/costView'
 import ProjectLifecycleActions from '../components/ProjectLifecycleActions.vue'
 import StartRefusal from '../components/StartRefusal.vue'
 import { currentProjectApi, useCurrentProjectStore } from '../stores/currentProjectStore'
@@ -48,13 +51,20 @@ const budgetExhausted = ref<{ cause?: string; estimate?: Money; balance?: Money 
 
 const projectId = computed(() => String(route.params.projectId))
 const startFailure = ref<unknown>()
+/** ESP-06 (CA-06-25, PC-17): the platform clone address, copyable, in the header. */
+const cloneUrl = ref<string>()
+/** ESP-06 3.2 (PC-19): the estimate of the first stage while the project is `created`. */
+const firstStageEstimate = ref<Money>()
 const starting = ref(false)
 let startKey = newIdempotencyKey()
 let refreshTimer: ReturnType<typeof setTimeout> | undefined
 
 const loader = useLoader(async () => {
   store.clear()
+  cloneUrl.value = undefined
+  firstStageEstimate.value = undefined
   const lastSequence = await store.load(projectId.value)
+  void loadHeaderExtras(projectId.value)
   live.open({
     projectId: projectId.value,
     since: lastSequence,
@@ -219,6 +229,39 @@ function handleEvent(event: CloudEvent, eventClass: EventClass): void {
   scheduleRefresh()
 }
 
+/**
+ * The clone address and the first-stage estimate complete the header; either can be missing
+ * (repository not served, estimate refused) and the rest of the page does not depend on them.
+ */
+async function loadHeaderExtras(id: string): Promise<void> {
+  const firstStage =
+    store.project?.state === 'created'
+      ? nextStageOf(
+          store.workflow?.stages.filter((stage) => stage.type === 'stage') ?? [],
+          'created',
+        )
+      : undefined
+  const [repository, estimate] = await Promise.all([
+    repositoryApi.getRepository(id).catch(() => undefined),
+    firstStage
+      ? costsApi.getStageEstimate(id, firstStage.id).catch(() => undefined)
+      : Promise.resolve(undefined),
+  ])
+  if (id !== projectId.value) return
+  cloneUrl.value = repository?.clone_url
+  firstStageEstimate.value = estimate?.estimated
+}
+
+async function copyCloneUrl(): Promise<void> {
+  if (!cloneUrl.value) return
+  try {
+    await navigator.clipboard.writeText(cloneUrl.value)
+    announce(t('repository.copied'))
+  } catch {
+    announce(t('repository.copyFailed'))
+  }
+}
+
 /** US-05 CA-1 / CA-06-4: start the workflow; the command is followed until applied or refused. */
 async function startWorkflow(): Promise<void> {
   const api = currentProjectApi()
@@ -295,6 +338,19 @@ onBeforeUnmount(() => {
             }}</template>
           </span>
           <LiveConnectionStatus class="t2 meta-text" :status="live.status.value" />
+        </span>
+        <span v-if="cloneUrl" class="t2 meta-text clone-row" data-testid="header-clone-url">
+          <span class="sr-only">{{ $t('repository.cloneUrl') }}:</span>
+          <span class="mono clone-url">{{ cloneUrl }}</span>
+          <button
+            type="button"
+            class="ibtn"
+            :aria-label="$t('repository.copy')"
+            :title="$t('repository.copy')"
+            @click="copyCloneUrl"
+          >
+            <CanvasIcon name="copy" :size="16" />
+          </button>
         </span>
         <span v-if="pausedBy" class="t2 meta-text" data-testid="paused-by">
           {{
@@ -443,7 +499,12 @@ onBeforeUnmount(() => {
     </div>
     <div v-if="project.state === 'created'" class="note">
       <CanvasIcon name="bolt" />
-      <span class="note-text">{{ $t('projects.view.notStarted') }}</span>
+      <span class="note-text">
+        <span class="note-line">{{ $t('projects.view.notStarted') }}</span>
+        <span v-if="firstStageEstimate" class="note-line" data-testid="first-stage-estimate">
+          {{ $t('projects.view.firstStageEstimate', { value: format.money(firstStageEstimate) }) }}
+        </span>
+      </span>
     </div>
     <StartRefusal v-if="startFailure" :error="startFailure" />
 
@@ -483,6 +544,18 @@ onBeforeUnmount(() => {
   gap: 8px;
   flex-wrap: wrap;
   align-items: center;
+}
+
+.clone-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.clone-url {
+  overflow-wrap: anywhere;
 }
 
 .note-text {

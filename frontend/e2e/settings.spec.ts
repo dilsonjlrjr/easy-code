@@ -93,7 +93,7 @@ test('US-37 CA-1/CA-3: a new price period goes on top, the used one stays and ca
   await expect(dialog).toContainText('Confira a vigência antes de gravar')
   await dialog.getByRole('button', { name: 'Registrar vigência' }).click()
 
-  const rows = page.locator('tbody tr')
+  const rows = page.getByTestId('price-periods').locator('tbody tr')
   await expect(rows).toHaveCount(2)
   await expect(rows.first()).toContainText('ainda não usada')
   await expect(rows.first().getByRole('button', { name: 'Corrigir' })).toBeVisible()

@@ -54,3 +54,16 @@ func TestGovernanceCompositionIsComplete(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// ESP-12, PC-20: every check of the catalog has the name the gate and the stage exit criteria show.
+func TestEveryCatalogCheckHasAName(t *testing.T) {
+	composition, err := specs.Governance()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for id, check := range composition.Catalog {
+		if check.Name == "" || composition.NameOf(id) != check.Name {
+			t.Fatalf("check %s has no catalog name", id)
+		}
+	}
+}

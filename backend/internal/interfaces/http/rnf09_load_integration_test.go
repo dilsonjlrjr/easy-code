@@ -16,6 +16,7 @@ import (
 	appartifact "easycode/internal/application/artifact"
 	appcost "easycode/internal/application/cost"
 	appproject "easycode/internal/application/project"
+	appsearch "easycode/internal/application/search"
 	apptrail "easycode/internal/application/trail"
 	appwave "easycode/internal/application/wave"
 	appworkflow "easycode/internal/application/workflow"
@@ -54,6 +55,7 @@ func scaleDeps(t *testing.T) func(*httpapi.Dependencies, *postgrestest.Database)
 		d.Waves, d.Access = waves, waves
 		d.Costs = appcost.NewService(projects, postgres.NewCosts(pool, wf.Definition), wf.Definition.StageIDs())
 		d.Audit = apptrail.NewQueries(projects, postgres.NewAuditReader(pool))
+		d.Search = appsearch.NewService(postgres.NewSearch(pool)) // US-56
 	}
 }
 
@@ -139,7 +141,7 @@ const thinkTime = time.Second
 
 // TestRNF09LoadAtScaleS4 measures RNF-09: 50 people at once over 100 projects and 20,000 waves; every read
 // of the screens (dashboard, project, costs, estimate, trail, comparison, artifact, waves, workflow, home
-// card) answers within 500 ms at p95 and the write (createProject) within 1 s. The model providers are out
+// card, header search of US-56) answers within 500 ms at p95 and the write (createProject) within 1 s. The model providers are out
 // of the measure (no model call is made). The 50 people work at the same time, each with a think time between
 // requests (about 50 requests per second in all), after one unmeasured round that warms the api. Run it with
 // make load-test.
@@ -203,6 +205,8 @@ func TestRNF09LoadAtScaleS4(t *testing.T) {
 				measure("compareArtifactVersions", false, "GET", base+"/artifacts/VISAO/comparison?from=1&to=2", "", nil)
 				measure("getArtifact", false, "GET", base+"/artifacts/VISAO", "", nil)
 				measure("getUserCosts", false, "GET", "/api/v1/me/costs", "", nil)
+				measure("searchPlatform", false, "GET", "/api/v1/search?search=carga%200", "", nil)
+				measure("searchPlatform?id", false, "GET", "/api/v1/search?search=ACH-01", "", nil)
 				body := strings.Replace(newProjectBody, "Reserva de salas", fmt.Sprintf("Escrita %02d-%d", n, r+1), 1)
 				key := map[string]string{"Idempotency-Key": fmt.Sprintf("0193a5c0-44aa-7e01-b2c9-%012d", 900000+keys.Add(1))}
 				measure("createProject", true, "POST", "/api/v1/projects", body, key)

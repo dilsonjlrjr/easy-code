@@ -25,6 +25,7 @@ import (
 	appworkflow "easycode/internal/application/workflow"
 	domainworkflow "easycode/internal/domain/workflow"
 	"easycode/internal/infrastructure/config"
+	"easycode/internal/infrastructure/files"
 	"easycode/internal/infrastructure/git"
 	"easycode/internal/infrastructure/logging"
 	"easycode/internal/infrastructure/oidc"
@@ -338,7 +339,7 @@ func runHeartbeat(ctx context.Context, jobs jobRunner, health *apphealth.Service
 // startRetention runs the deletion of projects (US-04): repository destroyed and personal data anonymized
 // with the retention role, every SSO poll interval (the anonymization deadline is 24 h, RNF-20).
 func startRetention(ctx context.Context, cfg config.Config, pool *pgxpool.Pool, jobs jobRunner) {
-	job := retention.NewJob(postgres.NewTxRunner(pool), postgres.NewRetention(pool), git.New(cfg.ReposDir), postgres.NewOutbox(pool))
+	job := retention.NewJob(postgres.NewTxRunner(pool), postgres.NewRetention(pool), git.New(cfg.ReposDir), files.New(cfg.FilesDir), postgres.NewOutbox(pool))
 	go func() {
 		ticker := time.NewTicker(cfg.Worker.SSOPollInterval)
 		defer ticker.Stop()

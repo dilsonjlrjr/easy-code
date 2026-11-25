@@ -179,6 +179,22 @@ SELECT pr.business_need, pr.artifact_language, coalesce(ac.instruction_version, 
 	if err != nil {
 		return in, fmt.Errorf("wave inputs: %w", classify(err))
 	}
+	if c.Stage == "requirements" {
+		// US-03: the attachments of the business need are inputs of the Requisitos stage (untrusted, RNF-05).
+		if in.Attachments, err = sourceAttachments(ctx, q, c.WaveID); err != nil {
+			return in, err
+		}
+	}
+	if in.Feedback != "" {
+		// US-57 CA-2: the prototype annotations of that rejection go with its reason (untrusted, RN-2).
+		notes, err := reworkAnnotations(ctx, q, c.WaveID)
+		if err != nil {
+			return in, err
+		}
+		if notes != "" {
+			in.Feedback += "\n\n" + notes
+		}
+	}
 	if len(constraints) > 0 {
 		var items []constraintJSON
 		if err := json.Unmarshal(constraints, &items); err == nil {
@@ -599,4 +615,21 @@ SELECT mp.id FROM easycode.model_prices mp JOIN easycode.projects p ON p.organiz
 		return 0, fmt.Errorf("current price: %w", classify(err))
 	}
 	return id, nil
+}
+
+// sourceAttachments lists the attachments of the business need of the project of a wave (US-03), the
+// content still in the files volume.
+func sourceAttachments(ctx context.Context, q querier, waveID int64) ([]runtime.SourceAttachment, error) {
+	rows, err := q.Query(WithOperation(ctx, "waves.source_attachments"), `
+SELECT pa.file_name, pa.media_type, pa.path
+  FROM easycode.waves w JOIN easycode.project_attachments pa ON pa.project_id = w.project_id
+ WHERE w.id = $1 AND pa.content_purged_at IS NULL
+ ORDER BY pa.submitted_at, pa.id`, waveID)
+	if err != nil {
+		return nil, fmt.Errorf("wave source attachments: %w", classify(err))
+	}
+	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (runtime.SourceAttachment, error) {
+		var a runtime.SourceAttachment
+		return a, row.Scan(&a.FileName, &a.MediaType, &a.Path)
+	})
 }

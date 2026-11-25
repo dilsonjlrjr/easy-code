@@ -42,7 +42,8 @@ type Summary struct {
 	StartedAt     *time.Time
 	EndedAt       *time.Time
 	Cost          Cost
-	Task          string // T of an implementation wave (PL-20)
+	Tokens        provider.Usage // tokens of the wave so far (ESP-06 CA-06-11)
+	Task          string         // T of an implementation wave (PL-20)
 }
 
 // View is getWave.
@@ -52,7 +53,6 @@ type View struct {
 	InstructionVersion   string
 	InputsDigest         string
 	PriceTable           string
-	Tokens               provider.Usage
 	ExecutionMs, CycleMs int64
 	FailureCause         string
 	ArtifactErrors       json.RawMessage

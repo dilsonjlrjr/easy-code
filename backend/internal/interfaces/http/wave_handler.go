@@ -74,12 +74,13 @@ type waveSummaryJSON struct {
 	StartedAt     *time.Time `json:"started_at"`
 	EndedAt       *time.Time `json:"ended_at"`
 	CostTotal     moneyJSON  `json:"cost_total"`
+	Tokens        tokensJSON `json:"tokens"`
 }
 
 func waveSummaryOf(s appwave.Summary) waveSummaryJSON {
 	return waveSummaryJSON{ID: s.Code, Stage: s.Stage, Agent: s.Agent, State: s.State, Purpose: s.Purpose, Attempt: s.Attempt, Task: optional(s.Task),
 		ConfigVersion: s.ConfigVersion, CreatedAt: s.CreatedAt, StartedAt: s.StartedAt, EndedAt: s.EndedAt,
-		CostTotal: moneyJSON{addDecimal(s.Cost.Useful, s.Cost.Lost), s.Cost.Currency}}
+		CostTotal: moneyJSON{addDecimal(s.Cost.Useful, s.Cost.Lost), s.Cost.Currency}, Tokens: tokensOf(s.Tokens)}
 }
 
 type expectedOutputJSON struct {
@@ -93,7 +94,6 @@ type waveJSON struct {
 	waveSummaryJSON
 	Models           pairJSON             `json:"models"`
 	Versions         map[string]any       `json:"versions"`
-	Tokens           tokensJSON           `json:"tokens"`
 	Cost             detailedCostJSON     `json:"cost"`
 	Time             map[string]int64     `json:"time"`
 	Result           *string              `json:"result"`
@@ -144,8 +144,8 @@ func waveOf(v appwave.View) waveJSON {
 		waveSummaryJSON: waveSummaryOf(v.Summary),
 		Models: pairJSON{Reasoning: &modelRefJSON{Provider: v.Reasoning.Provider, Model: v.Reasoning.Model},
 			Execution: &modelRefJSON{Provider: v.Execution.Provider, Model: v.Execution.Model}},
-		Versions: map[string]any{"instructions": v.InstructionVersion, "agent_configuration": v.ConfigVersion, "skills": skillVersions(v.Skills)},
-		Tokens:   tokensOf(v.Tokens), Cost: costOf(v.Cost),
+		Versions:     map[string]any{"instructions": v.InstructionVersion, "agent_configuration": v.ConfigVersion, "skills": skillVersions(v.Skills)},
+		Cost:         costOf(v.Cost),
 		Time:         map[string]int64{"execution_ms": v.ExecutionMs, "cycle_ms": v.CycleMs},
 		FailureCause: optional(v.FailureCause), ArtifactErrors: v.ArtifactErrors, LastCheckpoint: v.LastCheckpoint,
 		QuestionOpen: optional(v.QuestionOpen), ExpectedOutputs: []expectedOutputJSON{}, Attempts: []attemptJSON{},

@@ -21,18 +21,23 @@ import (
 	"github.com/valyala/fasthttp"
 
 	appartifact "easycode/internal/application/artifact"
+	appattachment "easycode/internal/application/attachment"
 	"easycode/internal/application/command"
+	appcontent "easycode/internal/application/content"
 	appcost "easycode/internal/application/cost"
 	appevent "easycode/internal/application/event"
 	appgate "easycode/internal/application/gate"
 	appgateway "easycode/internal/application/gateway"
 	apppending "easycode/internal/application/pending"
 	"easycode/internal/application/runtime"
+	appsearch "easycode/internal/application/search"
 	apptrail "easycode/internal/application/trail"
 	appwave "easycode/internal/application/wave"
 	appworkflow "easycode/internal/application/workflow"
 	"easycode/internal/domain/provider"
 	domainworkflow "easycode/internal/domain/workflow"
+	"easycode/internal/infrastructure/files"
+	"easycode/internal/infrastructure/git"
 	"easycode/internal/infrastructure/oidc/oidctest"
 	"easycode/internal/infrastructure/postgres"
 	"easycode/internal/infrastructure/postgres/postgrestest"
@@ -233,12 +238,22 @@ func liveRuntimeDeps(broker *appevent.Broker, shutdown chan struct{}) func(*http
 		d.Workflow = appworkflow.NewService(tx, projects, workflows, workflows, workflows, trail)
 		d.Artifacts = appartifact.NewQueries(projects, postgres.NewArtifacts(pool))
 		d.Waves, d.Access = waves, waves
-		d.Gates = appgate.NewDecisions(tx, projects, postgres.NewGates(pool), postgres.NewOutbox(pool), trail)
+		d.Gates = appgate.NewDecisions(tx, projects, postgres.NewGates(pool), postgres.NewOutbox(pool), trail).
+			WithAnnotations(postgres.NewGateAnnotations(pool))
+		// ADR-19: getArtifactContentUrl over repositories that do not exist (isolation walks the route).
+		d.ContentURLs = appcontent.NewService(appartifact.NewQueries(projects, postgres.NewArtifacts(pool)),
+			git.New(filepath.Join(os.TempDir(), "easycode-no-repos")), "https://content.easycode.test", appcontent.DeriveKey("test"))
+		composition, _ := specs.Governance()
+		d.GateChecks = appgate.NewExitCriteria(projects, composition, postgres.NewGates(pool))
 		d.Events, d.History, d.Shutdown = broker, postgres.NewOutbox(pool), shutdown
 		d.Pending = apppending.NewService(postgres.NewPending(pool, wf.Definition))
+		d.Search = appsearch.NewService(postgres.NewSearch(pool))
 		d.Notices = postgres.NewOutbox(pool)
 		d.Costs = appcost.NewService(projects, postgres.NewCosts(pool, wf.Definition), wf.Definition.StageIDs())
 		d.Audit = apptrail.NewQueries(projects, postgres.NewAuditReader(pool))
+		// US-03: the attachments of the business need, in a throwaway files volume, limit of 64 KiB.
+		d.Attachments = appattachment.NewService(tx, projects, postgres.NewAttachments(pool), files.New(filepath.Join(os.TempDir(), "easycode-test-files")),
+			trail, 64<<10)
 	}
 }
 
@@ -447,7 +462,18 @@ SELECT organization_id, 'anthropic', $1, $2, '0000', id FROM easycode.users WHER
 		t.Fatalf("US-49 CA-2: %v", stage)
 	}
 	live.json(t, "GET", base+"/stages/unknown", "", nil, 404)
+	// PC-20, PL-46: the stage lists the checks of its gate with the catalog name, blocking ones first.
+	if checks := stage["gate_checks"].([]any); len(checks) < 30 || checks[0].(map[string]any)["check"] != "artifact.schema_valid" ||
+		checks[0].(map[string]any)["name"] != "Cabeçalho YAML válido no esquema do tipo" || checks[0].(map[string]any)["failure_severity"] != "blocks" {
+		t.Fatalf("gate_checks: %v", stage["gate_checks"])
+	}
 	round := live.json(t, "GET", base+"/gates/gate.requirements/rounds/1", "", nil, 200)
+	// ESP-12: the round names every check by the catalog name.
+	for _, check := range round["checks"].([]any) {
+		if c := check.(map[string]any); c["name"] == c["check"] {
+			t.Fatalf("check without catalog name: %v", c)
+		}
+	}
 	// US-31 CA-1: every check of gates.yaml for gate.requirements ran, with its result; the human ones wait
 	// for the approver.
 	if checks := checksOf(t, round); round["state"] != "awaiting_human" || checks["artifact.schema_valid"] != "passed" || checks["rnf.min_categories"] != "passed" ||

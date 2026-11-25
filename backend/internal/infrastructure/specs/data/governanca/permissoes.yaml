@@ -336,8 +336,7 @@ agents:
     prohibitions:
       - Alterar código da aplicação (a Segurança relata, o Dev corrige).
       - Ataque de prova fora do ambiente do sandbox do projeto.
-    contradictions:
-      - "Trivy precisa de base de vulnerabilidades atualizada e a rede do sandbox é nenhuma; exige base pré-carregada na imagem ou destino liberado (ponto em aberto)."
+    contradictions: []   # resolvida (MARCO-10): a imagem de segurança do sandbox traz a base do Trivy pré-carregada e varre offline (rede none mantida)
 
   # ---------------------------------------------------------- Orquestrador
   - agent: orchestrator

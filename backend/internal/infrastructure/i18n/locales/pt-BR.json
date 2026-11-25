@@ -89,6 +89,8 @@
   "problem.project-not-ended.detail": "Só projeto concluído ou cancelado pode ser excluído. Cancele o projeto antes de excluir.",
   "problem.invalid-skill-package.title": "Pacote de skill inválido",
   "problem.invalid-skill-package.detail": "O pacote precisa de SKILL.md com name e description no cabeçalho ({reason}).",
+  "problem.too-large-attachment.title": "Anexo grande demais",
+  "problem.too-large-attachment.detail": "O arquivo passa do limite de {limit_bytes} bytes.",
   "problem.too-large-package.title": "Pacote grande demais",
   "problem.too-large-package.detail": "O pacote passa do limite de {limit_bytes} bytes.",
   "problem.outdated-version.title": "Versão desatualizada",

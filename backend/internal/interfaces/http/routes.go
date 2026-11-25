@@ -36,6 +36,10 @@ func (a *api) register(router *Router) {
 		router.Handle(fasthttp.MethodPatch, APIPrefix+"/projects/{projectId}/configuration", auth(a.modifyProjectConfiguration))
 		router.Handle(fasthttp.MethodPost, APIPrefix+"/projects/{projectId}/deletion", auth(a.deleteProject))
 	}
+	if a.deps.Attachments != nil {
+		router.Handle(fasthttp.MethodGet, APIPrefix+"/projects/{projectId}/attachments", auth(a.listAttachments))
+		router.Handle(fasthttp.MethodPost, APIPrefix+"/projects/{projectId}/attachments", auth(a.attachFile))
+	}
 	if a.deps.Members != nil {
 		router.Handle(fasthttp.MethodGet, APIPrefix+"/users", auth(a.searchUsers))
 		router.Handle(fasthttp.MethodGet, APIPrefix+"/projects/{projectId}/members", auth(a.listMembers))
@@ -60,6 +64,10 @@ func (a *api) register(router *Router) {
 		router.Handle(fasthttp.MethodGet, APIPrefix+"/projects/{projectId}/artifacts/{artifactId}/versions", auth(a.listArtifactVersions))
 		router.Handle(fasthttp.MethodGet, APIPrefix+"/projects/{projectId}/artifacts/{artifactId}/versions/{version}", auth(a.getArtifactVersion))
 		router.Handle(fasthttp.MethodGet, APIPrefix+"/projects/{projectId}/artifacts/{artifactId}/comparison", auth(a.compareArtifactVersions))
+		router.Handle(fasthttp.MethodGet, APIPrefix+"/projects/{projectId}/artifacts/{artifactId}/versions/{version}/attachment", auth(a.getArtifactAttachment))
+	}
+	if a.deps.ContentURLs != nil {
+		router.Handle(fasthttp.MethodGet, APIPrefix+"/projects/{projectId}/artifacts/{artifactId}/versions/{version}/content-url", auth(a.getArtifactContentURL))
 	}
 	if a.deps.ArtifactEdits != nil {
 		router.Handle(fasthttp.MethodPost, APIPrefix+"/projects/{projectId}/artifact-edits", auth(a.editArtifact))
@@ -137,6 +145,9 @@ func (a *api) register(router *Router) {
 	}
 	if a.deps.Pending != nil {
 		router.Handle(fasthttp.MethodGet, APIPrefix+"/pending-items", auth(a.listPendingItems))
+	}
+	if a.deps.Search != nil {
+		router.Handle(fasthttp.MethodGet, APIPrefix+"/search", auth(a.searchPlatform))
 	}
 	if a.deps.Events != nil && a.deps.Notices != nil {
 		router.Handle(fasthttp.MethodGet, APIPrefix+"/me/events", auth(a.watchNotices))
