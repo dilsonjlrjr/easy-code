@@ -5,8 +5,9 @@
 #
 # It also writes the security headers of the SPA (ADR-19, ESP-11 ER-11-2) from
 # /etc/nginx/csp-policy.txt: frame-src only the content origin (EASYCODE_CONTENT_ORIGIN, none when
-# unset), connect-src the same origin plus the api origin when API_BASE_URL is absolute, and a nonce
-# per response ($request_id, substituted into index.html by nginx).
+# unset), connect-src the same origin plus the api origin when API_BASE_URL is absolute (the template
+# also lists the public price lists the price table reads: models.dev, LiteLLM, OpenRouter), and a
+# nonce per response ($request_id, substituted into index.html by nginx).
 set -eu
 CONFIG_FILE=/usr/share/nginx/html/config.js
 HEADERS_FILE=/etc/nginx/conf.d/security-headers.inc

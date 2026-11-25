@@ -38,6 +38,11 @@ type skillVersionJSON struct {
 	SHA256           string    `json:"sha256"`
 }
 
+type skillFileJSON struct {
+	Path            string `json:"path"`
+	EstimatedTokens int    `json:"estimated_tokens"`
+}
+
 type skillJSON struct {
 	ID              string             `json:"id"`
 	Name            string             `json:"name"`
@@ -49,11 +54,15 @@ type skillJSON struct {
 	EstimatedTokens int                `json:"estimated_tokens"`
 	Status          string             `json:"status"`
 	Versions        []skillVersionJSON `json:"versions"`
+	Files           []skillFileJSON    `json:"files"`
 }
 
 func skillOf(s appskill.Summary) skillJSON {
 	out := skillJSON{ID: s.Name, Name: s.Name, Description: s.Description, Origin: s.Origin, Stages: s.Stages, Agents: s.Agents,
-		CurrentVersion: s.CurrentVersion, EstimatedTokens: s.EstimatedTokens, Status: s.Status, Versions: []skillVersionJSON{}}
+		CurrentVersion: s.CurrentVersion, EstimatedTokens: s.EstimatedTokens, Status: s.Status, Versions: []skillVersionJSON{}, Files: []skillFileJSON{}}
+	for _, f := range s.Files {
+		out.Files = append(out.Files, skillFileJSON{Path: f.Path, EstimatedTokens: f.Tokens})
+	}
 	for _, v := range s.Versions {
 		out.Versions = append(out.Versions, skillVersionJSON{Version: v.Version, PublishedAt: v.PublishedAt, Status: v.Status, SubmissionOrigin: optional(v.Origin), SHA256: v.SHA256})
 	}

@@ -11,6 +11,7 @@ import type { Model, PricesPerMillion, Provider } from '../api/providersApi'
 import { useProvidersStore } from '../stores/providersStore'
 import ModelDialog from './ModelDialog.vue'
 import ProviderKeyDialog from './ProviderKeyDialog.vue'
+import ProviderKeyGuideDialog from './ProviderKeyGuideDialog.vue'
 
 const { t } = useI18n()
 const format = useFormat()
@@ -22,6 +23,8 @@ const loader = useLoader(async () => {
 
 const keyDialogOpen = ref(false)
 const keyDialogProvider = ref<Provider>()
+const guideOpen = ref(false)
+const guideProvider = ref<Provider>()
 const removeDialogOpen = ref(false)
 const removeTarget = ref<Provider>()
 const removing = ref(false)
@@ -38,6 +41,11 @@ onMounted(() => {
 function openKeyDialog(provider: Provider): void {
   keyDialogProvider.value = provider
   keyDialogOpen.value = true
+}
+
+function openGuide(provider: Provider): void {
+  guideProvider.value = provider
+  guideOpen.value = true
 }
 
 function onKeySaved(provider: Provider): void {
@@ -139,6 +147,16 @@ function lastTestText(provider: Provider): string {
           {{ $t(`settings.providers.keyStatus.${provider.key.status}`) }}
         </span>
         <span class="provider-actions">
+          <button
+            type="button"
+            class="btn btn-ghost"
+            :aria-label="$t('settings.keyGuide.howToNamed', { provider: provider.name })"
+            :data-testid="`key-guide-${provider.id}`"
+            @click="openGuide(provider)"
+          >
+            <CanvasIcon name="question" :size="16" />
+            {{ $t('settings.keyGuide.howTo') }}
+          </button>
           <button
             type="button"
             class="btn"
@@ -248,7 +266,13 @@ function lastTestText(provider: Provider): string {
     </div>
   </section>
 
-  <ProviderKeyDialog v-model="keyDialogOpen" :provider="keyDialogProvider" @saved="onKeySaved" />
+  <ProviderKeyDialog
+    v-model="keyDialogOpen"
+    :provider="keyDialogProvider"
+    @saved="onKeySaved"
+    @guide="openGuide"
+  />
+  <ProviderKeyGuideDialog v-model="guideOpen" :provider="guideProvider" @add-key="openKeyDialog" />
   <ModelDialog
     v-model="modelDialogOpen"
     :providers="store.providers"
@@ -337,6 +361,16 @@ function lastTestText(provider: Provider): string {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+.btn-ghost {
+  background: transparent;
+  border-color: transparent;
+  color: #c4b5fd;
+}
+
+.btn-ghost:hover {
+  background: rgba(139, 92, 246, 0.12);
 }
 
 .privacy {

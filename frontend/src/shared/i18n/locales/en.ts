@@ -430,6 +430,36 @@ export const en: MessageSchema = {
       removeKeyWarning:
         'Without a key, waves that use this provider stop running and fail with the reason "provider without key".',
     },
+    keyGuide: {
+      howTo: 'How to get the key',
+      howToNamed: 'How to get the {provider} key',
+      whereIsKey: 'Where do I get the {provider} key?',
+      title: 'How to get the {provider} key',
+      intro:
+        'It takes about 2 minutes. You need an account in the provider console allowed to create keys.',
+      openConsole: 'Open the keys console',
+      openBilling: 'Open billing',
+      newTab: '(opens in a new tab)',
+      imageAlt: 'Step {step}: drawing of the {provider} console screen',
+      anthropic: {
+        open: 'Sign in to the Anthropic console and open the API keys menu.',
+        create:
+          'Click Create Key, give it a name that tells its use (for example, easy-code) and confirm.',
+      },
+      openai: {
+        open: 'Sign in to the OpenAI platform and open the API keys menu.',
+        create:
+          'Click Create new secret key, give it a name (for example, easy-code), choose the project and confirm.',
+      },
+      copy: 'Copy the key right away: it starts with {prefix} and the provider shows it only once.',
+      billing:
+        'Check that the account has credit or an active payment method. Without credit, the key test fails.',
+      paste:
+        'Come back here, click Add key and paste it. Easy Code tests the key before saving it.',
+      security:
+        'Do not send the key by chat or email. Once saved here, it is encrypted and only its last 4 characters show.',
+      addNow: 'Add key now',
+    },
     models: {
       title: 'Models and capabilities',
       capabilityRule: 'A stage only uses a model that has the capabilities it requires.',
@@ -459,7 +489,8 @@ export const en: MessageSchema = {
       title: 'Price table',
       costRule:
         'Each wave costs the price in effect on the date of each call. A new period does not change the cost of past waves.',
-      noModels: 'Register a model in Providers and models to record prices.',
+      noModels:
+        'No model registered. Fetch prices from a source or register a model in Providers and models.',
       noCurrentPrice: 'no current price',
       newPeriod: 'Record new price period',
       currentTitle: 'Current price per model',
@@ -496,6 +527,45 @@ export const en: MessageSchema = {
       periodInUse:
         'This price period was already used by a wave and cannot change. Record a new period.',
       savedAnnouncement: 'Price table updated.',
+    },
+    priceImport: {
+      open: 'Fetch prices from a source',
+      title: 'Fetch prices from a source',
+      help: 'The browser reads a public price list (no key, no project data). You pick the models; each pick becomes a new effective period, and the model is registered when it is not yet.',
+      source: 'Source',
+      sources: {
+        models_dev: 'Open model catalog, with price per million tokens and capabilities.',
+        litellm: 'Price table kept by the LiteLLM project, updated often.',
+        openrouter: 'Public OpenRouter list. Anthropic names are converted to the API format.',
+      },
+      fetch: 'Fetch prices',
+      fetching: 'Fetching…',
+      openSource: 'See {source}',
+      fetchFailed:
+        'Could not read {source}. Check the connection or try another source; manual entry is still available.',
+      allProviders: 'All',
+      search: 'Filter by model',
+      hideDeprecated: 'Hide deprecated models',
+      count: '{shown} of {total} models in the list · {selected} selected',
+      caption: 'Models and prices in USD per million tokens read from {source}',
+      selectAll: 'Select all visible models',
+      selectNamed: 'Select {model}',
+      state: 'Status',
+      newModel: 'new model',
+      registered: 'registered',
+      samePrice: 'same as current price',
+      deprecated: 'deprecated',
+      rate: 'Exchange rate: 1 USD in {currency}',
+      rateHint:
+        'The source publishes in dollars. Enter the rate used to convert; it is recorded in the period source.',
+      effectNote:
+        'The new period starts 1 minute after the import and does not change the cost of past waves. New models are active with the source capabilities: check them in Providers and models.',
+      confirm: 'Import selected | Import {n} selected',
+      imported:
+        '{n} model imported into the price table. | {n} models imported into the price table.',
+      failedModel: 'Could not import {model}:',
+      sourceText: '{source} ({url}), read on {when}',
+      sourceTextConverted: '{source} ({url}), read on {when}; rate 1 USD = {rate} {currency}',
     },
   },
   projects: {
@@ -1602,6 +1672,13 @@ export const en: MessageSchema = {
     noOrganization: 'No organization skill.',
     native: 'Native catalog ({n})',
     tokens: 'tokens',
+    tree: {
+      files: '{n} file | {n} files',
+      tokens: '{n} tokens',
+      expandAll: 'Expand all',
+      collapseAll: 'Collapse all',
+      noFiles: 'The file list of this package is not available.',
+    },
     columns: {
       usedBy: 'Stages and agents',
       version: 'Current version',

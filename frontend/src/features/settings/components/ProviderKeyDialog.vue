@@ -7,7 +7,7 @@ import { useProvidersStore } from '../stores/providersStore'
 
 const props = defineProps<{ provider: Provider | undefined }>()
 const open = defineModel<boolean>({ required: true })
-const emit = defineEmits<{ saved: [provider: Provider] }>()
+const emit = defineEmits<{ saved: [provider: Provider]; guide: [provider: Provider] }>()
 
 const store = useProvidersStore()
 const key = ref('')
@@ -35,6 +35,13 @@ watch(open, (isOpen) => {
   failure.value = undefined
   if (!isOpen) testing.value = false
 })
+
+/** The guide opens in its own dialog; this one closes so only one modal is on screen. */
+function openGuide(): void {
+  if (!props.provider) return
+  open.value = false
+  emit('guide', props.provider)
+}
 
 async function save(): Promise<void> {
   if (!props.provider || key.value.length < MIN_KEY_LENGTH) return
@@ -68,6 +75,15 @@ async function save(): Promise<void> {
             }}
           </h2>
           <p class="t2 help">{{ $t('settings.providers.keyHelp') }}</p>
+          <button
+            v-if="provider"
+            type="button"
+            class="guide-link"
+            :disabled="testing"
+            @click="openGuide"
+          >
+            {{ $t('settings.keyGuide.whereIsKey', { provider: providerName }) }}
+          </button>
           <v-text-field
             v-model="key"
             type="password"
@@ -128,6 +144,26 @@ async function save(): Promise<void> {
 
 .testing {
   font-size: 13px;
+}
+
+.guide-link {
+  align-self: flex-start;
+  min-height: 32px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #c4b5fd;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.guide-link:focus-visible {
+  outline: 2px solid #c4b5fd;
+  outline-offset: 2px;
 }
 
 .progress {

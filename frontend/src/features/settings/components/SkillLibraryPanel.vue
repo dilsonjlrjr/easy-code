@@ -5,6 +5,7 @@ import { newIdempotencyKey } from '@/shared/api/idempotencyKey'
 import { ApiError, isApiError } from '@/shared/api/problemDetails'
 import { useLoader } from '@/shared/composables/useLoader'
 import { useFormat } from '@/shared/format/useFormat'
+import CanvasIcon from '@/shared/ui/CanvasIcon.vue'
 import ConfirmActionDialog from '@/shared/ui/ConfirmActionDialog.vue'
 import LoadingState from '@/shared/ui/LoadingState.vue'
 import ProblemAlert from '@/shared/ui/ProblemAlert.vue'
@@ -17,6 +18,8 @@ import {
   skillLibraryApi,
   type SkillImport,
 } from '../api/skillLibraryApi'
+import { buildSkillTree, countFiles, type SkillTreeNode } from '../skillTree'
+import SkillFileTree from './SkillFileTree.vue'
 
 /**
  * ESP-23 3.3 "Biblioteca de skills" (US-44): the organization skills with their state in text, the
@@ -44,6 +47,8 @@ const actionOpen = ref(false)
 const justification = ref('')
 const fieldId = useId()
 const packageInput = ref<HTMLInputElement>()
+/** Open packages of the tree, by `origin:id`; every package starts closed. */
+const openPackages = ref(new Set<string>())
 
 const loader = useLoader(async () => {
   const [ownSkills, catalog] = await Promise.all([
@@ -54,6 +59,48 @@ const loader = useLoader(async () => {
   native.value = catalog
 })
 void loader.run()
+
+const trees = computed(() => {
+  const out: Record<string, SkillTreeNode[]> = {}
+  for (const skill of [...organization.value, ...native.value]) {
+    out[packageKey(skill)] = buildSkillTree(skill.files)
+  }
+  return out
+})
+const allNativeOpen = computed(
+  () => native.value.length > 0 && native.value.every((skill) => isOpen(skill)),
+)
+
+function packageKey(skill: Skill): string {
+  return `${skill.origin}:${skill.id}`
+}
+
+function isOpen(skill: Skill): boolean {
+  return openPackages.value.has(packageKey(skill))
+}
+
+function togglePackage(skill: Skill): void {
+  const next = new Set(openPackages.value)
+  if (!next.delete(packageKey(skill))) next.add(packageKey(skill))
+  openPackages.value = next
+}
+
+function setAllNative(open: boolean): void {
+  const next = new Set(openPackages.value)
+  for (const skill of native.value) {
+    if (open) next.add(packageKey(skill))
+    else next.delete(packageKey(skill))
+  }
+  openPackages.value = next
+}
+
+function treeId(skill: Skill): string {
+  return `${fieldId}-tree-${skill.origin}-${skill.id}`
+}
+
+function fileCount(skill: Skill): number {
+  return countFiles(trees.value[packageKey(skill)] ?? [])
+}
 
 const chosenFile = computed(() =>
   Array.isArray(packageFile.value) ? packageFile.value[0] : (packageFile.value ?? undefined),
@@ -222,6 +269,20 @@ async function submitAction(key: string): Promise<void> {
                     {{ skill.name }}
                   </button>
                   <span class="t2 skill-description">{{ skill.description }}</span>
+                  <button
+                    v-if="fileCount(skill) > 0"
+                    type="button"
+                    class="pkg-files-toggle"
+                    :aria-expanded="isOpen(skill) ? 'true' : 'false'"
+                    :aria-controls="treeId(skill)"
+                    @click="togglePackage(skill)"
+                  >
+                    <CanvasIcon :name="isOpen(skill) ? 'chevronDown' : 'chevronRight'" :size="16" />
+                    {{ $t('skillLibrary.tree.files', fileCount(skill)) }}
+                  </button>
+                  <div v-if="isOpen(skill)" :id="treeId(skill)" class="pkg-tree">
+                    <SkillFileTree :nodes="trees[packageKey(skill)] ?? []" />
+                  </div>
                 </td>
                 <td>
                   <span class="block">{{ stageNames(skill) }}</span>
@@ -293,23 +354,66 @@ async function submitAction(key: string): Promise<void> {
       </section>
 
       <section aria-labelledby="native-skills-heading" class="group">
-        <h3 id="native-skills-heading" class="lb">
-          {{ $t('skillLibrary.native', { n: native.length }) }}
-        </h3>
+        <div class="group-head">
+          <h3 id="native-skills-heading" class="lb">
+            {{ $t('skillLibrary.native', { n: native.length }) }}
+          </h3>
+          <button
+            v-if="native.length > 0"
+            type="button"
+            class="btn"
+            @click="setAllNative(!allNativeOpen)"
+          >
+            {{
+              allNativeOpen
+                ? $t('skillLibrary.tree.collapseAll')
+                : $t('skillLibrary.tree.expandAll')
+            }}
+          </button>
+        </div>
+        <!-- Tree: each package (skill) is a root; open, it lists the files that make it up. -->
         <ul class="native-list" data-testid="native-skills">
-          <li v-for="skill in native" :key="skill.id" class="kv">
-            <span class="native-main">
-              <strong>{{ skill.name }}</strong>
-              <span class="t2 skill-description">{{ skill.description }}</span>
-            </span>
-            <span class="native-side">
-              <span class="chip mute">
-                {{ $t('agentsPage.skills.versionNumber', { n: skill.current_version }) }}
+          <li
+            v-for="skill in native"
+            :key="skill.id"
+            class="pkg"
+            :data-testid="`native-skill-${skill.id}`"
+          >
+            <div class="kv pkg-row">
+              <span class="native-main">
+                <button
+                  type="button"
+                  class="pkg-toggle"
+                  :aria-expanded="isOpen(skill) ? 'true' : 'false'"
+                  :aria-controls="treeId(skill)"
+                  @click="togglePackage(skill)"
+                >
+                  <CanvasIcon
+                    :name="isOpen(skill) ? 'chevronDown' : 'chevronRight'"
+                    :size="16"
+                    class="pkg-chevron"
+                  />
+                  <CanvasIcon name="folder" :size="16" class="pkg-icon" />
+                  <strong>{{ skill.name }}</strong>
+                  <span v-if="fileCount(skill) > 0" class="t2 pkg-count">
+                    {{ $t('skillLibrary.tree.files', fileCount(skill)) }}
+                  </span>
+                </button>
+                <span class="t2 skill-description">{{ skill.description }}</span>
               </span>
-              <span class="t2">
-                {{ format.integer(skill.estimated_tokens ?? 0) }} {{ $t('skillLibrary.tokens') }}
+              <span class="native-side">
+                <span class="chip mute">
+                  {{ $t('agentsPage.skills.versionNumber', { n: skill.current_version }) }}
+                </span>
+                <span class="t2">
+                  {{ format.integer(skill.estimated_tokens ?? 0) }} {{ $t('skillLibrary.tokens') }}
+                </span>
               </span>
-            </span>
+            </div>
+            <div v-if="isOpen(skill)" :id="treeId(skill)" class="pkg-tree">
+              <SkillFileTree v-if="fileCount(skill) > 0" :nodes="trees[packageKey(skill)] ?? []" />
+              <p v-else class="t2 pkg-empty">{{ $t('skillLibrary.tree.noFiles') }}</p>
+            </div>
           </li>
         </ul>
       </section>
@@ -548,6 +652,81 @@ async function submitAction(key: string): Promise<void> {
   list-style: none;
   margin: 0;
   padding: 0;
+}
+
+.group-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 6px;
+}
+
+.group .group-head h3 {
+  margin: 0;
+}
+
+.pkg + .pkg {
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.pkg-row {
+  border-bottom: 0;
+}
+
+.pkg-toggle,
+.pkg-files-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #f1f3ff;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.pkg-toggle:focus-visible,
+.pkg-files-toggle:focus-visible {
+  outline: 2px solid #c4b5fd;
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.pkg-files-toggle {
+  margin-top: 4px;
+  font-size: 13px;
+  color: #c4b5fd;
+}
+
+.pkg-chevron {
+  flex: none;
+  color: #c4b5fd;
+}
+
+.pkg-icon {
+  flex: none;
+  color: #a78bfa;
+}
+
+.pkg-count {
+  font-size: 12px;
+}
+
+.native-main .skill-description {
+  padding-left: 44px;
+}
+
+.pkg-tree {
+  margin: 4px 0 12px 7px;
+}
+
+.pkg-empty {
+  margin: 0;
+  font-size: 13px;
 }
 
 .native-main {

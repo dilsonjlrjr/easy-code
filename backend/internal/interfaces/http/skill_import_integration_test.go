@@ -81,6 +81,12 @@ func TestImportOrganizationSkill(t *testing.T) {
 	if library["origin"] != "organization" || library["current_version"] != float64(1) {
 		t.Fatalf("CA-1 library: %v", library)
 	}
+	// The package tree of the library: the files of the current version, SKILL.md first, no content.
+	files, _ := library["files"].([]any)
+	if len(files) != 2 || files[0].(map[string]any)["path"] != "SKILL.md" || files[1].(map[string]any)["path"] != "references/a.md" ||
+		files[1].(map[string]any)["estimated_tokens"] != float64(3) || files[0].(map[string]any)["content"] != nil {
+		t.Fatalf("library files: %v", library["files"])
+	}
 
 	// CA-2, CA-3: refused at the submission, no version.
 	if r := upload(live, skillZip(t, map[string]string{"README.md": "x"})); r["status"] != 400 || r["type"] != "urn:easycode:problem:invalid-skill-package" || r["reason"] != "missing_skill_md" {

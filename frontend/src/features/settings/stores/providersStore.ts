@@ -21,6 +21,20 @@ export function setProvidersApi(replacement: ProvidersApi): void {
   api = replacement
 }
 
+/** One model of a price list to save: the model first when it is new, then a new effective period. */
+export interface PriceImportItem {
+  provider: ProviderId
+  model: string
+  newModel?: NewModel
+  price: NewModelPrice
+}
+
+export interface PriceImportResult {
+  provider: ProviderId
+  model: string
+  error?: unknown
+}
+
 export function modelKey(provider: ProviderId, model: string): string {
   return `${provider}/${model}`
 }
@@ -109,6 +123,29 @@ export const useProvidersStore = defineStore('settings-providers', () => {
     return corrected
   }
 
+  /**
+   * Saves the picked models of a price list, one by one: a failure stops only its own model and is
+   * returned with it. Models and the cached periods are read again once at the end.
+   */
+  async function importPrices(items: PriceImportItem[]): Promise<PriceImportResult[]> {
+    const results: PriceImportResult[] = []
+    for (const item of items) {
+      try {
+        if (item.newModel) await api.recordModel(item.provider, item.model, item.newModel)
+        await api.recordModelPrice(item.provider, item.model, item.price, newIdempotencyKey())
+        results.push({ provider: item.provider, model: item.model })
+      } catch (error) {
+        results.push({ provider: item.provider, model: item.model, error })
+      }
+    }
+    const touched = new Set(items.map((item) => modelKey(item.provider, item.model)))
+    prices.value = Object.fromEntries(
+      Object.entries(prices.value).filter(([key]) => !touched.has(key)),
+    )
+    await loadModels()
+    return results
+  }
+
   return {
     providers,
     models,
@@ -121,5 +158,6 @@ export const useProvidersStore = defineStore('settings-providers', () => {
     loadPrices,
     recordPrice,
     correctPrice,
+    importPrices,
   }
 })

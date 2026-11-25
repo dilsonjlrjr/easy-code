@@ -62,7 +62,8 @@ SELECT s.name FROM easycode.skills s
 // Get implements appskill.Library.
 func (k Skills) Get(ctx context.Context, organizationID, name string) (appskill.Summary, error) {
 	rows, err := conn(ctx, k.pool).Query(WithOperation(ctx, "skills.get"), `
-SELECT s.name, s.origin, v.version, v.description, v.stages, v.agents, v.size_tokens, v.status, v.submitted_at, coalesce(v.submission_origin, ''), v.content_hash
+SELECT s.name, s.origin, v.version, v.description, v.stages, v.agents, v.size_tokens, v.status, v.submitted_at, coalesce(v.submission_origin, ''), v.content_hash,
+       CASE WHEN v.version = max(v.version) OVER () THEN v.content END
   FROM easycode.skills s JOIN easycode.skill_versions v ON v.skill_id = s.id
  WHERE `+visibleSkills+` AND s.name = $2
  ORDER BY v.version DESC`, organizationID, name)
@@ -76,12 +77,18 @@ SELECT s.name, s.origin, v.version, v.description, v.stages, v.agents, v.size_to
 		var description, origin string
 		var stages, agents []string
 		var size int
-		if err := rows.Scan(&out.Name, &origin, &v.Version, &description, &stages, &agents, &size, &v.Status, &v.PublishedAt, &v.Origin, &v.SHA256); err != nil {
+		var content []byte
+		if err := rows.Scan(&out.Name, &origin, &v.Version, &description, &stages, &agents, &size, &v.Status, &v.PublishedAt, &v.Origin, &v.SHA256, &content); err != nil {
 			return out, err
 		}
 		if len(out.Versions) == 0 {
 			out.Origin, out.Description, out.Stages, out.Agents, out.CurrentVersion, out.EstimatedTokens, out.Status =
 				origin, description, stages, agents, v.Version, size, v.Status
+			files, err := domainskill.Files(content)
+			if err != nil {
+				return out, err
+			}
+			out.Files = domainskill.Entries(files)
 		}
 		out.Versions = append(out.Versions, v)
 	}

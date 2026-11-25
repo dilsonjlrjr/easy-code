@@ -66,6 +66,27 @@ func Files(content []byte) (map[string]string, error) {
 	return files, nil
 }
 
+// Entry is one file of a package, by its path inside the skill folder, with its estimated tokens.
+type Entry struct {
+	Path   string
+	Tokens int
+}
+
+// Entries lists the files of a package: SKILL.md first, then by path (4 bytes per token, as SizeTokens).
+func Entries(files map[string]string) []Entry {
+	out := make([]Entry, 0, len(files))
+	for path, text := range files {
+		out = append(out, Entry{Path: path, Tokens: max(1, (len(text)+3)/4)})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if (out[i].Path == "SKILL.md") != (out[j].Path == "SKILL.md") {
+			return out[i].Path == "SKILL.md"
+		}
+		return out[i].Path < out[j].Path
+	})
+	return out
+}
+
 // Loaded is a skill version delivered to a wave.
 type Loaded struct {
 	VersionID   int64

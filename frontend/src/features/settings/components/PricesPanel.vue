@@ -4,11 +4,13 @@ import { useI18n } from 'vue-i18n'
 import { useAnnouncer } from '@/shared/composables/useAnnouncer'
 import { useLoader } from '@/shared/composables/useLoader'
 import { useFormat } from '@/shared/format/useFormat'
+import CanvasIcon from '@/shared/ui/CanvasIcon.vue'
 import LoadingState from '@/shared/ui/LoadingState.vue'
 import ProblemAlert from '@/shared/ui/ProblemAlert.vue'
 import type { Model, ModelPrice, PricesPerMillion } from '../api/providersApi'
 import { modelKey, useProvidersStore } from '../stores/providersStore'
 import PriceDialog from './PriceDialog.vue'
+import PriceImportDialog from './PriceImportDialog.vue'
 
 const { t } = useI18n()
 const format = useFormat()
@@ -17,6 +19,7 @@ const { message, announce } = useAnnouncer()
 const selectedKey = ref<string>()
 const dialogOpen = ref(false)
 const correcting = ref<ModelPrice>()
+const importOpen = ref(false)
 const fieldId = useId()
 
 const PRICE_TYPES: Array<keyof PricesPerMillion> = ['input', 'output', 'read_cache', 'write_cache']
@@ -76,12 +79,30 @@ function openCorrection(period: ModelPrice): void {
 function onSaved(): void {
   announce(t('settings.prices.savedAnnouncement'))
 }
+
+async function onImported(count: number): Promise<void> {
+  announce(t('settings.priceImport.imported', count))
+  selectedKey.value ??= modelOptions.value[0]?.value
+  await pricesLoader.run()
+}
 </script>
 
 <template>
   <!-- Layout: canvas "Configurações" (Configuracoes.dc.html), tab "Tabela de preços". -->
   <section class="card panel" aria-labelledby="prices-heading">
-    <h2 id="prices-heading">{{ $t('settings.prices.title') }}</h2>
+    <div class="panel-head">
+      <h2 id="prices-heading">{{ $t('settings.prices.title') }}</h2>
+      <button
+        type="button"
+        class="btn"
+        :disabled="modelsLoader.loading.value || !!modelsLoader.error.value"
+        data-testid="price-import-open"
+        @click="importOpen = true"
+      >
+        <CanvasIcon name="globe" :size="16" />
+        {{ $t('settings.priceImport.open') }}
+      </button>
+    </div>
     <p class="t2 panel-help">{{ $t('settings.prices.costRule') }}</p>
     <div role="status" class="sr-only">{{ message }}</div>
 
@@ -258,12 +279,29 @@ function onSaved(): void {
       :default-currency="defaultCurrency"
       @saved="onSaved"
     />
+    <PriceImportDialog
+      v-model="importOpen"
+      :default-currency="defaultCurrency"
+      @imported="onImported"
+    />
   </section>
 </template>
 
 <style scoped>
 .panel {
   padding: 18px 22px;
+}
+
+.panel-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.panel-head h2 {
+  margin: 0;
 }
 
 .panel-help {

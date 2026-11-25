@@ -435,6 +435,36 @@ export const ptBR = {
       removeKeyWarning:
         'Sem chave, as ondas que usarem este provedor deixam de rodar e falham com o motivo "provedor sem chave".',
     },
+    keyGuide: {
+      howTo: 'Como obter a chave',
+      howToNamed: 'Como obter a chave de {provider}',
+      whereIsKey: 'Onde consigo a chave de {provider}?',
+      title: 'Como obter a chave de {provider}',
+      intro:
+        'Leva uns 2 minutos. Você precisa de uma conta no console do provedor com permissão para criar chaves.',
+      openConsole: 'Abrir o console de chaves',
+      openBilling: 'Abrir cobrança',
+      newTab: '(abre em nova aba)',
+      imageAlt: 'Passo {step}: ilustração da tela do console de {provider}',
+      anthropic: {
+        open: 'Entre no console da Anthropic e abra o menu API keys.',
+        create:
+          'Clique em Create Key, dê um nome que identifique o uso (por exemplo, easy-code) e confirme.',
+      },
+      openai: {
+        open: 'Entre na plataforma da OpenAI e abra o menu API keys.',
+        create:
+          'Clique em Create new secret key, dê um nome (por exemplo, easy-code), escolha o projeto e confirme.',
+      },
+      copy: 'Copie a chave na hora: ela começa com {prefix} e o provedor só mostra uma vez.',
+      billing:
+        'Confira se a conta tem crédito ou forma de pagamento ativa. Sem crédito, o teste da chave falha.',
+      paste:
+        'Volte aqui, clique em Cadastrar chave e cole. O Easy Code testa a chave antes de gravar.',
+      security:
+        'Não envie a chave por chat ou e-mail. Depois de salva aqui, ela fica criptografada e só os 4 últimos caracteres aparecem.',
+      addNow: 'Cadastrar chave agora',
+    },
     models: {
       title: 'Modelos e capacidades',
       capabilityRule: 'Uma etapa só usa um modelo que tenha as capacidades que ela exige.',
@@ -464,7 +494,8 @@ export const ptBR = {
       title: 'Tabela de preços',
       costRule:
         'O custo de cada onda usa o preço vigente na data da chamada. Nova vigência não muda o custo de ondas passadas.',
-      noModels: 'Cadastre um modelo em Provedores e modelos para registrar preços.',
+      noModels:
+        'Nenhum modelo cadastrado. Busque preços em fonte externa ou cadastre um modelo em Provedores e modelos.',
       noCurrentPrice: 'sem preço vigente',
       newPeriod: 'Registrar nova vigência',
       currentTitle: 'Preço vigente por modelo',
@@ -501,6 +532,47 @@ export const ptBR = {
       periodInUse:
         'Esta vigência já foi usada por alguma onda e não pode mudar. Registre uma nova vigência.',
       savedAnnouncement: 'Tabela de preços atualizada.',
+    },
+    priceImport: {
+      open: 'Buscar preços em fonte externa',
+      title: 'Buscar preços em fonte externa',
+      help: 'O navegador consulta uma lista pública de preços (sem chave e sem dado de projeto). Você escolhe os modelos; cada escolha vira uma nova vigência, e o modelo é cadastrado se ainda não existir.',
+      source: 'Fonte de consulta',
+      sources: {
+        models_dev: 'Catálogo aberto de modelos, com preço por milhão de tokens e capacidades.',
+        litellm: 'Tabela de preços mantida pelo projeto LiteLLM, atualizada com frequência.',
+        openrouter:
+          'Lista pública do OpenRouter. Os nomes da Anthropic são convertidos para o formato da API.',
+      },
+      fetch: 'Buscar preços',
+      fetching: 'Buscando…',
+      openSource: 'Ver {source}',
+      fetchFailed:
+        'Não foi possível consultar {source}. Verifique a conexão ou tente outra fonte; o cadastro manual continua disponível.',
+      allProviders: 'Todos',
+      search: 'Filtrar por modelo',
+      hideDeprecated: 'Esconder modelos obsoletos',
+      count: '{shown} de {total} modelos na lista · {selected} selecionados',
+      caption: 'Modelos e preços em USD por milhão de tokens lidos de {source}',
+      selectAll: 'Selecionar todos os modelos visíveis',
+      selectNamed: 'Selecionar {model}',
+      state: 'Situação',
+      newModel: 'modelo novo',
+      registered: 'cadastrado',
+      samePrice: 'preço igual ao vigente',
+      deprecated: 'obsoleto',
+      rate: 'Câmbio: 1 USD em {currency}',
+      rateHint:
+        'A fonte publica em dólar. Informe a cotação usada para converter; ela fica registrada na fonte da vigência.',
+      effectNote:
+        'A nova vigência começa 1 minuto após importar e não muda o custo de ondas passadas. Modelos novos entram ativos com as capacidades da fonte: confira em Provedores e modelos.',
+      confirm: 'Importar selecionado | Importar {n} selecionados',
+      imported:
+        '{n} modelo importado na tabela de preços. | {n} modelos importados na tabela de preços.',
+      failedModel: 'Falha ao importar {model}:',
+      sourceText: '{source} ({url}), consultado em {when}',
+      sourceTextConverted:
+        '{source} ({url}), consultado em {when}; câmbio 1 USD = {rate} {currency}',
     },
   },
   projects: {
@@ -1614,6 +1686,13 @@ export const ptBR = {
     noOrganization: 'Nenhuma skill da organização.',
     native: 'Catálogo nativo ({n})',
     tokens: 'tokens',
+    tree: {
+      files: '{n} arquivo | {n} arquivos',
+      tokens: '{n} tokens',
+      expandAll: 'Expandir tudo',
+      collapseAll: 'Recolher tudo',
+      noFiles: 'A lista de arquivos deste pacote não está disponível.',
+    },
     columns: {
       usedBy: 'Etapas e agentes',
       version: 'Versão atual',

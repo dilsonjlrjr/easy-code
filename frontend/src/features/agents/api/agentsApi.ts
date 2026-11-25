@@ -78,6 +78,12 @@ export interface SkillVersion {
   deactivated_at?: string | null
 }
 
+/** One file of the package of the current version (path inside the skill folder). */
+export interface SkillFile {
+  path: string
+  estimated_tokens: number
+}
+
 /** openapi `Skill`: metadata and description only; the content is untrusted data (PROJETO 8.3). */
 export interface Skill {
   id: string
@@ -90,6 +96,8 @@ export interface Skill {
   estimated_tokens?: number
   status: SkillVersionStatus
   versions?: SkillVersion[]
+  /** The package of the current version: SKILL.md first, then by path. */
+  files?: SkillFile[]
 }
 
 export interface AgentWithEtag {

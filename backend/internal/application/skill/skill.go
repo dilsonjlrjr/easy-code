@@ -48,6 +48,7 @@ type Summary struct {
 	EstimatedTokens int
 	Status          string
 	Versions        []VersionInfo
+	Files           []domainskill.Entry // the package of the current version (domainskill.Entries order)
 }
 
 // Filter narrows the library.
