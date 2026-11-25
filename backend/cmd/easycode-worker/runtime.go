@@ -54,8 +54,13 @@ func newRuntime(cfg config.Config, pool *pgxpool.Pool, propagator propagation.Te
 	}
 	store := appartifact.NewStore(tx, specs.HeaderParser{}, validator, postgres.NewArtifacts(pool), outbox)
 	ledger := postgres.NewLedger(pool)
-	models := runtime.NewGatewayModels(gatewayapi.NewClient(cfg.Gateway.Socket, propagator), postgres.NewProviderKeys(pool), ledger, ledger)
+	gateway := gatewayapi.NewClient(cfg.Gateway.Socket, propagator)
+	keys := postgres.NewProviderKeys(pool)
+	models := runtime.NewGatewayModels(gateway, keys, ledger, ledger)
 	runner := sandboxapi.NewClient(cfg.Sandbox.Socket)
+	// ADR-23: a wave whose pair is of the claude-code provider runs through the Claude Code of the server,
+	// its model calls through the proxy socket of the wave in the volume shared with the sandbox runner.
+	claude := runtime.NewClaudeCodeAgent(runtime.NewModelProxy(cfg.Sandbox.AgentProxyDir, gateway, keys, ledger, ledger), runner)
 	agents := map[string]runtime.Agent{}
 	for _, name := range harnessAgents {
 		policy, err := specs.AgentPolicy(name)
@@ -66,7 +71,7 @@ func newRuntime(cfg config.Config, pool *pgxpool.Pool, propagator propagation.Te
 		if policy.Execute {
 			steps = runtime.NewToolAgent(models, cfg.Worker.MaxOutputTokens, runner)
 		}
-		agents[name] = runtime.Agent{Steps: steps, Policy: &policy, Modes: stageModes(wf, name)}
+		agents[name] = runtime.Agent{Steps: runtime.NewDispatch(steps, claude), Policy: &policy, Modes: stageModes(wf, name)}
 	}
 	governance, err := specs.Governance()
 	if err != nil {

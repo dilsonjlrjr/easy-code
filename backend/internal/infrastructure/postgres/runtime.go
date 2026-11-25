@@ -537,6 +537,17 @@ UPDATE easycode.waves SET state = 'failed', failure_cause = $4, lease_owner = NU
 	if err := row.Scan(&id); err != nil {
 		return runtime.Totals{}, leaseLost(err)
 	}
+	// A call still open when the wave fails (an agent run aborted with a model call in flight, ADR-23) is lost:
+	// its estimated cost is lost cost, so no row stays without a result outside the spend (RNF-16).
+	_, err := conn(ctx, l.pool).Exec(WithOperation(ctx, "model_calls.abort_on_fail"), `
+WITH aborted AS (
+  UPDATE easycode.model_calls SET result = 'aborted', lost = true, estimated_cost = true, finished_at = now(), error_summary = 'wave failed'
+   WHERE wave_id = $1 AND result IS NULL RETURNING cost)
+UPDATE easycode.waves w SET lost_cost = w.lost_cost + a.total, estimated_lost_cost = w.estimated_lost_cost OR a.n > 0
+  FROM (SELECT coalesce(sum(cost), 0) AS total, count(*) AS n FROM aborted) a WHERE w.id = $1`, id)
+	if err != nil {
+		return runtime.Totals{}, fmt.Errorf("abort open calls: %w", classify(err))
+	}
 	return l.totals(ctx, lease.WaveID)
 }
 

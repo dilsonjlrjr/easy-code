@@ -453,6 +453,9 @@ func (e *Executor) execute(ctx context.Context, c Claimed) error {
 		}
 		cp = &answered
 	}
+	if releaser, ok := agent.Steps.(Releaser); ok {
+		defer releaser.Release(wave) // a Claude Code run never outlives the loop of its wave
+	}
 	return e.loop(ctx, c, agent, wave, *cp)
 }
 
