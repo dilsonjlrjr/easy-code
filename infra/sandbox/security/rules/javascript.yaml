@@ -1,0 +1,53 @@
+# Baseline Opengrep rules of the Easy Code security sandbox for JavaScript, TypeScript and Vue (written for
+# this repository, same license as the platform; varreduras-opensource.md: only open-license rules).
+rules:
+  - id: js-eval
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: eval or new Function runs text as code.
+    metadata: { owasp: "A05", cwe: "CWE-95" }
+    pattern-either:
+      - pattern: eval($X)
+      - pattern: new Function(...)
+
+  - id: js-inner-html
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: HTML assigned from a non-constant value; sanitize it or use textContent.
+    metadata: { owasp: "A05", cwe: "CWE-79" }
+    patterns:
+      - pattern-either:
+          - pattern: $EL.innerHTML = $X
+          - pattern: $EL.outerHTML = $X
+          - pattern: document.write($X)
+      - pattern-not: $EL.innerHTML = "..."
+      - pattern-not: $EL.outerHTML = "..."
+
+  - id: vue-v-html
+    languages: [regex]
+    paths: { include: ["*.vue"] }
+    severity: WARNING
+    message: v-html renders raw HTML; sanitize the content first (generated content is untrusted).
+    metadata: { owasp: "A05", cwe: "CWE-79" }
+    pattern-regex: \bv-html\s*=
+
+  - id: js-local-storage-token
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: Token or password kept in web storage, readable by any script of the page.
+    metadata: { owasp: "A07", cwe: "CWE-922" }
+    patterns:
+      - pattern-either:
+          - pattern: localStorage.setItem($KEY, ...)
+          - pattern: sessionStorage.setItem($KEY, ...)
+      - metavariable-regex:
+          metavariable: $KEY
+          regex: (?i).*(token|password|secret|senha).*
+
+  - id: js-sql-template-literal
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: SQL query built with a template literal; pass the values as query parameters.
+    metadata: { owasp: "A05", cwe: "CWE-89" }
+    patterns:
+      - pattern: $DB.query(`...${$X}...`, ...)

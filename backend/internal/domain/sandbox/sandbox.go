@@ -37,7 +37,23 @@ const (
 	CategoryBuild        = "build"
 	CategoryTests        = "tests"
 	CategoryDependencies = "install_dependencies"
+	// CategoryScanner is the security scans of the Segurança (Opengrep, Trivy, Gitleaks; US-23).
+	CategoryScanner = "scanner"
 )
+
+// ImageSecurity is the logical image of the security scans (infra/sandbox/security): the scanners and
+// their offline databases, the same for every project stack.
+const ImageSecurity = "security"
+
+// ImageFor is the logical image an execution of the category runs in: the security image for the
+// scanners, the image of the project stack for everything else (interno.md: the worker picks the image of
+// the allowlist).
+func ImageFor(category, stack string) string {
+	if category == CategoryScanner {
+		return ImageSecurity
+	}
+	return stack
+}
 
 // Problem slugs of the runner (urn:easycode:problem:sandbox-<slug>).
 const (

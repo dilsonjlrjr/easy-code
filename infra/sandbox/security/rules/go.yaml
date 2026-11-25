@@ -1,0 +1,95 @@
+# Baseline Opengrep rules of the Easy Code security sandbox for Go (written for this repository, same
+# license as the platform; varreduras-opensource.md: only open-license rules). They are candidates for the
+# triage of the Segurança agent, never a verdict; the agent may add project rules under docs/seguranca/.
+rules:
+  - id: go-sql-string-concatenation
+    languages: [go]
+    severity: ERROR
+    message: SQL query built by concatenation or fmt.Sprintf; pass the values as query parameters.
+    metadata: { owasp: "A05", cwe: "CWE-89" }
+    patterns:
+      - pattern-either:
+          - pattern: $DB.$QUERY(<... "..." + $X ...>, ...)
+          - pattern: $DB.$QUERY(<... $X + "..." ...>, ...)
+          - pattern: $DB.$QUERY(fmt.Sprintf("...", ...), ...)
+      - metavariable-regex:
+          metavariable: $QUERY
+          regex: ^(Query|QueryRow|QueryContext|QueryRowContext|Exec|ExecContext|Prepare|PrepareContext)$
+
+  - id: go-command-through-shell
+    languages: [go]
+    severity: ERROR
+    message: Command run through a shell with a non-constant script; call the program with separate arguments.
+    metadata: { owasp: "A05", cwe: "CWE-78" }
+    patterns:
+      - pattern-either:
+          - pattern: exec.Command("sh", "-c", $SCRIPT, ...)
+          - pattern: exec.Command("bash", "-c", $SCRIPT, ...)
+          - pattern: exec.CommandContext($CTX, "sh", "-c", $SCRIPT, ...)
+          - pattern: exec.CommandContext($CTX, "bash", "-c", $SCRIPT, ...)
+      - pattern-not: exec.Command($SHELL, "-c", "...", ...)
+      - pattern-not: exec.CommandContext($CTX, $SHELL, "-c", "...", ...)
+
+  - id: go-tls-insecure-skip-verify
+    languages: [go]
+    severity: ERROR
+    message: TLS certificate verification turned off.
+    metadata: { owasp: "A04", cwe: "CWE-295" }
+    pattern: "tls.Config{..., InsecureSkipVerify: true, ...}"
+
+  - id: go-weak-hash
+    languages: [go]
+    severity: WARNING
+    message: MD5 or SHA-1 used; do not use them for passwords, signatures or integrity of untrusted data.
+    metadata: { owasp: "A04", cwe: "CWE-328" }
+    pattern-either:
+      - pattern: md5.New()
+      - pattern: md5.Sum(...)
+      - pattern: sha1.New()
+      - pattern: sha1.Sum(...)
+
+  - id: go-math-rand-for-secret
+    languages: [go]
+    severity: WARNING
+    message: math/rand is predictable; use crypto/rand for tokens, keys and identifiers that must not be guessed.
+    metadata: { owasp: "A04", cwe: "CWE-338" }
+    pattern-either:
+      - pattern: |
+          import "math/rand"
+      - pattern: |
+          import "math/rand/v2"
+
+  - id: go-http-server-without-timeouts
+    languages: [go]
+    severity: WARNING
+    message: http.ListenAndServe has no read or write timeout; use an http.Server with ReadHeaderTimeout.
+    metadata: { owasp: "A02", cwe: "CWE-400" }
+    pattern-either:
+      - pattern: http.ListenAndServe(...)
+      - pattern: http.ListenAndServeTLS(...)
+
+  - id: go-template-unescaped
+    languages: [go]
+    severity: ERROR
+    message: Content marked as safe HTML, JS or URL skips the escaping of html/template.
+    metadata: { owasp: "A05", cwe: "CWE-79" }
+    patterns:
+      - pattern-either:
+          - pattern: template.HTML($X)
+          - pattern: template.JS($X)
+          - pattern: template.URL($X)
+      # A constant literal is safe.
+      - pattern-not: template.$F("...")
+
+  - id: go-path-from-request
+    languages: [go]
+    severity: WARNING
+    message: File path taken from the request; clean it and check that it stays inside the allowed folder.
+    metadata: { owasp: "A01", cwe: "CWE-22" }
+    patterns:
+      - pattern-either:
+          - pattern: os.Open($R.URL.Query().Get(...))
+          - pattern: os.ReadFile($R.URL.Query().Get(...))
+          - pattern: http.ServeFile($W, $R, $R.URL.Query().Get(...))
+          - pattern: os.Open($R.FormValue(...))
+          - pattern: os.ReadFile($R.FormValue(...))
