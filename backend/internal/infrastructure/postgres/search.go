@@ -24,10 +24,16 @@ var _ search.Store = Search{}
 // NewSearch builds the adapter.
 func NewSearch(pool *pgxpool.Pool) Search { return Search{pool: pool} }
 
+// fold lowers a text and drops the Portuguese accents, so "acao" finds "Ação" (US-56); translate needs no
+// extension (unaccent is not available to the platform role).
+func fold(expr string) string {
+	return "translate(lower(" + expr + "), 'áàâãäéèêëíìîïóòôõöúùûüçñ', 'aaaaaeeeeiiiiooooouuuucn')"
+}
+
 // searchSQL: $1 organization, $2 subject, $3 term, $4 LIKE pattern, $5 limit per group. A project marked
 // for deletion (and later anonymized) is out (US-56 CA-6), like in every list. An exact id or name comes
 // first.
-const searchSQL = `
+var searchSQL = `
 WITH me AS (` + principalUserIDSQL + `),
 mine AS (
   SELECT DISTINCT pr.id, pr.public_id, pr.name, pr.state
@@ -36,18 +42,18 @@ mine AS (
 ),
 hits AS (
   SELECT 'project' AS kind, p.public_id::text AS project_id, p.name AS project_name, p.state AS project_state,
-         '' AS code, '' AS type, p.name AS title, p.state AS state, '' AS severity, lower(p.name) = lower($3) AS exact
+         '' AS code, '' AS type, p.name AS title, p.state AS state, '' AS severity, ` + fold("p.name") + ` = ` + fold("$3") + ` AS exact
     FROM mine p
-   WHERE p.name ILIKE $4
+   WHERE ` + fold("p.name") + ` LIKE ` + fold("$4") + `
   UNION ALL
   SELECT 'artifact', p.public_id::text, p.name, p.state, a.code, a.type, a.title, a.state, '', upper(a.code) = upper($3)
     FROM mine p JOIN easycode.artifacts a ON a.project_id = p.id
-   WHERE a.type <> 'ACH' AND (a.code ILIKE $4 OR a.title ILIKE $4)
+   WHERE a.type <> 'ACH' AND (a.code ILIKE $4 OR ` + fold("a.title") + ` LIKE ` + fold("$4") + `)
   UNION ALL
   SELECT 'finding', p.public_id::text, p.name, p.state, a.code, a.type, a.title, f.status, f.severity, upper(a.code) = upper($3)
     FROM mine p JOIN easycode.artifacts a ON a.project_id = p.id AND a.type = 'ACH'
     JOIN easycode.findings f ON f.artifact_id = a.id
-   WHERE a.code ILIKE $4 OR a.title ILIKE $4
+   WHERE a.code ILIKE $4 OR ` + fold("a.title") + ` LIKE ` + fold("$4") + `
 ),
 ranked AS (
   SELECT h.*, row_number() OVER (PARTITION BY kind ORDER BY exact DESC, lower(project_name), project_id, code) AS n,

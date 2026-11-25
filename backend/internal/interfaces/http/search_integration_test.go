@@ -93,6 +93,12 @@ func TestSearchFindsOnlyInProjectsWithARole(t *testing.T) {
 	if titled := searchFor(t, person, "Sintético")["findings"]; titled.total != 24 {
 		t.Fatalf("CA-2: findings by title: %v", titled.total)
 	}
+	if plain := searchFor(t, person, "sintetico")["findings"]; plain.total != 24 {
+		t.Fatalf("accents are ignored: %v", plain.total)
+	}
+	if plain := searchFor(t, person, "VISÃO DA RESERVA")["artifacts"]; plain.total != 12 {
+		t.Fatalf("accents and case are ignored: %v", plain.total)
+	}
 
 	for _, term := range []string{"carga", "ach-01", "reserva de", "Sintético", "VISAO"} {
 		raw := string(person.send("GET", "/api/v1/search?search="+url.QueryEscape(term), "", nil).Response.Body())
