@@ -126,6 +126,7 @@ type Executor struct {
 	// record the attachments of every version (Artifact.attachments, PL-24).
 	attachmentSpecs func(stage string) []domainartifact.AttachmentSpec
 	sources         SourceReader
+	templates       func(artifactType string) (string, error)
 	findings        FindingProgress
 	budget          Budget
 }
@@ -186,6 +187,42 @@ func (e *Executor) WithAttachmentSpecs(specs func(stage string) []domainartifact
 func (e *Executor) WithSources(sources SourceReader) *Executor {
 	e.sources = sources
 	return e
+}
+
+// WithTemplates gives the agents the templates of the artifact types they write (agentes/templates).
+func (e *Executor) WithTemplates(templates func(artifactType string) (string, error)) *Executor {
+	e.templates = templates
+	return e
+}
+
+// waveTemplates are the templates of what the wave may write: the outputs of its stage (also in rework and
+// reevaluation), the type of a human edit and ACH when the agent writes findings. A participant wave
+// only gives its opinion.
+func (e *Executor) waveTemplates(wave WaveContext, stageOutputs []string) (map[string]string, error) {
+	if e.templates == nil || wave.Reviewing() {
+		return nil, nil
+	}
+	types := append([]string{}, stageOutputs...)
+	if wave.Edit != nil && wave.Edit.Type != "" {
+		types = append(types, wave.Edit.Type)
+	}
+	for _, p := range policyOf(wave).WritePaths {
+		if strings.HasPrefix(p, "docs/achados") {
+			types = append(types, "ACH")
+		}
+	}
+	templates := map[string]string{}
+	for _, artifactType := range types {
+		if _, done := templates[artifactType]; done {
+			continue
+		}
+		text, err := e.templates(artifactType)
+		if err != nil {
+			return nil, err
+		}
+		templates[artifactType] = text
+	}
+	return templates, nil
 }
 
 // maxSourceBytes bounds the text of one attachment given to the agent.
@@ -410,6 +447,9 @@ func (e *Executor) execute(ctx context.Context, c Claimed) error {
 		wave.Purpose = PurposeExecution
 	}
 	if wave.Sources, err = e.sourceFiles(ctx, inputs.Attachments); err != nil {
+		return err
+	}
+	if wave.Templates, err = e.waveTemplates(wave, wave.Outputs); err != nil {
 		return err
 	}
 	if wave.Reviewing() || wave.Purpose != PurposeExecution {

@@ -1,6 +1,6 @@
 // Package specs embeds the domain specifications the binaries run on: the workflows
 // (specs/dominio/workflow/workflow-basico.yaml and workflow-padrao.yaml), the artifact JSON schemas, the agent permissions
-// and the agent instructions. The files under data/ are copies kept equal to the repository
+// the agent instructions and the artifact templates (agentes/templates). The files under data/ are copies kept equal to the repository
 // sources by "make check-specs" (part of make ci), so builds stay reproducible from project/backend.
 package specs
 
@@ -205,4 +205,14 @@ func ReferenceNeed() (string, error) {
 		return "", fmt.Errorf("reserva-de-salas.md without the --- line")
 	}
 	return strings.TrimSpace(need), nil
+}
+
+// Template is the template of an artifact type (agentes/templates/<TIPO>.md): the mold of the YAML
+// header and of the body the agent fills, with the allowed values of each field.
+func Template(artifactType string) (string, error) {
+	raw, err := files.ReadFile("data/templates/" + path.Base(artifactType) + ".md")
+	if err != nil {
+		return "", fmt.Errorf("template of %s: %w", artifactType, err)
+	}
+	return string(raw), nil
 }

@@ -45,8 +45,11 @@ type WaveContext struct {
 	Language      string // artifact language (RNF-21)
 	Feedback      string // reason of the last rejected gate round (rework), untrusted
 	WritablePaths []string
-	Outputs       []string            // artifact types the stage must deliver
-	Models        map[string]ModelRef // by role: the pair the wave started with (US-16 CA-4)
+	Outputs       []string // artifact types the stage must deliver
+	// Templates are the templates of the artifact types the wave may write (type → agentes/templates/<TIPO>.md),
+	// the mold of the header the schema validates (US-29).
+	Templates map[string]string
+	Models    map[string]ModelRef // by role: the pair the wave started with (US-16 CA-4)
 	// Policy is the least-privilege policy of the agent (RNF-07); nil derives a write-only policy
 	// from WritablePaths (agents without sandbox of MARCO-1).
 	Policy *permission.Policy

@@ -354,3 +354,29 @@ func TestLeadReceivesTheOpinions(t *testing.T) {
 		t.Fatalf("lead context: %s", cp.State)
 	}
 }
+
+// US-29: the agent gets the template of every artifact it writes, in both harnesses (own and Claude Code);
+// without it, it guesses the header and the schema refuses it until the corrections run out.
+func TestAgentsGetTheTemplatesOfTheirArtifacts(t *testing.T) {
+	visaoTemplate, err := specs.Template("VISAO")
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := wave()
+	w.Templates = map[string]string{"VISAO": visaoTemplate}
+	cp, _, err := runtime.NewFileAgent(&cannedModel{}, 1000).Start(context.Background(), w)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var state struct{ System string }
+	if err := json.Unmarshal(cp.State, &state); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(state.System, "### VISAO") || !strings.Contains(state.System, "quem_e: <quem é>") {
+		t.Fatalf("the template of VISAO is in the system prompt: %s", state.System)
+	}
+	plain, _, _ := runtime.NewFileAgent(&cannedModel{}, 1000).Start(context.Background(), wave())
+	if strings.Contains(string(plain.State), "Templates dos artefatos") {
+		t.Fatal("no templates section without templates")
+	}
+}

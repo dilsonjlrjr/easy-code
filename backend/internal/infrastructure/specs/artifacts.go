@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
+	"github.com/santhosh-tekuri/jsonschema/v6/kind"
 	"golang.org/x/text/language"
 	"golang.org/x/text/message"
 
@@ -131,10 +132,16 @@ func (v *ArtifactValidator) Validate(artifactType string, header map[string]any)
 
 var printer = message.NewPrinter(language.English)
 
-// schemaErrors flattens the leaves of the validation tree, one per location and message.
+// notAllowed is the message of a property the schema does not allow (unevaluatedProperties: false).
+const notAllowed = "property not allowed"
+
+// schemaErrors flattens the leaves of the validation tree, one per location and message. The schemas
+// join the common header with allOf and close the header with unevaluatedProperties: false, so one
+// invalid field makes every valid field of its branch also fail as "false schema". Those leaves are
+// noise when a real error exists and are left out; alone, they are properties the type does not have.
 func schemaErrors(root *jsonschema.ValidationError) []domainartifact.SchemaError {
 	seen := map[string]bool{}
-	var out []domainartifact.SchemaError
+	var found, unevaluated []domainartifact.SchemaError
 	var walk func(*jsonschema.ValidationError)
 	walk = func(e *jsonschema.ValidationError) {
 		if len(e.Causes) > 0 {
@@ -147,13 +154,24 @@ func schemaErrors(root *jsonschema.ValidationError) []domainartifact.SchemaError
 		if location == "/" {
 			location = ""
 		}
+		if _, cascade := e.ErrorKind.(*kind.FalseSchema); cascade {
+			if key := location + "\x00" + notAllowed; !seen[key] {
+				seen[key] = true
+				unevaluated = append(unevaluated, domainartifact.SchemaError{Path: location, Message: notAllowed})
+			}
+			return
+		}
 		message := e.ErrorKind.LocalizedString(printer)
 		if key := location + "\x00" + message; !seen[key] {
 			seen[key] = true
-			out = append(out, domainartifact.SchemaError{Path: location, Message: message})
+			found = append(found, domainartifact.SchemaError{Path: location, Message: message})
 		}
 	}
 	walk(root)
+	out := found
+	if len(out) == 0 {
+		out = unevaluated
+	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].Path < out[j].Path })
 	return out
 }

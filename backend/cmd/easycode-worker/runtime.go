@@ -95,7 +95,8 @@ func newRuntime(cfg config.Config, pool *pgxpool.Pool, propagator propagation.Te
 		stageOutputs(wf), runtime.Settings{Worker: worker, Lease: cfg.Worker.WaveLease, MaxCorrections: cfg.Worker.MaxArtifactCorrections,
 			RetryBackoff: 2 * time.Second, Poll: cfg.Worker.CommandPollInterval, Image: cfg.Sandbox.Image,
 			ProjectLimits: sandbox.Limits{CPU: cfg.Sandbox.CPU, MemoryMiB: cfg.Sandbox.MemoryMiB, DiskMiB: cfg.Sandbox.DiskMiB, Time: cfg.Sandbox.CommandTime}}, logger).
-		WithRepository(repository, stageAttachments(wf)).WithAttachmentSpecs(stageAttachmentSpecs(wf)).WithSources(files.New(cfg.FilesDir)).WithFindings(findings).WithBudget(orchestrator)
+		WithRepository(repository, stageAttachments(wf)).WithAttachmentSpecs(stageAttachmentSpecs(wf)).WithSources(files.New(cfg.FilesDir)).WithFindings(findings).WithBudget(orchestrator).
+		WithTemplates(specs.Template)
 	return runtimeParts{executor: executor, progress: progress, findings: findings, orchestrator: orchestrator,
 		answers: appwave.NewAnswerHandler(postgres.NewWaves(pool, wf.Definition), outbox)}, nil
 }

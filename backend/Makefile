@@ -62,8 +62,8 @@ sandbox-image:
 	docker build -q -t $(SANDBOX_TEST_IMAGE) ../infra/sandbox/go >/dev/null
 	docker build -q -t $(SECURITY_TEST_IMAGE) ../infra/sandbox/security >/dev/null
 
-# The binaries embed copies of domain specs (workflow, artifact schemas, permissions) and agent
-# instructions, so builds are reproducible from this repository alone. The sources live in a separate
+# The binaries embed copies of domain specs (workflow, artifact schemas, permissions), agent
+# instructions and artifact templates, so builds are reproducible from this repository alone. The sources live in a separate
 # specification workspace (specs/ and agentes/), found at SPECS_SOURCE. check-specs fails when a copy
 # drifts from its source and is skipped when the workspace is absent; sync-specs refreshes the copies.
 SPECS_DIR    := internal/infrastructure/specs/data
@@ -82,6 +82,7 @@ else
 	@diff -rq $(SPECS_SOURCE)/specs/dominio/artefatos $(SPECS_DIR)/artefatos --exclude=README.md
 	@diff -rq $(SPECS_SOURCE)/agentes/instrucoes $(SPECS_DIR)/agentes --exclude=README.md
 	@diff -rq $(SPECS_SOURCE)/agentes/skills $(SPECS_DIR)/skills --exclude=README.md
+	@diff -rq $(SPECS_SOURCE)/agentes/templates $(SPECS_DIR)/templates --exclude=README.md
 	@cmp -s $(SPECS_SOURCE)/agentes/referencia/reserva-de-salas.md $(SPECS_DIR)/referencia/reserva-de-salas.md || { echo "drift: reserva-de-salas.md (make sync-specs)"; exit 1; }
 	@echo "embedded specs in sync"
 endif
@@ -96,6 +97,7 @@ endif
 	cp $(SPECS_SOURCE)/agentes/referencia/reserva-de-salas.md $(SPECS_DIR)/referencia/
 	rm -rf $(SPECS_DIR)/skills && cp -r $(SPECS_SOURCE)/agentes/skills $(SPECS_DIR)/skills && rm $(SPECS_DIR)/skills/README.md
 	for f in $(SPECS_SOURCE)/agentes/instrucoes/*.md; do case "$$f" in */README.md) ;; *) cp "$$f" $(SPECS_DIR)/agentes/ ;; esac; done
+	mkdir -p $(SPECS_DIR)/templates && for f in $(SPECS_SOURCE)/agentes/templates/*.md; do case "$$f" in */README.md) ;; *) cp "$$f" $(SPECS_DIR)/templates/ ;; esac; done
 
 # What CI runs; needs only Docker. From the repository root: make -C backend ci
 ci: check-specs lint test-integration build

@@ -597,3 +597,22 @@ func TestDispatchPicksTheHarnessByThePair(t *testing.T) {
 		t.Fatal("without Claude Code the own harness is used as is")
 	}
 }
+
+// US-29: the Claude Code run gets the templates once, after its own tool guide.
+func TestClaudeCodeSystemPromptHasTheTemplates(t *testing.T) {
+	f := newClaudeFixture(t)
+	w := ccWave(t)
+	w.Templates = map[string]string{"VISAO": "molde da visao", "US": "molde da us"}
+	cp, _, err := f.agent.Start(context.Background(), w)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var state struct{ System string }
+	if err := json.Unmarshal(cp.State, &state); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(state.System, "## Templates dos artefatos") != 1 || !strings.Contains(state.System, "### US\n\nmolde da us") ||
+		strings.Index(state.System, "### US") > strings.Index(state.System, "### VISAO") || strings.Count(state.System, "read_file(path)") != 0 {
+		t.Fatalf("templates once, sorted, with the Claude Code guide: %s", state.System)
+	}
+}
