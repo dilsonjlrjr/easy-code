@@ -1667,6 +1667,24 @@ export const en: MessageSchema = {
     revoked: 'Session revoked.',
     confirmCodeLink: "Open the SSO's confirmation page",
   },
+  markdownEditor: {
+    toolbar: 'Markdown formatting',
+    write: 'Write',
+    preview: 'Preview',
+    header: 'YAML header',
+    empty: 'Nothing to preview.',
+    action: {
+      bold: 'Bold (Ctrl+B)',
+      italic: 'Italic (Ctrl+I)',
+      heading: 'Heading',
+      bullets: 'List',
+      numbers: 'Numbered list',
+      quote: 'Quote',
+      code: 'Code',
+      link: 'Link',
+    },
+    sample: { bold: 'bold text', italic: 'italic text', code: 'code', link: 'link text' },
+  },
   artifactEdit: {
     applied: 'Edit validated by the agent: version {version} was created.',
     notValidated:

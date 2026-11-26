@@ -3,6 +3,7 @@ import { computed, ref, useId, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { newIdempotencyKey } from '@/shared/api/idempotencyKey'
 import { ApiError } from '@/shared/api/problemDetails'
+import MarkdownEditor from '@/shared/ui/MarkdownEditor.vue'
 import ProblemAlert from '@/shared/ui/ProblemAlert.vue'
 import { projectsApi } from '@/features/projects/api/projectsApi'
 import {
@@ -171,21 +172,19 @@ async function submit(): Promise<void> {
           {{ $t('artifactEdit.imposedAdrHelp') }}
         </p>
         <span v-if="operation !== 'delete'" class="dlg-field" data-testid="artifact-edit-content">
-          <label :for="`${id}-content`" class="dlg-wrap">
-            <span :id="`${id}-content-label`" class="dlg-label">{{
-              $t('artifactEdit.content')
-            }}</span>
-            <textarea
-              :id="`${id}-content`"
-              v-model="content"
-              :aria-labelledby="`${id}-content-label`"
-              class="fld mono"
-              rows="14"
-              spellcheck="false"
-              :aria-invalid="contentTooLarge ? 'true' : 'false'"
-              :aria-describedby="`${id}-content-messages`"
-            />
-          </label>
+          <!-- The label does not wrap the editor: its toolbar buttons are not part of the label. -->
+          <!-- eslint-disable-next-line vuejs-accessibility/label-has-for -- `for` names the editor textarea (id passed to MarkdownEditor). -->
+          <label :id="`${id}-content-label`" :for="`${id}-content`" class="dlg-label">{{
+            $t('artifactEdit.content')
+          }}</label>
+          <MarkdownEditor
+            :id="`${id}-content`"
+            v-model="content"
+            :aria-labelledby="`${id}-content-label`"
+            :rows="16"
+            :aria-invalid="contentTooLarge ? 'true' : 'false'"
+            :aria-describedby="`${id}-content-messages`"
+          />
           <span :id="`${id}-content-messages`" class="dlg-messages" aria-live="polite">
             <span v-if="contentTooLarge" class="dlg-error">{{
               $t('artifactEdit.contentTooLarge')

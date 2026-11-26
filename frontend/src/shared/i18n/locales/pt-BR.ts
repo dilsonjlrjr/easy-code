@@ -1681,6 +1681,29 @@ export const ptBR = {
     revoked: 'Sessão revogada.',
     confirmCodeLink: 'Abrir a página de confirmação do SSO',
   },
+  markdownEditor: {
+    toolbar: 'Formatação do Markdown',
+    write: 'Escrever',
+    preview: 'Visualizar',
+    header: 'Cabeçalho YAML',
+    empty: 'Nada para visualizar.',
+    action: {
+      bold: 'Negrito (Ctrl+B)',
+      italic: 'Itálico (Ctrl+I)',
+      heading: 'Título',
+      bullets: 'Lista',
+      numbers: 'Lista numerada',
+      quote: 'Citação',
+      code: 'Código',
+      link: 'Link',
+    },
+    sample: {
+      bold: 'texto em negrito',
+      italic: 'texto em itálico',
+      code: 'código',
+      link: 'texto do link',
+    },
+  },
   artifactEdit: {
     applied: 'Edição validada pelo agente: nasceu a versão {version}.',
     notValidated:
