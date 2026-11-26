@@ -25,7 +25,17 @@ import type { AvailableAction, Command } from '@/shared/api/contract'
 import { newIdempotencyKey } from '@/shared/api/idempotencyKey'
 import WaveQuestions from '../components/WaveQuestions.vue'
 import { refusedToolCalls } from '../composables/sandboxEvidence'
-import { callCounts, latestCheckpoint, waveTimeline } from '../composables/waveTimeline'
+import {
+  callCounts,
+  filterTimeline,
+  latestCheckpoint,
+  latestEntries,
+  TIMELINE_FILTERS,
+  TIMELINE_MORE,
+  TIMELINE_PAGE,
+  waveTimeline,
+  type TimelineFilter,
+} from '../composables/waveTimeline'
 import { currentWavesApi, useWaveLive } from '../composables/useWaveLive'
 
 const i18n = useI18n()
@@ -112,6 +122,18 @@ const showEvidence = computed(
 /** ESP-18 "Atividade" (PD-20, PL-39): calls and checkpoints in one timeline, no "steps". */
 const timeline = computed(() => waveTimeline(live.calls.value, live.checkpoints.value))
 const counts = computed(() => callCounts(live.calls.value))
+/** A long activity shows its latest entries; the earlier ones open on request, by a filter if needed. */
+const timelineFilter = ref<TimelineFilter>('all')
+const timelineLimit = ref<number | undefined>(TIMELINE_PAGE)
+const filteredTimeline = computed(() => filterTimeline(timeline.value, timelineFilter.value))
+const visibleTimeline = computed(() => latestEntries(filteredTimeline.value, timelineLimit.value))
+function chooseTimelineFilter(filter: TimelineFilter): void {
+  timelineFilter.value = filter
+  timelineLimit.value = TIMELINE_PAGE
+}
+function showEarlier(): void {
+  timelineLimit.value = (timelineLimit.value ?? TIMELINE_PAGE) + TIMELINE_MORE
+}
 const lastCheckpoint = computed(() => latestCheckpoint(live.checkpoints.value))
 const lastCheckpointNumber = computed(
   () => wave.value?.last_checkpoint ?? lastCheckpoint.value?.number ?? undefined,
@@ -669,10 +691,60 @@ function callTitle(call: CallRecord): string {
           <p v-if="timeline.length === 0" class="t2 card-line">
             {{ $t('waves.calls.none') }}
           </p>
+          <div v-if="timeline.length > TIMELINE_PAGE" class="timeline-tools">
+            <div class="chips-row" role="group" :aria-label="$t('waves.calls.filter')">
+              <button
+                v-for="filter in TIMELINE_FILTERS"
+                :key="filter"
+                type="button"
+                class="tabf"
+                :class="{ on: timelineFilter === filter }"
+                :aria-pressed="timelineFilter === filter"
+                :data-testid="`timeline-filter-${filter}`"
+                @click="chooseTimelineFilter(filter)"
+              >
+                {{ $t(`waves.calls.filters.${filter}`) }}
+              </button>
+            </div>
+            <span class="t2 call-meta" data-testid="timeline-count">
+              {{
+                visibleTimeline.hidden > 0
+                  ? $t('waves.calls.showing', {
+                      shown: visibleTimeline.shown.length,
+                      total: filteredTimeline.length,
+                    })
+                  : $t('waves.calls.total', { count: filteredTimeline.length })
+              }}
+            </span>
+          </div>
+          <p v-if="timeline.length > 0 && filteredTimeline.length === 0" class="t2 card-line">
+            {{ $t('waves.calls.noneInFilter') }}
+          </p>
+          <div v-if="visibleTimeline.hidden > 0" class="timeline-more">
+            <button type="button" class="btn" data-testid="timeline-earlier" @click="showEarlier">
+              {{
+                $t('waves.calls.showEarlier', {
+                  count: Math.min(TIMELINE_MORE, visibleTimeline.hidden),
+                })
+              }}
+            </button>
+            <button
+              type="button"
+              class="btn"
+              data-testid="timeline-all"
+              @click="timelineLimit = undefined"
+            >
+              {{ $t('waves.calls.showAll', { count: filteredTimeline.length }) }}
+            </button>
+          </div>
           <!-- ESP-18 section 8: the activity is a log; no prompt, answer or tool arguments (ER-18-15). -->
-          <div v-else role="log" :aria-label="$t('waves.calls.title')">
+          <div
+            v-if="visibleTimeline.shown.length > 0"
+            role="log"
+            :aria-label="$t('waves.calls.title')"
+          >
             <ol class="list" data-testid="wave-timeline">
-              <template v-for="entry in timeline" :key="entry.key">
+              <template v-for="entry in visibleTimeline.shown" :key="entry.key">
                 <li
                   v-if="entry.kind === 'call'"
                   :data-testid="`call-${entry.call.number}`"
@@ -755,6 +827,19 @@ function callTitle(call: CallRecord): string {
                 </li>
               </template>
             </ol>
+          </div>
+          <div
+            v-if="timelineLimit === undefined && filteredTimeline.length > TIMELINE_PAGE"
+            class="timeline-more"
+          >
+            <button
+              type="button"
+              class="btn"
+              data-testid="timeline-latest"
+              @click="timelineLimit = TIMELINE_PAGE"
+            >
+              {{ $t('waves.calls.showLatest', { count: TIMELINE_PAGE }) }}
+            </button>
           </div>
         </section>
 
@@ -1151,6 +1236,32 @@ function callTitle(call: CallRecord): string {
 
 .call-meta {
   font-size: 12px;
+}
+
+.timeline-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+  margin-bottom: 12px;
+}
+
+.chips-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.tabf {
+  min-height: 44px;
+}
+
+.timeline-more {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 8px 0 12px;
 }
 
 .history-item {

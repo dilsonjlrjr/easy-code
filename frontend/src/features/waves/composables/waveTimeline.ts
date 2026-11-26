@@ -60,3 +60,38 @@ export function callCounts(calls: CallRecord[]): { model: number; tool: number }
     { model: 0, tool: 0 },
   )
 }
+
+/** Filters of the wave activity: everything, model calls, tool calls, or the calls that went wrong. */
+export const TIMELINE_FILTERS = ['all', 'model', 'tool', 'problem'] as const
+export type TimelineFilter = (typeof TIMELINE_FILTERS)[number]
+
+/** Entries shown at first, and how many more each "show earlier" adds. */
+export const TIMELINE_PAGE = 10
+export const TIMELINE_MORE = 30
+
+/** A call that did not succeed: error, aborted, refused or lost in an interruption. */
+export function isProblem(call: CallRecord): boolean {
+  return call.result !== 'success' || Boolean(call.refusal_reason) || Boolean(call.lost)
+}
+
+/** The entries of a filter; checkpoints only appear with "all". */
+export function filterTimeline(entries: TimelineEntry[], filter: TimelineFilter): TimelineEntry[] {
+  if (filter === 'all') return entries
+  return entries.filter((entry) => {
+    if (entry.kind !== 'call') return false
+    if (filter === 'problem') return isProblem(entry.call)
+    return entry.call.type === filter
+  })
+}
+
+/**
+ * A long activity shows only its latest entries (the wave runs at the end of the list); the earlier
+ * ones stay one click away. limit undefined shows everything.
+ */
+export function latestEntries(
+  entries: TimelineEntry[],
+  limit: number | undefined,
+): { shown: TimelineEntry[]; hidden: number } {
+  if (limit === undefined || entries.length <= limit) return { shown: entries, hidden: 0 }
+  return { shown: entries.slice(entries.length - limit), hidden: entries.length - limit }
+}

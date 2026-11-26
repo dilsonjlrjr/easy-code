@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import type { CallRecord, Checkpoint } from '../api/wavesApi'
-import { callCounts, latestCheckpoint, waveTimeline } from '../composables/waveTimeline'
+import {
+  callCounts,
+  filterTimeline,
+  latestCheckpoint,
+  latestEntries,
+  TIMELINE_PAGE,
+  waveTimeline,
+} from '../composables/waveTimeline'
 
 const ZERO = { input: 0, output: 0, read_cache: 0, write_cache: 0 }
 const COST = {
@@ -72,5 +79,32 @@ describe('callCounts', () => {
         call(3, '2026-11-24T10:02:00Z', 'tool'),
       ]),
     ).toEqual({ model: 1, tool: 2 })
+  })
+})
+
+describe('activity window and filters (long waves)', () => {
+  const calls = Array.from({ length: 25 }, (_, i) =>
+    call(i + 1, `2026-11-24T10:${String(i).padStart(2, '0')}:00Z`, i % 2 === 0 ? 'model' : 'tool'),
+  )
+  calls[3] = { ...calls[3], result: 'refused', refusal_reason: 'path_not_allowed' } as CallRecord
+  const entries = waveTimeline(calls, [checkpoint(1, '2026-11-24T10:00:30Z')])
+
+  it('shows only the latest entries and counts the hidden ones', () => {
+    const { shown, hidden } = latestEntries(entries, TIMELINE_PAGE)
+    expect(shown).toHaveLength(TIMELINE_PAGE)
+    expect(hidden).toBe(entries.length - TIMELINE_PAGE)
+    expect(shown.at(-1)).toBe(entries.at(-1))
+    expect(latestEntries(entries, undefined).hidden).toBe(0)
+  })
+
+  it('filters by type and by problem; checkpoints only in "all"', () => {
+    expect(filterTimeline(entries, 'all')).toHaveLength(26)
+    expect(
+      filterTimeline(entries, 'model').every((e) => e.kind === 'call' && e.call.type === 'model'),
+    ).toBe(true)
+    expect(filterTimeline(entries, 'tool')).toHaveLength(12)
+    const problems = filterTimeline(entries, 'problem')
+    expect(problems).toHaveLength(1)
+    expect(problems[0]?.kind === 'call' && problems[0].call.number).toBe(4)
   })
 })

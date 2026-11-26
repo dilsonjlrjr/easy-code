@@ -231,3 +231,57 @@ test('ESP-23 US-37 PC-28: the price table shows each model with its own period a
   await expect(page.getByRole('heading', { name: 'Vigências de Raciocínio' })).toBeFocused()
   await expect(page.getByTestId('price-period-7')).toContainText('já usada por onda')
 })
+
+test('a long wave activity shows the latest entries, the earlier ones on request and a filter for problems', async ({
+  page,
+}) => {
+  const api = signedIn()
+  const calls = Array.from({ length: 58 }, (_, i) => ({
+    number: i + 1,
+    type: i % 2 === 0 ? 'model' : 'tool',
+    start: minutesAgo(60 - i),
+    duration_ms: 300,
+    result: i === 4 ? 'refused' : 'success',
+    attempt: 1,
+    ...(i % 2 === 0
+      ? {
+          provider: 'anthropic',
+          model: 'execution-model',
+          role: 'execution',
+          tokens: tokens(10, 2),
+        }
+      : { tool: 'write_file', summary: `gravou US-${String(i).padStart(2, '0')}.md` }),
+    ...(i === 4 ? { type: 'tool', tool: 'write_file', refusal_reason: 'path_not_allowed' } : {}),
+  }))
+  api.addProject({
+    project: project('in_progress'),
+    workflow: phaseOneWorkflow('started'),
+    waves: [waveSummary(WAVE, 'running')],
+    waveDetails: { [WAVE]: waveDetail(WAVE, 'running') },
+    calls: { [WAVE]: calls },
+    checkpoints: { [WAVE]: [] },
+  })
+  await api.install(page)
+  await page.goto(`/projects/${PROJECT_ID}/waves/${WAVE}`)
+
+  const timeline = page.getByTestId('wave-timeline')
+  await expect(timeline.locator('li')).toHaveCount(10, { timeout: 30_000 })
+  await expect(page.getByTestId('timeline-count')).toContainText(
+    'Mostrando as 10 mais recentes de 58',
+  )
+  await expect(page.getByTestId('call-58')).toBeVisible()
+  await expect(page.getByTestId('call-1')).toHaveCount(0)
+
+  await page.getByTestId('timeline-earlier').click()
+  await expect(timeline.locator('li')).toHaveCount(40)
+  await page.getByTestId('timeline-all').click()
+  await expect(timeline.locator('li')).toHaveCount(58)
+  await page.getByTestId('timeline-latest').click()
+  await expect(timeline.locator('li')).toHaveCount(10)
+
+  await page.getByTestId('timeline-filter-problem').click()
+  await expect(page.getByTestId('timeline-filter-problem')).toHaveAttribute('aria-pressed', 'true')
+  await expect(timeline.locator('li')).toHaveCount(1)
+  await expect(page.getByTestId('call-5')).toContainText('caminho fora do permitido')
+  await expectNoSeriousA11yViolations(page)
+})
