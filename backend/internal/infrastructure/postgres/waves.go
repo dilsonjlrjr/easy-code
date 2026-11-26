@@ -116,15 +116,25 @@ SELECT `+waveSummary+`, w.id, w.inputs_digest, w.failure_cause,
 	if step > 0 || v.State != "queued" {
 		v.LastCheckpoint = &step
 	}
-	// A wave failed by the correction limit shows the schema errors (US-29 CA-2).
+	// The schema errors of the last delivery of the current attempt (US-29 CA-1, CA-2): a later delivery that
+	// passes clears them, and a restarted wave does not show the errors of an earlier attempt (before it
+	// starts, the new attempt has no delivery).
 	var evidence []byte
+	var schemaResult string
 	err = q.QueryRow(WithOperation(ctx, "waves.schema_failure"), `
-SELECT evidence FROM easycode.check_executions WHERE wave_id = $1 AND check_id = 'artifact.schema_valid' AND result = 'failed'
- ORDER BY executed_at DESC LIMIT 1`, waveID).Scan(&evidence)
+SELECT ce.result, ce.evidence FROM easycode.check_executions ce JOIN easycode.waves w ON w.id = ce.wave_id
+ WHERE ce.wave_id = $1 AND ce.check_id = 'artifact.schema_valid'
+   AND ce.executed_at >= coalesce((
+     SELECT min(e.occurred_at) FROM easycode.events e
+      WHERE e.project_id = w.project_id AND e.waveid = w.code AND e.type = 'br.easycode.wave.started.v1'
+        AND coalesce((e.envelope->'data'->>'attempt')::int, 1) = w.attempt),
+     CASE WHEN w.attempt > 1 THEN 'infinity'::timestamptz ELSE '-infinity'::timestamptz END)
+ ORDER BY ce.executed_at DESC, ce.id DESC LIMIT 1`, waveID).Scan(&schemaResult, &evidence)
 	switch {
 	case errors.Is(err, pgx.ErrNoRows):
 	case err != nil:
 		return v, fmt.Errorf("wave schema check: %w", classify(err))
+	case schemaResult != "failed":
 	default:
 		v.ArtifactErrors = evidence
 		if v.State == "failed" {

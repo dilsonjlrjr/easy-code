@@ -116,6 +116,7 @@ test('US-41 CA-1/CA-2/CA-3, US-19 CA-2: the developer wave shows each command wi
   await api.install(page)
 
   await page.goto(`/projects/${PROJECT_ID}/waves/${WAVE}`)
+  await page.getByTestId('wave-tab-evidence').click()
   const evidence = page.getByRole('region', { name: 'Evidência de build e testes' })
   await expect(evidence).toBeVisible()
   await expect(page.getByText('tarefa T-01')).toBeVisible()

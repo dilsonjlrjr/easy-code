@@ -175,6 +175,7 @@ test('US-13 CA-1: a failed wave is restarted after its dialog; the previous atte
 
   await expect(page.getByTestId('control-notice')).toContainText('está na fila')
   await expect(stateLabel(page)).toContainText('Na fila (reiniciada)')
+  await page.getByTestId('wave-tab-attempts').click()
   await expect(page.getByTestId('wave-attempts')).toContainText('tentativa 1')
   await expect(page.getByTestId('wave-attempts')).toContainText('Falhou')
   const request = api.requests.find((item) => item.path.endsWith('/restart'))

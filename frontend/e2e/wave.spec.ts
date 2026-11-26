@@ -177,6 +177,7 @@ test('US-09 CA-1/CA-2/CA-3, US-36 CA-2: the wave changes live, resumes with Last
   expect(streams[0]?.url).toContain(`waveId=${WAVE}`)
   expect(streams[0]?.url).toContain('since=3')
   expect(streams[1]?.lastEventId).toBe('4')
+  await page.getByTestId('wave-tab-history').click()
   await expect(page.getByTestId('wave-history').getByText('Checkpoint 2 gravado')).toHaveCount(1)
   await expectNoSeriousA11yViolations(page)
 
@@ -293,6 +294,7 @@ test('US-36 CA-1, US-09 CA-4: a completed wave shows tokens, models, useful and 
   await expect(cost).toContainText('0,4127')
   await expect(cost).toContainText(/6\s?min 52\s?s/)
   await expect(cost).toContainText('sucesso')
+  await page.getByTestId('wave-tab-history').click()
   await expect(page.getByTestId('wave-history')).toContainText('Onda REQ-01 concluída')
   await expect(page.getByRole('button', { name: /Pausar|Cancelar|Reiniciar/ })).toHaveCount(0)
   await expectNoSeriousA11yViolations(page)
@@ -319,9 +321,18 @@ test('US-29 CA-2: a wave that failed for an invalid artifact shows the cause and
 
   const failure = page.getByTestId('failure-cause')
   await expect(failure).toContainText('Causa da falha: artefato inválido')
+  // The errors fold away and open on request; the note closes.
+  await expect(failure.getByText('campo obrigatório ausente')).toBeHidden()
+  const toggle = failure.getByTestId('schema-errors-toggle')
+  await expect(toggle).toHaveText('Ver o erro de esquema')
+  await toggle.click()
+  await expect(toggle).toHaveAttribute('aria-expanded', 'true')
   await expect(failure).toContainText('/criterios_aceite')
-  await expect(failure).toContainText('campo obrigatório ausente')
+  await expect(failure.getByText('campo obrigatório ausente')).toBeVisible()
   await expectNoSeriousA11yViolations(page)
+  await failure.getByRole('button', { name: 'Fechar' }).click()
+  await expect(failure).toHaveCount(0)
+  await expect(page.locator('.state-label').first()).toContainText('Falhou')
 })
 
 test('US-10 CA-2: the open question appears in Pending items with project, stage, agent and waiting time', async ({

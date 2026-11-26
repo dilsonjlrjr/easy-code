@@ -1147,6 +1147,15 @@ export const en: MessageSchema = {
       native: 'catalog',
       organization: 'organization',
     },
+    tabs: {
+      label: 'Wave details',
+      activity: 'Activity',
+      evidence: 'Evidence',
+      attempts: 'Attempts',
+      history: 'History',
+    },
+    schemaErrorsShow: 'Show the schema error | Show the {count} schema errors',
+    schemaErrorsHide: 'Hide the errors',
     calls: {
       filter: 'Filter the activity',
       filters: {

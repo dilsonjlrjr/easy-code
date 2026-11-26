@@ -1160,6 +1160,15 @@ export const ptBR = {
       native: 'catálogo',
       organization: 'organização',
     },
+    tabs: {
+      label: 'Detalhes da onda',
+      activity: 'Atividade',
+      evidence: 'Evidências',
+      attempts: 'Tentativas',
+      history: 'Histórico',
+    },
+    schemaErrorsShow: 'Ver o erro de esquema | Ver os {count} erros de esquema',
+    schemaErrorsHide: 'Ocultar os erros',
     calls: {
       filter: 'Filtrar a atividade',
       filters: {

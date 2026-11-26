@@ -122,6 +122,50 @@ const showEvidence = computed(
 /** ESP-18 "Atividade" (PD-20, PL-39): calls and checkpoints in one timeline, no "steps". */
 const timeline = computed(() => waveTimeline(live.calls.value, live.checkpoints.value))
 const counts = computed(() => callCounts(live.calls.value))
+/** The long blocks of the wave share one card, in tabs; the activity opens first. */
+type WaveTab = 'activity' | 'evidence' | 'attempts' | 'history'
+const waveTab = ref<WaveTab>(route.hash === '#evidence' ? 'evidence' : 'activity')
+const waveTabs = computed<WaveTab[]>(() => [
+  'activity',
+  ...(showEvidence.value ? (['evidence'] as const) : []),
+  ...(previousAttempts.value.length > 0 ? (['attempts'] as const) : []),
+  'history',
+])
+const shownTab = computed<WaveTab>(() =>
+  waveTabs.value.includes(waveTab.value) ? waveTab.value : 'activity',
+)
+function tabCount(tab: WaveTab): number | undefined {
+  if (tab === 'activity') return timeline.value.length
+  if (tab === 'evidence') return live.executions.value.length
+  if (tab === 'attempts') return previousAttempts.value.length
+  return live.history.value.length
+}
+function onWaveTabKey(event: KeyboardEvent): void {
+  const tabs = waveTabs.value
+  const index = tabs.indexOf(shownTab.value)
+  const next =
+    event.key === 'ArrowRight'
+      ? (index + 1) % tabs.length
+      : event.key === 'ArrowLeft'
+        ? (index - 1 + tabs.length) % tabs.length
+        : event.key === 'Home'
+          ? 0
+          : event.key === 'End'
+            ? tabs.length - 1
+            : undefined
+  const target = next === undefined ? undefined : tabs[next]
+  if (target === undefined) return
+  event.preventDefault()
+  waveTab.value = target
+  void nextTick(() => document.getElementById(`wave-tab-${target}`)?.focus())
+}
+/** The schema errors of a failure or rejection fold away; the failure note can be closed. */
+const schemaErrorsOpen = ref(false)
+const failureDismissed = ref<string | undefined>(undefined)
+const failureKey = computed(() => `${wave.value?.id ?? ''}-${String(wave.value?.attempt ?? 1)}`)
+const showFailure = computed(
+  () => wave.value?.state === 'failed' && failureDismissed.value !== failureKey.value,
+)
 /** A long activity shows its latest entries; the earlier ones open on request, by a filter if needed. */
 const timelineFilter = ref<TimelineFilter>('all')
 const timelineLimit = ref<number | undefined>(TIMELINE_PAGE)
@@ -552,13 +596,8 @@ function callTitle(call: CallRecord): string {
         {{ $t('waves.cancel.canceledNotice', { cost: format.money(wave.cost.lost) }) }}
       </span>
     </div>
-    <!-- US-29 CA-2: a failed wave shows its cause and the schema errors per artifact. -->
-    <div
-      v-if="wave.state === 'failed'"
-      class="note n-crit"
-      role="alert"
-      data-testid="failure-cause"
-    >
+    <!-- US-29 CA-2: a failed wave shows its cause and the schema errors per artifact (folded). -->
+    <div v-if="showFailure" class="note n-crit" role="alert" data-testid="failure-cause">
       <span class="note-icon fg-crit"><CanvasIcon name="alert" :stroke-width="2" /></span>
       <div class="note-body">
         <p class="note-title">
@@ -569,8 +608,25 @@ function callTitle(call: CallRecord): string {
           }}
         </p>
         <template v-if="wave.artifact_errors?.length">
-          <p>{{ $t('waves.schemaErrors') }}</p>
-          <ul class="note-list">
+          <button
+            type="button"
+            class="link-btn"
+            :aria-expanded="schemaErrorsOpen"
+            aria-controls="failure-schema-errors"
+            data-testid="schema-errors-toggle"
+            @click="schemaErrorsOpen = !schemaErrorsOpen"
+          >
+            {{
+              schemaErrorsOpen
+                ? $t('waves.schemaErrorsHide')
+                : $t(
+                    'waves.schemaErrorsShow',
+                    { count: wave.artifact_errors.length },
+                    wave.artifact_errors.length,
+                  )
+            }}
+          </button>
+          <ul v-show="schemaErrorsOpen" id="failure-schema-errors" class="note-list">
             <li v-for="(item, index) in wave.artifact_errors" :key="index">
               <span class="mono">{{ item.artifact }}</span> ·
               <span class="mono">{{ item.path }}</span> · {{ item.message }}
@@ -578,9 +634,18 @@ function callTitle(call: CallRecord): string {
           </ul>
         </template>
       </div>
+      <button
+        type="button"
+        class="ibtn"
+        :aria-label="$t('common.close')"
+        data-testid="failure-close"
+        @click="failureDismissed = failureKey"
+      >
+        <CanvasIcon name="close" :size="18" />
+      </button>
     </div>
     <div
-      v-else-if="wave.artifact_errors?.length"
+      v-else-if="wave.state !== 'failed' && wave.artifact_errors?.length"
       class="note n-warn"
       role="alert"
       data-testid="schema-rejections"
@@ -589,7 +654,25 @@ function callTitle(call: CallRecord): string {
       <!-- US-29 CA-1: the platform rejected an artifact; the agent corrects it in the same wave. -->
       <div class="note-body">
         <p>{{ $t('waves.schemaRejected') }}</p>
-        <ul class="note-list">
+        <button
+          type="button"
+          class="link-btn"
+          :aria-expanded="schemaErrorsOpen"
+          aria-controls="rejection-schema-errors"
+          data-testid="schema-errors-toggle"
+          @click="schemaErrorsOpen = !schemaErrorsOpen"
+        >
+          {{
+            schemaErrorsOpen
+              ? $t('waves.schemaErrorsHide')
+              : $t(
+                  'waves.schemaErrorsShow',
+                  { count: wave.artifact_errors.length },
+                  wave.artifact_errors.length,
+                )
+          }}
+        </button>
+        <ul v-show="schemaErrorsOpen" id="rejection-schema-errors" class="note-list">
           <li v-for="(item, index) in wave.artifact_errors" :key="index">
             <span class="mono">{{ item.artifact }}</span> ·
             <span class="mono">{{ item.path }}</span> · {{ item.message }}
@@ -659,234 +742,283 @@ function callTitle(call: CallRecord): string {
           </dl>
         </section>
 
-        <section aria-labelledby="calls-heading" class="card main-card">
-          <div class="card-head">
-            <div class="card-head-text">
-              <h2 id="calls-heading">{{ $t('waves.calls.title') }}</h2>
-              <p class="t2 card-subtitle">{{ $t('waves.calls.subtitle') }}</p>
-            </div>
-            <button
-              v-if="!isEnded"
-              type="button"
-              class="btn"
-              :aria-pressed="live.paused.value"
-              @click="live.setPaused(!live.paused.value)"
-            >
-              {{ live.paused.value ? $t('live.resumeUpdates') : $t('live.pauseUpdates') }}
-            </button>
-          </div>
-          <!-- US-30 CA-1, RNF-07: least privilege refused some tool calls; each one is in the record. -->
-          <div v-if="refusedCalls.length > 0" class="note" role="alert" data-testid="refused-calls">
-            <span class="note-icon"><CanvasIcon name="alert" :stroke-width="2" /></span>
-            <span class="note-body">
-              {{ $t('waves.calls.refusedNotice', { count: refusedCalls.length }) }}
-            </span>
-          </div>
-          <p
-            v-if="live.paused.value && live.pendingWhilePaused.value.length > 0"
-            class="t2 card-line"
+        <div class="tabs wave-tabs" role="tablist" :aria-label="$t('waves.tabs.label')">
+          <button
+            v-for="value in waveTabs"
+            :id="`wave-tab-${value}`"
+            :key="value"
+            type="button"
+            role="tab"
+            class="tab"
+            :class="{ on: shownTab === value }"
+            :aria-selected="shownTab === value ? 'true' : 'false'"
+            :aria-controls="`wave-panel-${value}`"
+            :tabindex="shownTab === value ? 0 : -1"
+            :data-testid="`wave-tab-${value}`"
+            @click="waveTab = value"
+            @keydown="onWaveTabKey"
           >
-            {{ $t('live.pendingCount', { count: live.pendingWhilePaused.value.length }) }}
-          </p>
-          <p v-if="timeline.length === 0" class="t2 card-line">
-            {{ $t('waves.calls.none') }}
-          </p>
-          <div v-if="timeline.length > TIMELINE_PAGE" class="timeline-tools">
-            <div class="chips-row" role="group" :aria-label="$t('waves.calls.filter')">
+            {{ $t(`waves.tabs.${value}`) }}
+            <span class="chip mute">{{ tabCount(value) }}</span>
+          </button>
+        </div>
+        <div
+          v-if="shownTab === 'activity'"
+          id="wave-panel-activity"
+          role="tabpanel"
+          :aria-labelledby="`wave-tab-activity`"
+        >
+          <section aria-labelledby="calls-heading" class="card main-card">
+            <div class="card-head">
+              <div class="card-head-text">
+                <h2 id="calls-heading">{{ $t('waves.calls.title') }}</h2>
+                <p class="t2 card-subtitle">{{ $t('waves.calls.subtitle') }}</p>
+              </div>
               <button
-                v-for="filter in TIMELINE_FILTERS"
-                :key="filter"
+                v-if="!isEnded"
                 type="button"
-                class="tabf"
-                :class="{ on: timelineFilter === filter }"
-                :aria-pressed="timelineFilter === filter"
-                :data-testid="`timeline-filter-${filter}`"
-                @click="chooseTimelineFilter(filter)"
+                class="btn"
+                :aria-pressed="live.paused.value"
+                @click="live.setPaused(!live.paused.value)"
               >
-                {{ $t(`waves.calls.filters.${filter}`) }}
+                {{ live.paused.value ? $t('live.resumeUpdates') : $t('live.pauseUpdates') }}
               </button>
             </div>
-            <span class="t2 call-meta" data-testid="timeline-count">
-              {{
-                visibleTimeline.hidden > 0
-                  ? $t('waves.calls.showing', {
-                      shown: visibleTimeline.shown.length,
-                      total: filteredTimeline.length,
-                    })
-                  : $t('waves.calls.total', { count: filteredTimeline.length })
-              }}
-            </span>
-          </div>
-          <p v-if="timeline.length > 0 && filteredTimeline.length === 0" class="t2 card-line">
-            {{ $t('waves.calls.noneInFilter') }}
-          </p>
-          <div v-if="visibleTimeline.hidden > 0" class="timeline-more">
-            <button type="button" class="btn" data-testid="timeline-earlier" @click="showEarlier">
-              {{
-                $t('waves.calls.showEarlier', {
-                  count: Math.min(TIMELINE_MORE, visibleTimeline.hidden),
-                })
-              }}
-            </button>
-            <button
-              type="button"
-              class="btn"
-              data-testid="timeline-all"
-              @click="timelineLimit = undefined"
+            <!-- US-30 CA-1, RNF-07: least privilege refused some tool calls; each one is in the record. -->
+            <div
+              v-if="refusedCalls.length > 0"
+              class="note"
+              role="alert"
+              data-testid="refused-calls"
             >
-              {{ $t('waves.calls.showAll', { count: filteredTimeline.length }) }}
-            </button>
-          </div>
-          <!-- ESP-18 section 8: the activity is a log; no prompt, answer or tool arguments (ER-18-15). -->
-          <div
-            v-if="visibleTimeline.shown.length > 0"
-            role="log"
-            :aria-label="$t('waves.calls.title')"
-          >
-            <ol class="list" data-testid="wave-timeline">
-              <template v-for="entry in visibleTimeline.shown" :key="entry.key">
-                <li
-                  v-if="entry.kind === 'call'"
-                  :data-testid="`call-${entry.call.number}`"
-                  class="li call-item"
-                >
-                  <span class="t2 call-time">{{ format.dateTime(entry.call.start) }}</span>
-                  <span
-                    class="chip call-type"
-                    :class="entry.call.type === 'model' ? 'info' : 'mute'"
-                    data-testid="entry-type"
-                  >
-                    {{ $t(`waves.timeline.types.${entry.call.type}`) }}
-                  </span>
-                  <span class="call-body">
-                    <span class="call-title">
-                      {{ $t('waves.calls.number', { n: entry.call.number }) }} ·
-                      {{ callTitle(entry.call) }} ·
-                      {{ $t(`waves.calls.results.${entry.call.result}`) }}
-                      <template v-if="entry.call.lost">· {{ $t('waves.calls.lostCall') }}</template>
-                    </span>
-                    <span v-if="entry.call.summary">{{ entry.call.summary }}</span>
-                    <span v-if="entry.call.refusal_reason">
-                      {{
-                        $t('waves.calls.refusal', {
-                          reason: refusalText(entry.call.refusal_reason),
-                        })
-                      }}
-                    </span>
-                    <span class="t2 call-meta">
-                      {{ format.duration(entry.call.duration_ms) }}
-                      <template v-if="entry.call.tokens">
-                        ·
-                        {{
-                          $t('waves.calls.tokens', {
-                            input: format.integer(entry.call.tokens.input),
-                            output: format.integer(entry.call.tokens.output),
-                            cache: format.integer(
-                              entry.call.tokens.read_cache + entry.call.tokens.write_cache,
-                            ),
-                          })
-                        }}
-                      </template>
-                      <template v-if="entry.call.cost">
-                        · {{ format.money(entry.call.cost) }}
-                        <template v-if="entry.call.estimated_cost"
-                          >({{ $t('waves.calls.estimated') }})</template
-                        >
-                        <template v-if="entry.call.lost_cost"
-                          >({{ $t('waves.calls.lostCost') }})</template
-                        >
-                      </template>
-                    </span>
-                  </span>
-                </li>
-                <li
-                  v-else
-                  :data-testid="`checkpoint-entry-${entry.checkpoint.number}`"
-                  class="li call-item"
-                >
-                  <span class="t2 call-time">{{
-                    format.dateTime(entry.checkpoint.written_at)
-                  }}</span>
-                  <span class="chip ok call-type">{{ $t('waves.timeline.types.checkpoint') }}</span>
-                  <span class="call-body">
-                    <span class="call-title">
-                      {{ $t('waves.timeline.checkpointWritten', { n: entry.checkpoint.number }) }}
-                    </span>
-                    <span class="t2 call-meta">
-                      {{
-                        $t('waves.timeline.accumulated', {
-                          tokens: format.integer(
-                            entry.checkpoint.accumulated_tokens.input +
-                              entry.checkpoint.accumulated_tokens.output,
-                          ),
-                          cost: format.money(entry.checkpoint.accumulated_cost.total),
-                        })
-                      }}
-                    </span>
-                  </span>
-                </li>
-              </template>
-            </ol>
-          </div>
-          <div
-            v-if="timelineLimit === undefined && filteredTimeline.length > TIMELINE_PAGE"
-            class="timeline-more"
-          >
-            <button
-              type="button"
-              class="btn"
-              data-testid="timeline-latest"
-              @click="timelineLimit = TIMELINE_PAGE"
+              <span class="note-icon"><CanvasIcon name="alert" :stroke-width="2" /></span>
+              <span class="note-body">
+                {{ $t('waves.calls.refusedNotice', { count: refusedCalls.length }) }}
+              </span>
+            </div>
+            <p
+              v-if="live.paused.value && live.pendingWhilePaused.value.length > 0"
+              class="t2 card-line"
             >
-              {{ $t('waves.calls.showLatest', { count: TIMELINE_PAGE }) }}
-            </button>
-          </div>
-        </section>
-
-        <SandboxEvidence
-          v-if="showEvidence"
-          :wave-id="waveId"
-          :executions="live.executions.value"
-          :error="live.executionsError.value"
-          :download="downloadOutput"
-          @retry="live.refreshLists"
-        />
-
-        <section
-          v-if="previousAttempts.length"
-          aria-labelledby="attempts-heading"
-          class="card main-card"
-        >
-          <h2 id="attempts-heading" class="card-title">{{ $t('waves.control.attempts') }}</h2>
-          <ul class="list" data-testid="wave-attempts">
-            <li v-for="attempt in previousAttempts" :key="attempt.number" class="li wrap-row">
-              <span>{{ $t('waves.attempt', { n: attempt.number }) }}</span>
-              <span class="chip" :class="stateTone('wave', attempt.final_state)">
+              {{ $t('live.pendingCount', { count: live.pendingWhilePaused.value.length }) }}
+            </p>
+            <p v-if="timeline.length === 0" class="t2 card-line">
+              {{ $t('waves.calls.none') }}
+            </p>
+            <div v-if="timeline.length > TIMELINE_PAGE" class="timeline-tools">
+              <div class="chips-row" role="group" :aria-label="$t('waves.calls.filter')">
+                <button
+                  v-for="filter in TIMELINE_FILTERS"
+                  :key="filter"
+                  type="button"
+                  class="tabf"
+                  :class="{ on: timelineFilter === filter }"
+                  :aria-pressed="timelineFilter === filter"
+                  :data-testid="`timeline-filter-${filter}`"
+                  @click="chooseTimelineFilter(filter)"
+                >
+                  {{ $t(`waves.calls.filters.${filter}`) }}
+                </button>
+              </div>
+              <span class="t2 call-meta" data-testid="timeline-count">
                 {{
-                  $te(`states.wave.${attempt.final_state}`)
-                    ? $t(`states.wave.${attempt.final_state}`)
-                    : attempt.final_state
+                  visibleTimeline.hidden > 0
+                    ? $t('waves.calls.showing', {
+                        shown: visibleTimeline.shown.length,
+                        total: filteredTimeline.length,
+                      })
+                    : $t('waves.calls.total', { count: filteredTimeline.length })
                 }}
               </span>
-              <span v-if="attempt.failure_cause" class="t2 call-meta">
-                {{ $t('waves.failureCause', { cause: failureCauseText(attempt.failure_cause) }) }}
-              </span>
-            </li>
-          </ul>
-        </section>
-
-        <section aria-labelledby="history-heading" class="card main-card">
-          <h2 id="history-heading" class="card-title">{{ $t('waves.history.title') }}</h2>
-          <p v-if="recentHistory.length === 0" class="t2 card-line">
-            {{ $t('waves.history.none') }}
-          </p>
-          <ol v-else class="list" data-testid="wave-history">
-            <li v-for="event in recentHistory" :key="event.id" class="li history-item">
-              <span class="t2 history-time">{{ format.dateTime(event.time) }}</span>
-              <span class="history-text">· {{ describe(event) }}</span>
-            </li>
-          </ol>
-        </section>
+            </div>
+            <p v-if="timeline.length > 0 && filteredTimeline.length === 0" class="t2 card-line">
+              {{ $t('waves.calls.noneInFilter') }}
+            </p>
+            <div v-if="visibleTimeline.hidden > 0" class="timeline-more">
+              <button type="button" class="btn" data-testid="timeline-earlier" @click="showEarlier">
+                {{
+                  $t('waves.calls.showEarlier', {
+                    count: Math.min(TIMELINE_MORE, visibleTimeline.hidden),
+                  })
+                }}
+              </button>
+              <button
+                type="button"
+                class="btn"
+                data-testid="timeline-all"
+                @click="timelineLimit = undefined"
+              >
+                {{ $t('waves.calls.showAll', { count: filteredTimeline.length }) }}
+              </button>
+            </div>
+            <!-- ESP-18 section 8: the activity is a log; no prompt, answer or tool arguments (ER-18-15). -->
+            <div
+              v-if="visibleTimeline.shown.length > 0"
+              role="log"
+              :aria-label="$t('waves.calls.title')"
+            >
+              <ol class="list" data-testid="wave-timeline">
+                <template v-for="entry in visibleTimeline.shown" :key="entry.key">
+                  <li
+                    v-if="entry.kind === 'call'"
+                    :data-testid="`call-${entry.call.number}`"
+                    class="li call-item"
+                  >
+                    <span class="t2 call-time">{{ format.dateTime(entry.call.start) }}</span>
+                    <span
+                      class="chip call-type"
+                      :class="entry.call.type === 'model' ? 'info' : 'mute'"
+                      data-testid="entry-type"
+                    >
+                      {{ $t(`waves.timeline.types.${entry.call.type}`) }}
+                    </span>
+                    <span class="call-body">
+                      <span class="call-title">
+                        {{ $t('waves.calls.number', { n: entry.call.number }) }} ·
+                        {{ callTitle(entry.call) }} ·
+                        {{ $t(`waves.calls.results.${entry.call.result}`) }}
+                        <template v-if="entry.call.lost"
+                          >· {{ $t('waves.calls.lostCall') }}</template
+                        >
+                      </span>
+                      <span v-if="entry.call.summary">{{ entry.call.summary }}</span>
+                      <span v-if="entry.call.refusal_reason">
+                        {{
+                          $t('waves.calls.refusal', {
+                            reason: refusalText(entry.call.refusal_reason),
+                          })
+                        }}
+                      </span>
+                      <span class="t2 call-meta">
+                        {{ format.duration(entry.call.duration_ms) }}
+                        <template v-if="entry.call.tokens">
+                          ·
+                          {{
+                            $t('waves.calls.tokens', {
+                              input: format.integer(entry.call.tokens.input),
+                              output: format.integer(entry.call.tokens.output),
+                              cache: format.integer(
+                                entry.call.tokens.read_cache + entry.call.tokens.write_cache,
+                              ),
+                            })
+                          }}
+                        </template>
+                        <template v-if="entry.call.cost">
+                          · {{ format.money(entry.call.cost) }}
+                          <template v-if="entry.call.estimated_cost"
+                            >({{ $t('waves.calls.estimated') }})</template
+                          >
+                          <template v-if="entry.call.lost_cost"
+                            >({{ $t('waves.calls.lostCost') }})</template
+                          >
+                        </template>
+                      </span>
+                    </span>
+                  </li>
+                  <li
+                    v-else
+                    :data-testid="`checkpoint-entry-${entry.checkpoint.number}`"
+                    class="li call-item"
+                  >
+                    <span class="t2 call-time">{{
+                      format.dateTime(entry.checkpoint.written_at)
+                    }}</span>
+                    <span class="chip ok call-type">{{
+                      $t('waves.timeline.types.checkpoint')
+                    }}</span>
+                    <span class="call-body">
+                      <span class="call-title">
+                        {{ $t('waves.timeline.checkpointWritten', { n: entry.checkpoint.number }) }}
+                      </span>
+                      <span class="t2 call-meta">
+                        {{
+                          $t('waves.timeline.accumulated', {
+                            tokens: format.integer(
+                              entry.checkpoint.accumulated_tokens.input +
+                                entry.checkpoint.accumulated_tokens.output,
+                            ),
+                            cost: format.money(entry.checkpoint.accumulated_cost.total),
+                          })
+                        }}
+                      </span>
+                    </span>
+                  </li>
+                </template>
+              </ol>
+            </div>
+            <div
+              v-if="timelineLimit === undefined && filteredTimeline.length > TIMELINE_PAGE"
+              class="timeline-more"
+            >
+              <button
+                type="button"
+                class="btn"
+                data-testid="timeline-latest"
+                @click="timelineLimit = TIMELINE_PAGE"
+              >
+                {{ $t('waves.calls.showLatest', { count: TIMELINE_PAGE }) }}
+              </button>
+            </div>
+          </section>
+        </div>
+        <div
+          v-if="shownTab === 'evidence'"
+          id="wave-panel-evidence"
+          role="tabpanel"
+          :aria-labelledby="`wave-tab-evidence`"
+        >
+          <SandboxEvidence
+            :wave-id="waveId"
+            :executions="live.executions.value"
+            :error="live.executionsError.value"
+            :download="downloadOutput"
+            @retry="live.refreshLists"
+          />
+        </div>
+        <div
+          v-if="shownTab === 'attempts'"
+          id="wave-panel-attempts"
+          role="tabpanel"
+          :aria-labelledby="`wave-tab-attempts`"
+        >
+          <section aria-labelledby="attempts-heading" class="card main-card">
+            <h2 id="attempts-heading" class="card-title">{{ $t('waves.control.attempts') }}</h2>
+            <ul class="list" data-testid="wave-attempts">
+              <li v-for="attempt in previousAttempts" :key="attempt.number" class="li wrap-row">
+                <span>{{ $t('waves.attempt', { n: attempt.number }) }}</span>
+                <span class="chip" :class="stateTone('wave', attempt.final_state)">
+                  {{
+                    $te(`states.wave.${attempt.final_state}`)
+                      ? $t(`states.wave.${attempt.final_state}`)
+                      : attempt.final_state
+                  }}
+                </span>
+                <span v-if="attempt.failure_cause" class="t2 call-meta">
+                  {{ $t('waves.failureCause', { cause: failureCauseText(attempt.failure_cause) }) }}
+                </span>
+              </li>
+            </ul>
+          </section>
+        </div>
+        <div
+          v-if="shownTab === 'history'"
+          id="wave-panel-history"
+          role="tabpanel"
+          :aria-labelledby="`wave-tab-history`"
+        >
+          <section aria-labelledby="history-heading" class="card main-card">
+            <h2 id="history-heading" class="card-title">{{ $t('waves.history.title') }}</h2>
+            <p v-if="recentHistory.length === 0" class="t2 card-line">
+              {{ $t('waves.history.none') }}
+            </p>
+            <ol v-else class="list" data-testid="wave-history">
+              <li v-for="event in recentHistory" :key="event.id" class="li history-item">
+                <span class="t2 history-time">{{ format.dateTime(event.time) }}</span>
+                <span class="history-text">· {{ describe(event) }}</span>
+              </li>
+            </ol>
+          </section>
+        </div>
       </div>
 
       <div class="wave-side">
@@ -1236,6 +1368,22 @@ function callTitle(call: CallRecord): string {
 
 .call-meta {
   font-size: 12px;
+}
+
+.wave-tabs {
+  margin-bottom: 12px;
+}
+
+.link-btn {
+  min-height: 44px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-weight: 600;
+  text-decoration: underline;
+  cursor: pointer;
 }
 
 .timeline-tools {
