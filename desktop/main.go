@@ -78,8 +78,9 @@ func main() {
 		Name:  "main",
 		Title: "Easy Code",
 		URL:   "/",
-		// RNF-19: usable from 800×600.
-		Width: 1024, Height: 720, MinWidth: 800, MinHeight: 600,
+		// Fixed size, as the interface canvas (owner, 2026-11-26): the side menu collapses instead of the
+		// window growing; the content scrolls inside it.
+		Width: 1024, Height: 720, DisableResize: true,
 	})
 	// Closing the window keeps the app in the tray, so notifications keep coming (US-46 CA-3).
 	window.RegisterHook(events.Common.WindowClosing, func(e *application.WindowEvent) {

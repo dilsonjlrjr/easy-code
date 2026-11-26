@@ -30,7 +30,7 @@ describe('App shell (RNF-19)', () => {
     expect(wrapper.find('nav').exists()).toBe(false)
     bridge.emit(EVENTS.session, signedInStatus())
     await flushPromises()
-    expect(wrapper.get('h1').text()).toBe('Painel')
+    expect(wrapper.get('h1').text()).toBe('Olá, Ana Souza')
     expect(document.activeElement?.tagName).toBe('H1')
     expect(wrapper.get('nav').attributes('aria-label')).toBe('Navegação principal')
     await expectAccessible(document.body)
@@ -43,11 +43,42 @@ describe('App shell (RNF-19)', () => {
     expect(wrapper.get('a.skip-link').attributes('href')).toBe('#main')
     bridge.emit(EVENTS.connection, { stream: 'notices', state: 'reconnecting', reconnected: false })
     await flushPromises()
-    expect(wrapper.get('.connection').text()).toBe('Avisos: reconectando')
+    expect(wrapper.get('.connection').text()).toContain('Avisos: reconectando')
     await wrapper.findAll('nav button')[1]?.trigger('click')
     await flushPromises()
     expect(document.activeElement?.textContent).toBe('Conta')
     expect(wrapper.findAll('nav button')[1]?.attributes('aria-current')).toBe('page')
+    wrapper.unmount()
+  })
+
+  it('collapses and expands the side menu: icon with the name below, remembered on this computer', async () => {
+    bridge.responses.Status = () => signedInStatus()
+    bridge.responses.PendingItems = () => ({
+      items: [
+        {
+          type: 'gate',
+          project: { id: 'p1', name: 'Portal' },
+          target: { type: 'gate_round', id: 'g/1' },
+          opened_at: '',
+        },
+      ],
+      total: 1,
+    })
+    localStorage.removeItem('easycode.menu.open')
+    const wrapper = await mountWith(App)
+    const toggle = wrapper.get('button[aria-controls="main-nav"]')
+    expect(toggle.attributes('aria-expanded')).toBe('false')
+    expect(toggle.attributes('aria-label')).toBe('Expandir menu')
+    expect(wrapper.get('aside').classes()).not.toContain('open')
+    expect(wrapper.findAll('nav button')[0]?.text()).toContain('Início, 1 pendências')
+    await toggle.trigger('click')
+    expect(wrapper.get('aside').classes()).toContain('open')
+    expect(toggle.attributes('aria-expanded')).toBe('true')
+    expect(toggle.attributes('aria-label')).toBe('Recolher menu')
+    expect(localStorage.getItem('easycode.menu.open')).toBe('true')
+    await expectAccessible(document.body)
+    await toggle.trigger('click')
+    expect(localStorage.getItem('easycode.menu.open')).toBe('false')
     wrapper.unmount()
   })
 
@@ -64,7 +95,7 @@ describe('App shell (RNF-19)', () => {
   it('switches the interface to English', async () => {
     bridge.responses.Status = () => signedInStatus({ locale: 'en' })
     const wrapper = await mountWith(App)
-    expect(wrapper.get('h1').text()).toBe('Dashboard')
+    expect(wrapper.get('h1').text()).toBe('Hello, Ana Souza')
     expect(document.documentElement.lang).toBe('en')
     wrapper.unmount()
   })
@@ -126,7 +157,7 @@ describe('ProjectView, GateView and AccountView', () => {
     await expectAccessible(wrapper.element)
     await wrapper
       .findAll('button')
-      .find((b) => b.text().startsWith('Ver resumo'))
+      .find((b) => b.attributes('aria-label')?.startsWith('Ver resumo'))
       ?.trigger('click')
     expect(store.view).toEqual({
       name: 'gate',

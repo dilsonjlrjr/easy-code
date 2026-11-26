@@ -24,6 +24,19 @@ export function useLabel(): (key: string, raw: string) => string {
   return (key, raw) => (i18n.te(key) ? i18n.t(key) : raw)
 }
 
+/**
+ * Name of a notice type. The types have dots (gate.awaiting_approval), which a message path would read as
+ * nesting, so the notices catalog is read as one object; an unknown type keeps its raw name.
+ */
+export function useNoticeLabel(): (type: string) => string {
+  const i18n = useI18n()
+  return (type) => {
+    const notices: Record<string, string | undefined> = i18n.tm('notices')
+    const message = notices[type]
+    return message === undefined ? i18n.t('notices.other', { type }) : i18n.rt(message)
+  }
+}
+
 /** Text of an untyped event field. */
 export function fieldText(value: unknown): string {
   return typeof value === 'string' || typeof value === 'number' ? String(value) : ''

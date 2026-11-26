@@ -34,43 +34,67 @@ function onLocale(event: Event): void {
 </script>
 
 <template>
-  <section aria-labelledby="view-title">
+  <section class="view" aria-labelledby="view-title" style="max-width: 57.5rem">
     <h1 id="view-title" tabindex="-1">{{ t('account.title') }}</h1>
     <ErrorMessage :error="error" />
-    <dl class="facts">
-      <dt>{{ t('account.user') }}</dt>
-      <dd>{{ status.user?.name ?? t('common.none') }}</dd>
-      <template v-if="status.user?.organization?.name">
-        <dt>{{ t('account.organization') }}</dt>
-        <dd>{{ status.user.organization.name }}</dd>
-      </template>
-      <dt>{{ t('account.server') }}</dt>
-      <dd>{{ status.server }}</dd>
-      <dt>{{ t('account.appVersion') }}</dt>
-      <dd>{{ status.app_version }}</dd>
-      <dt>{{ t('account.serverVersion') }}</dt>
-      <dd>{{ status.server_version ?? t('common.none') }}</dd>
-    </dl>
 
-    <div class="field">
-      <label for="locale">{{ t('account.language') }}</label>
-      <select id="locale" :value="status.locale" @change="onLocale">
-        <option v-for="code in SUPPORTED_LOCALES" :key="code" :value="code">
-          {{ t(`account.languages.${code}`) }}
-        </option>
-      </select>
-    </div>
-    <label class="check" for="sound">
-      <input id="sound" type="checkbox" :checked="soundOn" @change="onSound" />
-      {{ t('account.sound') }}
-    </label>
+    <section class="card pad" aria-labelledby="person-title">
+      <h2 id="person-title">{{ status.user?.name ?? t('common.none') }}</h2>
+      <p v-if="status.user?.organization?.name" class="t2 small">
+        {{ status.user.organization.name }}
+      </p>
+      <dl class="kv">
+        <div>
+          <dt>{{ t('account.user') }}</dt>
+          <dd>{{ status.user?.name ?? t('common.none') }}</dd>
+        </div>
+        <div v-if="status.user?.organization?.name">
+          <dt>{{ t('account.organization') }}</dt>
+          <dd>{{ status.user.organization.name }}</dd>
+        </div>
+        <div>
+          <dt>{{ t('account.server') }}</dt>
+          <dd class="mono">{{ status.server }}</dd>
+        </div>
+        <div>
+          <dt>{{ t('account.appVersion') }}</dt>
+          <dd>{{ status.app_version }}</dd>
+        </div>
+        <div>
+          <dt>{{ t('account.serverVersion') }}</dt>
+          <dd>{{ status.server_version ?? t('common.none') }}</dd>
+        </div>
+      </dl>
+    </section>
 
-    <div class="actions">
-      <OpenWebButton
-        :label="t('account.sessions')"
-        :open="() => openWeb({ kind: 'account_local_client' })"
-      />
-      <button type="button" @click="update('SignOut')">{{ t('account.signOut') }}</button>
-    </div>
+    <section class="card pad view" aria-labelledby="prefs-title" style="gap: 0.875rem">
+      <h2 id="prefs-title">{{ t('account.preferences') }}</h2>
+      <div class="field">
+        <label for="locale">{{ t('account.language') }}</label>
+        <select id="locale" class="fld" :value="status.locale" @change="onLocale">
+          <option v-for="code in SUPPORTED_LOCALES" :key="code" :value="code">
+            {{ t(`account.languages.${code}`) }}
+          </option>
+        </select>
+      </div>
+      <label class="check" for="sound">
+        <input id="sound" type="checkbox" :checked="soundOn" @change="onSound" />
+        {{ t('account.sound') }}
+      </label>
+      <p class="t2 small">{{ t('account.themeNote') }}</p>
+    </section>
+
+    <section class="card pad view" aria-labelledby="session-title" style="gap: 0.875rem">
+      <h2 id="session-title">{{ t('account.session') }}</h2>
+      <div class="actions">
+        <OpenWebButton
+          :label="t('account.sessions')"
+          :open="() => openWeb({ kind: 'account_local_client' })"
+        />
+        <button type="button" class="btn danger" @click="update('SignOut')">
+          {{ t('account.signOut') }}
+        </button>
+      </div>
+    </section>
   </section>
 </template>

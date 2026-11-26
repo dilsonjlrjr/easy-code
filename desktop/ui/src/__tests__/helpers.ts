@@ -62,6 +62,8 @@ export function installBridge(): FakeBridge {
   store.connection = {}
   store.recent = []
   store.announcement = ''
+  store.pendingTotal = null
+  store.menuOpen = false
   return fake
 }
 

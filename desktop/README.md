@@ -24,12 +24,16 @@ App desktop do Easy Code para **acompanhar ondas ao vivo e receber notificaçõe
   atribuído (texto completo: tipo, projeto e etapa); onda concluída, falha ou cancelada quando a vista está aberta
   ou a pessoa pediu para seguir. Clicar abre a tela web (ou a vista da onda). Som desligável na Conta.
 - Fechar a janela mantém o app na bandeja do sistema; "Sair do app" no menu da bandeja encerra.
+- **Interface**: segue a página "Cliente desktop" do canvas "EasyCode — Interface" (mesmos fundamentos da web:
+  fundo, cartões, estados e botões; fonte Inter empacotada). Janela de tamanho fixo (1024×720); o menu lateral
+  recolhe (ícone centralizado e nome abaixo) e lembra o estado neste computador. O tema segue o do sistema,
+  escuro ou claro.
 
 ## Estrutura
 
 | Caminho | Conteúdo |
 |---|---|
-| `main.go` | Inicialização do Wails: janela (mínimo 800×600), bandeja, notificações, ligação do serviço |
+| `main.go` | Inicialização do Wails: janela de tamanho fixo (1024×720), bandeja, notificações, ligação do serviço |
 | `internal/config` | Preferências locais (servidor, idioma, som) |
 | `internal/keychain` | Adaptador do cofre do SO, sem fallback em arquivo |
 | `internal/oidc` | Device flow, refresh e revogação |

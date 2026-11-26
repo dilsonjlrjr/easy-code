@@ -53,9 +53,9 @@ describe('DashboardView (US-46 CA-1, CA-3, CA-4)', () => {
 
   it('shows each project with state and current stage in text', async () => {
     const wrapper = await mountWith(DashboardView)
-    const card = wrapper.get('.card')
+    const card = wrapper.get('li.project')
     expect(card.text()).toContain('Portal de compras')
-    expect(card.text()).toContain('Estado: Em andamento')
+    expect(card.text()).toContain('Em andamento')
     expect(card.text()).toContain('Etapa atual: Requisitos (Em execução)')
     expect(card.text()).toContain('Gates aguardando: 1')
     await expectAccessible(wrapper.element)

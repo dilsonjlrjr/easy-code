@@ -77,10 +77,11 @@ describe('WaveView (US-46 CA-2, CA-4, CA-5, ESP-28)', () => {
     const wrapper = await mountWith(WaveView, { props })
     const buttons = wrapper.findAll('button').map((b) => b.text())
     expect(buttons).toEqual([
+      'Início',
       'Portal de compras',
       'Abrir na web para pausar, retomar, cancelar ou responder',
     ])
-    await wrapper.findAll('button')[1]?.trigger('click')
+    await wrapper.findAll('button')[2]?.trigger('click')
     expect(bridge.called('OpenWeb')).toEqual([
       [{ kind: 'wave', project_id: PROJECT_ID, wave_id: 'REQ-01' }],
     ])

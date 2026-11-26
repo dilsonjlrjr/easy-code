@@ -5,8 +5,9 @@ import { bridge, EVENTS, toUIError } from '@/bridge'
 import ErrorMessage from '@/components/ErrorMessage.vue'
 import OpenWebButton from '@/components/OpenWebButton.vue'
 import { formatMoney, shortType } from '@/format'
-import { fieldText, useLabel } from '@/i18n'
+import { fieldText, useLabel, useNoticeLabel } from '@/i18n'
 import { announce, navigate, openWeb } from '@/store'
+import { chip } from '@/tone'
 import type { CallRecord, CloudEvent, ConnectionState, Project, UIError, Wave } from '@/types'
 
 // ESP-28 Onda ao vivo (US-46 CA-2, CA-5): state, agent, models, call log and accumulated cost, live. The Go
@@ -15,6 +16,7 @@ import type { CallRecord, CloudEvent, ConnectionState, Project, UIError, Wave } 
 const props = defineProps<{ projectId: string; waveId: string }>()
 const { t, locale } = useI18n()
 const label = useLabel()
+const noticeLabel = useNoticeLabel()
 
 interface LiveEntry {
   key: string
@@ -94,7 +96,7 @@ function onWaveEvent(data: unknown): void {
     wave.value = { ...wave.value, state: transition.to_state }
     announce(t('common.state', { state: waveStateLabel(transition.to_state) }))
   }
-  addLive(event.id, label(`notices.${type}`, t('notices.other', { type })))
+  addLive(event.id, noticeLabel(type))
   scheduleReload()
 }
 
@@ -162,84 +164,137 @@ function model(ref?: { provider?: string; model?: string }): string {
 </script>
 
 <template>
-  <section aria-labelledby="view-title">
-    <button type="button" class="link-button" @click="navigate({ name: 'project', projectId })">
-      {{ project?.name ?? t('common.back') }}
-    </button>
-    <h1 id="view-title" tabindex="-1">{{ t('wave.title', { id: waveId }) }}</h1>
+  <section class="view" aria-labelledby="view-title">
+    <nav class="bc" :aria-label="t('common.breadcrumb')">
+      <ol>
+        <li>
+          <button type="button" @click="navigate({ name: 'dashboard' })">
+            {{ t('nav.dashboard') }}
+          </button>
+        </li>
+        <li>
+          <button type="button" @click="navigate({ name: 'project', projectId })">
+            {{ project?.name ?? t('common.project') }}
+          </button>
+        </li>
+        <li>
+          <span aria-current="page">{{ t('wave.title', { id: waveId }) }}</span>
+        </li>
+      </ol>
+    </nav>
+    <div class="head">
+      <div>
+        <div class="title-line">
+          <h1 id="view-title" tabindex="-1">{{ t('wave.title', { id: waveId }) }}</h1>
+          <span v-if="wave" :class="chip('wave', wave.state)" aria-hidden="true">{{
+            waveStateLabel(wave.state)
+          }}</span>
+        </div>
+        <p v-if="wave" class="t2">
+          {{ label(`stages.${wave.stage}`, wave.stage) }} ·
+          {{ label(`agents.${wave.agent}`, wave.agent) }}
+        </p>
+      </div>
+      <OpenWebButton
+        v-if="wave"
+        primary
+        :label="t('wave.actOnWeb')"
+        :open="() => openWeb({ kind: 'wave', project_id: projectId, wave_id: waveId })"
+      />
+    </div>
     <ErrorMessage :error="error" />
     <p v-if="closedReason" class="notice" role="alert">{{ t(`wave.closed.${closedReason}`) }}</p>
 
     <template v-if="wave">
-      <dl class="facts">
-        <dt>{{ t('wave.state') }}</dt>
-        <dd>{{ stateText }}</dd>
-        <dt>{{ t('wave.stage') }}</dt>
-        <dd>{{ label(`stages.${wave.stage}`, wave.stage) }}</dd>
-        <dt>{{ t('wave.agent') }}</dt>
-        <dd>{{ label(`agents.${wave.agent}`, wave.agent) }}</dd>
-        <dt>{{ t('wave.model') }}</dt>
-        <dd>
-          <span>{{
-            t('wave.reasoningModel', { model: model(wave.models?.reasoning) })
-          }}</span><br />
-          <span>{{ t('wave.executionModel', { model: model(wave.models?.execution) }) }}</span>
-        </dd>
-        <dt>{{ t('wave.cost') }}</dt>
-        <dd>{{ cost ?? t('common.none') }}</dd>
-        <dt>{{ t('wave.attempt') }}</dt>
-        <dd>{{ wave.attempt }}</dd>
-      </dl>
+      <div class="cols">
+        <section class="card col-main" aria-labelledby="live-title">
+          <h2 id="live-title">{{ t('wave.live') }}</h2>
+          <p v-if="live.length === 0" class="empty">{{ t('wave.noLive') }}</p>
+          <ol v-else class="rows" role="log" aria-live="off" aria-labelledby="live-title">
+            <li v-for="entry in live" :key="entry.key">{{ entry.text }}</li>
+          </ol>
+        </section>
 
-      <div class="actions">
-        <OpenWebButton
-          :label="t('wave.actOnWeb')"
-          :open="() => openWeb({ kind: 'wave', project_id: projectId, wave_id: waveId })"
-        />
-        <label class="check" for="follow-wave">
-          <input id="follow-wave" v-model="following" type="checkbox" @change="toggleFollow" />
-          {{ t('wave.follow') }}
-        </label>
+        <section class="card pad col-side" style="display: block" aria-labelledby="summary-title">
+          <h2 id="summary-title">{{ t('wave.summary') }}</h2>
+          <dl class="kv">
+            <div>
+              <dt>{{ t('wave.state') }}</dt>
+              <dd>{{ stateText }}</dd>
+            </div>
+            <div>
+              <dt>{{ t('wave.stage') }}</dt>
+              <dd>{{ label(`stages.${wave.stage}`, wave.stage) }}</dd>
+            </div>
+            <div>
+              <dt>{{ t('wave.agent') }}</dt>
+              <dd>{{ label(`agents.${wave.agent}`, wave.agent) }}</dd>
+            </div>
+            <div>
+              <dt>{{ t('wave.model') }}</dt>
+              <dd class="mono">
+                <span>{{
+                  t('wave.reasoningModel', { model: model(wave.models?.reasoning) })
+                }}</span><br />
+                <span>{{
+                  t('wave.executionModel', { model: model(wave.models?.execution) })
+                }}</span>
+              </dd>
+            </div>
+            <div>
+              <dt>{{ t('wave.cost') }}</dt>
+              <dd>{{ cost ?? t('common.none') }}</dd>
+            </div>
+            <div>
+              <dt>{{ t('wave.attempt') }}</dt>
+              <dd>{{ wave.attempt }}</dd>
+            </div>
+          </dl>
+          <label class="check" for="follow-wave" style="border-top: 1px solid var(--line)">
+            <input id="follow-wave" v-model="following" type="checkbox" @change="toggleFollow" />
+            {{ t('wave.follow') }}
+          </label>
+        </section>
       </div>
 
-      <h2 id="live-title">{{ t('wave.live') }}</h2>
-      <p v-if="live.length === 0">{{ t('wave.noLive') }}</p>
-      <ol v-else class="rows" role="log" aria-live="off" aria-labelledby="live-title">
-        <li v-for="entry in live" :key="entry.key">{{ entry.text }}</li>
-      </ol>
-
-      <h2 id="calls-title">{{ t('wave.calls') }}</h2>
-      <p v-if="calls.length === 0">{{ t('wave.noCalls') }}</p>
-      <div v-else class="table-wrap">
-        <table aria-labelledby="calls-title">
-          <thead>
-            <tr>
-              <th scope="col">{{ t('wave.callColumns.number') }}</th>
-              <th scope="col">{{ t('wave.callColumns.type') }}</th>
-              <th scope="col">{{ t('wave.callColumns.what') }}</th>
-              <th scope="col">{{ t('wave.callColumns.duration') }}</th>
-              <th scope="col">{{ t('wave.callColumns.result') }}</th>
-              <th scope="col">{{ t('wave.callColumns.summary') }}</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="call in calls" :key="call.number">
-              <td>{{ call.number }}</td>
-              <td>{{ t(`wave.callTypes.${call.type}`) }}</td>
-              <td>
-                {{
-                  call.type === 'model'
-                    ? (call.model ?? t('common.none'))
-                    : (call.tool ?? t('common.none'))
-                }}
-              </td>
-              <td>{{ t('wave.durationMs', { ms: call.duration_ms }) }}</td>
-              <td>{{ label(`wave.results.${call.result}`, call.result) }}</td>
-              <td>{{ call.summary ?? t('common.none') }}</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
+      <section class="card" aria-labelledby="calls-title">
+        <h2 id="calls-title">{{ t('wave.calls') }}</h2>
+        <p v-if="calls.length === 0" class="empty">{{ t('wave.noCalls') }}</p>
+        <div v-else class="table-wrap">
+          <table aria-labelledby="calls-title">
+            <thead>
+              <tr>
+                <th scope="col">{{ t('wave.callColumns.number') }}</th>
+                <th scope="col">{{ t('wave.callColumns.type') }}</th>
+                <th scope="col">{{ t('wave.callColumns.what') }}</th>
+                <th scope="col">{{ t('wave.callColumns.duration') }}</th>
+                <th scope="col">{{ t('wave.callColumns.result') }}</th>
+                <th scope="col">{{ t('wave.callColumns.summary') }}</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="call in calls" :key="call.number">
+                <td class="mono">{{ call.number }}</td>
+                <td>{{ t(`wave.callTypes.${call.type}`) }}</td>
+                <td class="mono">
+                  {{
+                    call.type === 'model'
+                      ? (call.model ?? t('common.none'))
+                      : (call.tool ?? t('common.none'))
+                  }}
+                </td>
+                <td>{{ t('wave.durationMs', { ms: call.duration_ms }) }}</td>
+                <td>
+                  <span :class="chip('call', call.result)">{{
+                    label(`wave.results.${call.result}`, call.result)
+                  }}</span>
+                </td>
+                <td class="t2">{{ call.summary ?? t('common.none') }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
     </template>
   </section>
 </template>

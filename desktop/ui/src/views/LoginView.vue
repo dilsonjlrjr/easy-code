@@ -6,6 +6,7 @@ import ErrorMessage from '@/components/ErrorMessage.vue'
 import { minutesLeft } from '@/format'
 import { useLabel } from '@/i18n'
 import { store } from '@/store'
+import AppLogo from '@/components/AppLogo.vue'
 import type { Status, UIError } from '@/types'
 
 // US-45 / ESP-28: sign-in by device flow. The app shows the code and the address and opens the browser;
@@ -74,69 +75,108 @@ async function openBrowser(): Promise<void> {
 </script>
 
 <template>
-  <section class="login" aria-labelledby="view-title">
-    <h1 id="view-title" tabindex="-1">{{ t('login.title') }}</h1>
-    <p>{{ t('app.readOnly') }}</p>
-
+  <section class="card pad login" aria-labelledby="view-title">
+    <p class="brand">
+      <AppLogo :size="64" />
+      <span class="rlogo-name">
+        <strong style="font-size: 1.375rem; line-height: 1.75rem">{{ t('app.title') }}</strong>
+        <span class="t2 small">{{ t('app.subtitle') }}</span>
+      </span>
+    </p>
+    <div>
+      <h1 id="view-title" tabindex="-1" style="font-size: 1.5rem; line-height: 2rem">
+        {{ t('login.title') }}
+      </h1>
+      <p class="t2">{{ waiting ? t('login.signInHint') : t('app.readOnly') }}</p>
+    </div>
     <p v-if="reasonText" class="notice" role="alert">{{ reasonText }}</p>
     <ErrorMessage :error="error" />
 
     <template v-if="waiting && status.device">
-      <h2>{{ t('login.waiting') }}</h2>
-      <p>
-        {{
-          t('login.instructions', {
-            address: status.device.verification_uri,
-            minutes,
-          })
-        }}
-      </p>
-      <p class="code-line">
-        <span id="code-label">{{ t('login.codeLabel') }}</span>
+      <div class="server-box">
+        <span class="grow">
+          <span class="lb">{{ t('account.server') }}</span>
+          <span class="mono">{{ status.server }}</span>
+        </span>
+      </div>
+      <section aria-labelledby="waiting-title" class="login">
+        <div class="title-line">
+          <span class="chip vio">{{ t('login.awaitingChip') }}</span>
+          <h2 id="waiting-title" style="font-size: 1rem">{{ t('login.waiting') }}</h2>
+        </div>
+        <p class="visually-hidden">
+          {{ t('login.instructions', { address: status.device.verification_uri, minutes }) }}
+        </p>
+        <p class="step" aria-hidden="true">
+          <span class="num">{{ 1 }}</span>
+          <span>{{ t('login.stepOpen', { address: status.device.verification_uri }) }}</span>
+        </p>
+        <p class="step" aria-hidden="true">
+          <span class="num">{{ 2 }}</span><span>{{ t('login.stepCode') }}</span>
+        </p>
+        <p id="code-label" class="lb">{{ t('login.codeLabel') }}</p>
         <output class="user-code" aria-labelledby="code-label">{{
           status.device.user_code
         }}</output>
-      </p>
+        <p class="t2 small">{{ t('login.expires', { minutes }) }}</p>
+      </section>
       <div class="actions">
-        <button type="button" class="primary" @click="openBrowser">
+        <button type="button" class="btn primary" style="flex: 1 1 12rem" @click="openBrowser">
           {{ t('login.openBrowser') }}
         </button>
-        <button type="button" :disabled="busy" @click="cancel">{{ t('login.cancel') }}</button>
+        <button type="button" class="btn" :disabled="busy" @click="cancel">
+          {{ t('login.cancel') }}
+        </button>
       </div>
     </template>
 
     <template v-else>
       <p>{{ t('login.notAuthenticated') }}</p>
-      <p v-if="status.server_from_env">{{ t('login.serverFromEnv', { server: status.server }) }}</p>
+      <p v-if="status.server_from_env" class="server-box">
+        {{ t('login.serverFromEnv', { server: status.server }) }}
+      </p>
 
-      <form v-else-if="editingServer" class="server-form" @submit.prevent="saveServer">
+      <form
+        v-else-if="editingServer"
+        class="field"
+        style="max-width: none"
+        @submit.prevent="saveServer"
+      >
         <label for="server">{{ t('login.serverLabel') }}</label>
         <input
           id="server"
           v-model="serverInput"
+          class="fld"
           type="url"
           inputmode="url"
           autocomplete="url"
           required
           aria-describedby="server-hint"
         />
-        <p id="server-hint" class="hint">{{ t('login.serverHint') }}</p>
-        <button type="submit" :disabled="busy">{{ t('login.saveServer') }}</button>
+        <p id="server-hint" class="hint small">{{ t('login.serverHint') }}</p>
+        <button type="submit" class="btn" :disabled="busy" style="align-self: flex-start">
+          {{ t('login.saveServer') }}
+        </button>
       </form>
 
-      <p v-else-if="status.server">
-        {{ t('login.serverCurrent', { server: status.server }) }}
+      <div v-else-if="status.server" class="server-box">
+        <span class="grow">
+          <span class="lb">{{ t('account.server') }}</span>
+          <span class="mono">{{ t('login.serverCurrent', { server: status.server }) }}</span>
+        </span>
         <button type="button" class="link-button" @click="editingServer = true">
           {{ t('login.changeServer') }}
         </button>
-      </p>
+      </div>
 
       <template v-if="status.server && !editingServer">
         <p class="hint">{{ t('login.signInHint') }}</p>
-        <button type="button" class="primary" :disabled="busy" @click="signIn">
+        <button type="button" class="btn primary" :disabled="busy" @click="signIn">
           {{ status.reason === 'code_expired' ? t('login.tryAgain') : t('login.signIn') }}
         </button>
       </template>
     </template>
+
+    <p class="note">{{ t('app.readOnly') }} {{ t('login.tokenNote') }}</p>
   </section>
 </template>

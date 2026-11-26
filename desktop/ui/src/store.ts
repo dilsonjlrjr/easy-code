@@ -25,7 +25,13 @@ interface State {
   recent: RecentNotice[]
   /** Bumped when the dashboard should read again (notice, gap, reconnection). */
   dashboardVersion: number
+  /** Pending items waiting for the person, shown on the side menu; null until the first read. */
+  pendingTotal: number | null
+  /** The side menu is expanded (kept on this computer). */
+  menuOpen: boolean
 }
+
+const MENU_KEY = 'easycode.menu.open'
 
 export const store = reactive<State>({
   status: null,
@@ -34,7 +40,27 @@ export const store = reactive<State>({
   announcement: '',
   recent: [],
   dashboardVersion: 0,
+  pendingTotal: null,
+  menuOpen: readMenuOpen(),
 })
+
+// A per-computer convenience: storage can be missing or refused, and the menu then starts collapsed.
+function readMenuOpen(): boolean {
+  try {
+    return globalThis.localStorage.getItem(MENU_KEY) === 'true'
+  } catch {
+    return false
+  }
+}
+
+export function toggleMenu(): void {
+  store.menuOpen = !store.menuOpen
+  try {
+    globalThis.localStorage.setItem(MENU_KEY, String(store.menuOpen))
+  } catch {
+    // the menu still toggles, it is only not remembered
+  }
+}
 
 const MAX_RECENT = 20
 let recentKey = 0
@@ -64,6 +90,7 @@ export function listen(onReloaded: () => void): () => void {
         store.view = { name: 'dashboard' }
         store.connection = {}
         store.recent = []
+        store.pendingTotal = null
       }
     }),
     bridge().on(EVENTS.connection, (data) => {
