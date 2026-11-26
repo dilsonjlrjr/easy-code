@@ -93,7 +93,7 @@ describe('activity window and filters (long waves)', () => {
     const { shown, hidden } = latestEntries(entries, TIMELINE_PAGE)
     expect(shown).toHaveLength(TIMELINE_PAGE)
     expect(hidden).toBe(entries.length - TIMELINE_PAGE)
-    expect(shown.at(-1)).toBe(entries.at(-1))
+    expect(shown[shown.length - 1]).toBe(entries[entries.length - 1])
     expect(latestEntries(entries, undefined).hidden).toBe(0)
   })
 
