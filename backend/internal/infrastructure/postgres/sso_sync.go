@@ -55,6 +55,25 @@ SELECT max(a.recorded_at) FROM easycode.audit_records a JOIN easycode.organizati
 	return *cursor, nil
 }
 
+// RecordedAt implements ssosync.Store.
+func (s SSOSync) RecordedAt(ctx context.Context, organizationID string, at time.Time) (map[string]bool, error) {
+	rows, err := conn(ctx, s.pool).Query(WithOperation(ctx, "audit.sso_recorded_at"), `
+SELECT a.external_event_id FROM easycode.audit_records a JOIN easycode.organizations o ON o.id = a.organization_id
+ WHERE o.public_id = $1::uuid AND a.recorded_at = $2 AND a.external_event_id IS NOT NULL`, organizationID, at)
+	if err != nil {
+		return nil, fmt.Errorf("sso recorded at: %w", classify(err))
+	}
+	ids, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		return nil, fmt.Errorf("sso recorded at: %w", classify(err))
+	}
+	seen := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		seen[id] = true
+	}
+	return seen, nil
+}
+
 // ActiveSubjects implements ssosync.Store.
 func (s SSOSync) ActiveSubjects(ctx context.Context, organizationID string) ([]string, error) {
 	rows, err := conn(ctx, s.pool).Query(WithOperation(ctx, "users.active_subjects"), `

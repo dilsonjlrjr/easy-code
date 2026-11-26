@@ -49,6 +49,9 @@ type Store interface {
 	Organization(ctx context.Context, issuer string) (string, error)
 	// Cursor is the latest moment already recorded from the SSO for the organization.
 	Cursor(ctx context.Context, organizationID string) (time.Time, error)
+	// RecordedAt lists the SSO event ids already recorded at that moment: the next pass reads the
+	// cursor moment again (events of the same instant may arrive late) and skips these.
+	RecordedAt(ctx context.Context, organizationID string, at time.Time) (map[string]bool, error)
 	// ActiveSubjects lists the active people of the organization.
 	ActiveSubjects(ctx context.Context, organizationID string) ([]string, error)
 	// Offboard deactivates the person, anonymizes the display name (anonymized_at recorded; the sub
@@ -98,8 +101,11 @@ func (j *Job) recordEvents(ctx context.Context, organizationID string) (int, err
 		return 0, err
 	}
 	since := cursor
+	seen := map[string]bool{}
 	if since.IsZero() {
 		since = time.Now().Add(-7 * 24 * time.Hour) // Keycloak keeps events for 7 days
+	} else if seen, err = j.store.RecordedAt(ctx, organizationID, cursor); err != nil {
+		return 0, err
 	}
 	recorded := 0
 	types := []string{EventLogin, EventLoginError, EventLogout, EventCodeToToken}
@@ -110,7 +116,7 @@ func (j *Job) recordEvents(ctx context.Context, organizationID string) (int, err
 		}
 		for _, e := range events {
 			record, ok := recordOf(organizationID, e)
-			if !ok || e.Time.Before(cursor) {
+			if !ok || e.Time.Before(cursor) || (e.Time.Equal(cursor) && seen[e.ID]) {
 				continue
 			}
 			if _, err := j.trail.Append(ctx, record); err != nil {
