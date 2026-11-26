@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"slices"
 	"strings"
 	"time"
@@ -13,6 +14,8 @@ import (
 	domainartifact "easycode/internal/domain/artifact"
 	"easycode/internal/domain/failure"
 	"easycode/internal/domain/identity"
+
+	"gopkg.in/yaml.v3"
 )
 
 // Summary is an artifact in a list (ArtifactSummary).
@@ -149,6 +152,68 @@ func (q *Queries) Attachment(ctx context.Context, principal identity.Principal, 
 		return AttachmentContent{}, failure.New(failure.KindInternal, failure.CodeInternal, nil)
 	}
 	return AttachmentContent{Attachment: attachment, Content: content}, nil
+}
+
+// File is getArtifactVersion as text/markdown (US-26 CA-2, US-42 CA-2): the exact file of the version in the
+// project repository. A version without a commit yet (or queries without the repository) is rebuilt from its
+// header and body, the same content the version stored.
+func (q *Queries) File(ctx context.Context, principal identity.Principal, projectID, code string, version int) (View, []byte, error) {
+	view, err := q.Get(ctx, principal, projectID, code, version)
+	if err != nil {
+		return View{}, nil, err
+	}
+	if view.Commit != "" && q.files != nil && view.Path != "" {
+		content, err := q.files.FileAt(ctx, projectID, view.Commit, view.Path)
+		if err == nil {
+			return view, content, nil
+		}
+		if failure.From(err).Kind != failure.KindNotFound {
+			return View{}, nil, err
+		}
+	}
+	content, err := rebuildFile(view.Header, view.Body)
+	if err != nil {
+		return View{}, nil, err
+	}
+	return view, content, nil
+}
+
+// rebuildFile writes the Markdown file of a version: YAML front matter of the header and the body.
+func rebuildFile(header json.RawMessage, body string) ([]byte, error) {
+	var fields yaml.Node
+	if err := yaml.Unmarshal(header, &fields); err != nil { // JSON is YAML; the node keeps the key order
+		return nil, fmt.Errorf("artifact header: %w", err)
+	}
+	if fields.Kind == yaml.DocumentNode && len(fields.Content) == 1 {
+		setBlockStyle(fields.Content[0])
+	}
+	var front strings.Builder
+	encoder := yaml.NewEncoder(&front)
+	encoder.SetIndent(2)
+	if err := encoder.Encode(&fields); err != nil {
+		return nil, fmt.Errorf("artifact header: %w", err)
+	}
+	if err := encoder.Close(); err != nil {
+		return nil, fmt.Errorf("artifact header: %w", err)
+	}
+	if !strings.HasPrefix(body, "\n") {
+		body = "\n" + body
+	}
+	return []byte("---\n" + front.String() + "---" + body), nil
+}
+
+// setBlockStyle turns the flow style of the JSON source into YAML block style with plain keys; the values
+// keep their quotes, so any text stays text.
+func setBlockStyle(node *yaml.Node) {
+	if node.Kind == yaml.MappingNode || node.Kind == yaml.SequenceNode {
+		node.Style = 0
+	}
+	for i, child := range node.Content {
+		if node.Kind == yaml.MappingNode && i%2 == 0 {
+			child.Style = 0 // the encoder quotes a key only when it needs to
+		}
+		setBlockStyle(child)
+	}
 }
 
 // NewQueries builds the queries.

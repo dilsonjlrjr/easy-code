@@ -23,6 +23,8 @@ type ArtifactUseCases interface {
 	Compare(ctx context.Context, principal identity.Principal, projectID, code string, from, to int) (appartifact.Comparison, error)
 	// Attachment is getArtifactAttachment (PL-24).
 	Attachment(ctx context.Context, principal identity.Principal, projectID, code string, version int, path string) (appartifact.AttachmentContent, error)
+	// File is getArtifactVersion as text/markdown: the exact file of the version (US-26 CA-2, US-42 CA-2).
+	File(ctx context.Context, principal identity.Principal, projectID, code string, version int) (appartifact.View, []byte, error)
 }
 
 type artifactAuthorJSON struct {
@@ -146,8 +148,8 @@ func (a *api) getArtifact(rc *fasthttp.RequestCtx, principal identity.Principal)
 	return nil
 }
 
-// getArtifactVersion is the exact content of a version (US-26 CA-2). Only application/json in
-// MARCO-1: the file of the git repository (text/markdown) arrives with US-42.
+// getArtifactVersion is the exact content of a version (US-26 CA-2): structured as application/json, or the
+// file of the project repository as text/markdown (US-42 CA-2), a download the browser never renders (RNF-05).
 func (a *api) getArtifactVersion(rc *fasthttp.RequestCtx, principal identity.Principal) error {
 	projectID, code, err := a.artifactPath(rc)
 	if err != nil {
@@ -157,12 +159,41 @@ func (a *api) getArtifactVersion(rc *fasthttp.RequestCtx, principal identity.Pri
 	if err != nil || version < 1 {
 		return failure.New(failure.KindNotFound, failure.CodeNotFound, nil)
 	}
+	if wantsMarkdown(rc) {
+		view, content, err := a.deps.Artifacts.File(RequestContext(rc), principal, projectID, code, version)
+		if err != nil {
+			return err
+		}
+		name := path.Base(view.Path)
+		if view.Path == "" {
+			name = code + ".md"
+		}
+		setETag(rc, strconv.Itoa(view.Version))
+		rc.Response.Header.Set("Content-Disposition", `attachment; filename="`+strings.ReplaceAll(name, `"`, "")+`"`)
+		rc.Response.Header.Set("X-Content-Type-Options", "nosniff")
+		rc.Response.Header.Set("Content-Security-Policy", "sandbox")
+		rc.SetContentType("text/markdown; charset=utf-8")
+		rc.SetStatusCode(fasthttp.StatusOK)
+		rc.SetBody(content)
+		return nil
+	}
 	view, err := a.deps.Artifacts.Get(RequestContext(rc), principal, projectID, code, version)
 	if err != nil {
 		return err
 	}
 	a.writeArtifact(rc, view)
 	return nil
+}
+
+// wantsMarkdown reports whether the Accept header asks for text/markdown before application/json.
+func wantsMarkdown(rc *fasthttp.RequestCtx) bool {
+	accept := strings.ToLower(string(rc.Request.Header.Peek(fasthttp.HeaderAccept)))
+	markdown := strings.Index(accept, "text/markdown")
+	if markdown < 0 {
+		return false
+	}
+	jsonAt := strings.Index(accept, "application/json")
+	return jsonAt < 0 || markdown < jsonAt
 }
 
 func (a *api) listArtifactVersions(rc *fasthttp.RequestCtx, principal identity.Principal) error {
