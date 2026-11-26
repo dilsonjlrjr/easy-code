@@ -146,6 +146,17 @@ func mounts(specs []appsandbox.Mount) []map[string]any {
 	return out
 }
 
+// VolumeMountpoint implements appsandbox.Engine (GET /volumes/{name}).
+func (c *Client) VolumeMountpoint(ctx context.Context, name string) (string, error) {
+	var volume struct {
+		Mountpoint string `json:"Mountpoint"`
+	}
+	if err := c.do(ctx, http.MethodGet, "/volumes/"+url.PathEscape(name), nil, &volume); err != nil {
+		return "", err
+	}
+	return volume.Mountpoint, nil
+}
+
 // Start implements appsandbox.Engine.
 func (c *Client) Start(ctx context.Context, id string) error {
 	return c.do(ctx, http.MethodPost, "/containers/"+id+"/start", nil, nil)

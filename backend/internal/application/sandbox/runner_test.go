@@ -27,6 +27,10 @@ type fakeEngine struct {
 }
 
 func (f *fakeEngine) Ping(context.Context) error { return nil }
+
+func (f *fakeEngine) VolumeMountpoint(_ context.Context, name string) (string, error) {
+	return "/var/lib/docker/volumes/" + name + "/_data", nil
+}
 func (f *fakeEngine) ImageDigest(context.Context, string) (string, error) {
 	return "sha256:" + strings.Repeat("a", 64), nil
 }
@@ -124,8 +128,8 @@ func TestAgentSessionRunsClaudeCodeThroughTheBridge(t *testing.T) {
 	}
 	wantMounts := []Mount{
 		{Type: MountBind, Source: "/home/u/.local/share/claude/versions/2.1.332", Target: "/opt/claude-code/claude", ReadOnly: true},
-		{Type: MountVolume, Source: "easycode-agent-proxy", Subpath: "bin", Target: "/opt/easycode-bridge", ReadOnly: true},
-		{Type: MountVolume, Source: "easycode-agent-proxy", Subpath: "wave-0193a5c0", Target: "/run/easycode-model"},
+		{Type: MountBind, Source: "/var/lib/docker/volumes/easycode-agent-proxy/_data/bin", Target: "/opt/easycode-bridge", ReadOnly: true},
+		{Type: MountBind, Source: "/var/lib/docker/volumes/easycode-agent-proxy/_data/wave-0193a5c0", Target: "/run/easycode-model"},
 	}
 	if !slices.Equal(session.Mounts, wantMounts) || session.Network != "" || session.User != "10001:10001" {
 		t.Fatalf("session mounts: %+v", session)

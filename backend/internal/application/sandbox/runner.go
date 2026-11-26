@@ -38,6 +38,9 @@ type Engine interface {
 	Exec(ctx context.Context, id string, spec ExecSpec, stdin io.Reader, out io.Writer) (int, error)
 	Inspect(ctx context.Context, id string) (ContainerState, error)
 	Remove(ctx context.Context, id string) error
+	// VolumeMountpoint is the host directory of a named volume: agent sessions bind its subdirectories, because
+	// the volume subpath option is not honored by every engine (podman's compat API mounts the whole volume).
+	VolumeMountpoint(ctx context.Context, name string) (string, error)
 }
 
 // ContainerSpec is a container of the fixed profile; the engine adds the constant hardening.
@@ -347,13 +350,16 @@ func agentEnvironment(session *sandbox.AgentSession) []string {
 
 // agentMounts are the mounts of an agent session: the binary of the host and the bridge read-only, the
 // wave socket directory read-write.
-func (r *Runner) agentMounts(socketDir string) []Mount {
-	volume := r.config.AgentSession.ProxyVolume
+func (r *Runner) agentMounts(ctx context.Context, socketDir string) ([]Mount, error) {
+	root, err := r.engine.VolumeMountpoint(ctx, r.config.AgentSession.ProxyVolume)
+	if err != nil || root == "" {
+		return nil, fmt.Errorf("agent proxy volume: %w", err)
+	}
 	return []Mount{
 		{Type: MountBind, Source: r.config.AgentSession.ClaudeCodeBin, Target: claudeCodePath, ReadOnly: true},
-		{Type: MountVolume, Source: volume, Subpath: "bin", Target: bridgeDir, ReadOnly: true},
-		{Type: MountVolume, Source: volume, Subpath: socketDir, Target: modelSocketDir},
-	}
+		{Type: MountBind, Source: path.Join(root, "bin"), Target: bridgeDir, ReadOnly: true},
+		{Type: MountBind, Source: path.Join(root, socketDir), Target: modelSocketDir},
+	}, nil
 }
 
 // ClaudeCode reports whether agent sessions can run: the binary is configured and answers --version in a
@@ -638,14 +644,18 @@ func (r *Runner) run(ctx context.Context, request sandbox.ExecutionRequest, imag
 		result.Profile = "agent_session"
 		env[0] = "HOME=" + agentHome
 		env = append(env, agentEnvironment(request.AgentSession)...)
-		mounts = r.agentMounts(request.AgentSession.SocketDir)
+		if mounts, err = r.agentMounts(ctx, request.AgentSession.SocketDir); err != nil {
+			return fail(sandbox.EndExecutorError)
+		}
 	}
 	for name, value := range request.Environment {
 		env = append(env, name+"="+value)
 	}
 	tmpfs := map[string]string{
-		"/tmp":       "rw,exec,nosuid,nodev,size=1024m,mode=1777",
-		workspaceDir: fmt.Sprintf("rw,exec,nosuid,nodev,size=%dm,uid=10001,gid=10001,mode=0755", limits.DiskMiB),
+		"/tmp": "rw,exec,nosuid,nodev,size=1024m,mode=1777",
+		// No uid/gid option: podman refuses it ("unknown mount option"); the sticky world-writable root lets the
+		// sandbox user (10001) work in it on every engine, and the container has no other user.
+		workspaceDir: fmt.Sprintf("rw,exec,nosuid,nodev,size=%dm,mode=1777", limits.DiskMiB),
 	}
 	id, err := r.engine.Create(ctx, ContainerSpec{
 		Name: "easycode-sbx-" + request.ExecutionID, Image: image, Cmd: []string{"sleep", "infinity"}, User: sandboxUser, Env: env,
