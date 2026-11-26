@@ -37,15 +37,18 @@ const (
 	agentDir        = ".easycode/"
 	systemFile      = agentDir + "system.md"
 	taskFile        = agentDir + "task.md"
-	guardHook       = "/opt/easycode-bridge/agent-bridge guard"
-	toolAgentRun    = "agent_session" // tool_executions.tool of a run that ended without a delivery
+	bridgeBin       = "/opt/easycode-bridge/agent-bridge"
+	guardHook       = bridgeBin + " guard"
+	permissionTool  = "mcp__easycode__permission" // the permission prompt tool of agent-bridge mcp (ADR-24)
+	toolAgentRun    = "agent_session"             // tool_executions.tool of a run that ended without a delivery
 	releaseWait     = 10 * time.Second
 	shutdownTimeout = 5 * time.Second
 )
 
 // ClaudeCodeAgent is the harness that runs the agent through the Claude Code of the server (ADR-23, US-58):
-// each run is one agent_session in the sandbox, with the tools of the agent policy, the hook that refuses
-// writes outside WritablePaths and the structured result (deliver, ask, opinion, revalidation). Every model
+// each run is one agent_session in the sandbox, with the tools of the agent policy, the permission prompt
+// that asks the worker about every write and command (ADR-24), the hook that refuses writes outside
+// WritablePaths as a second layer and the structured result (deliver, ask, opinion, revalidation). Every model
 // call the wave proxy sees and every tool the agent ran is one step, so cost, audit and checkpoints follow
 // the same record as the own harness. A question, a rejection or a worker restart starts a new run with the
 // context and the files already written (no --resume: the Claude Code session is not in the checkpoint).
@@ -186,45 +189,31 @@ func resultSchema(wave WaveContext, policy permission.Policy) string {
 	return string(encoded)
 }
 
-// claudeTools are the --tools and --allowedTools of the agent policy (RNF-07): no web, no MCP, no subagent.
+// claudeTools are the --tools and --allowedTools of the agent policy (RNF-07): no web, no subagent, and
+// the MCP of the platform only as the permission prompt. Only the reads are pre-approved; every write and
+// every command goes to the permission prompt, which the worker decides (ADR-24).
 func claudeTools(policy permission.Policy) ([]string, []string) {
 	var tools, allowed []string
 	if policy.Allows(ToolReadFile) || policy.Allows(ToolListFiles) {
 		tools = append(tools, "Read", "Glob", "Grep")
 	}
+	allowed = append(allowed, tools...)
 	if policy.Allows(ToolWriteFile) {
 		tools = append(tools, "Write", "Edit")
 	}
-	allowed = append(allowed, tools...)
-	if policy.Execute {
+	if policy.Allows(ToolExecuteCommand) {
 		tools = append(tools, "Bash")
-		shell := false
-		var names []string
-		seen := map[string]bool{}
-		for _, name := range policy.Categories {
-			category, ok := policy.Category(name)
-			if !ok {
-				continue
-			}
-			shell = shell || category.Shell
-			for _, argv0 := range category.Argv0 {
-				if !seen[argv0] {
-					seen[argv0] = true
-					names = append(names, argv0)
-				}
-			}
-		}
-		if shell {
-			allowed = append(allowed, "Bash") // build and tests accept sh -c (D-38)
-		} else {
-			sort.Strings(names)
-			for _, name := range names {
-				allowed = append(allowed, "Bash("+name+":*)")
-			}
-		}
 	}
 	return tools, allowed
 }
+
+// mcpConfig is the --mcp-config of a run: agent-bridge mcp, the permission prompt of the platform.
+var mcpConfig = func() string {
+	encoded, _ := json.Marshal(map[string]any{"mcpServers": map[string]any{"easycode": map[string]any{
+		"type": "stdio", "command": bridgeBin, "args": []string{"mcp"},
+	}}})
+	return string(encoded)
+}()
 
 // writablePrefixes are the folders the hook lets the agent write (EASYCODE_WRITABLE): the fixed part of
 // every write glob; the collection checks the exact globs again.
@@ -360,6 +349,8 @@ func (a *ClaudeCodeAgent) launch(ctx context.Context, wave WaveContext, state *c
 		"--settings", hookSettings,
 		"--setting-sources", "",
 		"--strict-mcp-config",
+		"--mcp-config", mcpConfig,
+		"--permission-prompt-tool", permissionTool,
 		"--no-session-persistence",
 		"--json-schema", resultSchema(wave, policy),
 	}

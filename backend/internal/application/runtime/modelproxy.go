@@ -44,6 +44,9 @@ const (
 	proxySocketName      = "model.sock"
 	messagesPath         = "/v1/messages"
 	countTokensPath      = "/v1/messages/count_tokens" //nolint:gosec // G101: an API path, not a credential
+	permissionPath       = "/easycode/v1/permission"   // permission prompt of Claude Code, through agent-bridge mcp (ADR-24)
+	maxPermissionBytes   = 1 << 20
+	maxDecisions         = 4096 // refusals kept per run until their tool_result arrives
 	heldMessage          = "easycode: dispatch held (budget or project paused)"
 	closeTimeout         = 5 * time.Second                 // closing a gateway session never blocks the end of a run
 	deniedPathMarker     = "is not allowed for this agent" // message of the PreToolUse hook of agent-bridge
@@ -98,6 +101,9 @@ type ProxySession struct {
 	step    int        // checkpoint number of the last event
 	pending map[string]pendingTool
 
+	decisionMu sync.Mutex
+	refusals   map[string]string // tool_use id → refusal reason the permission prompt answered (ADR-24)
+
 	sessionMu sync.Mutex
 	sessions  map[string]string // model → gateway session
 
@@ -140,7 +146,7 @@ func (p *ModelProxy) Open(wave WaveContext, run, base int) (*ProxySession, error
 	}
 	s := &ProxySession{SocketDir: name, Token: token, proxy: p, wave: wave, path: dir, listener: listener,
 		events: make(chan ProxyEvent, proxyEventBuffer), closed: make(chan struct{}), signal: make(chan struct{}),
-		step: base, pending: map[string]pendingTool{}, sessions: map[string]string{}}
+		step: base, pending: map[string]pendingTool{}, sessions: map[string]string{}, refusals: map[string]string{}}
 	s.server = &http.Server{Handler: http.HandlerFunc(s.serve), ReadHeaderTimeout: 30 * time.Second}
 	go func() { _ = s.server.Serve(listener) }()
 	return s, nil
@@ -238,6 +244,10 @@ func (s *ProxySession) authorized(r *http.Request) bool {
 func (s *ProxySession) serve(w http.ResponseWriter, r *http.Request) {
 	if !s.authorized(r) {
 		anthropicError(w, http.StatusUnauthorized, "authentication_error", "easycode: invalid session token")
+		return
+	}
+	if r.Method == http.MethodPost && r.URL.Path == permissionPath {
+		s.permission(w, r)
 		return
 	}
 	if r.Method != http.MethodPost || (r.URL.Path != messagesPath && r.URL.Path != countTokensPath) {
@@ -525,9 +535,66 @@ func (s *ProxySession) closeTools(request proxyRequest) {
 				continue
 			}
 			delete(s.pending, block.ToolUseID)
-			s.emit(ProxyEvent{Tool: toolRecord(tool, block)})
+			record := toolRecord(tool, block)
+			if reason := s.refusal(block.ToolUseID); reason != "" {
+				record.Allowed, record.Success, record.RefusalReason = false, false, reason
+				record.Summary = refusalSummary(reason)
+			}
+			s.emit(ProxyEvent{Tool: record})
 		}
 	}
+}
+
+// permissionRequest is what agent-bridge mcp sends for one permission prompt of Claude Code.
+type permissionRequest struct {
+	ToolName  string         `json:"tool_name"`
+	Input     map[string]any `json:"input"`
+	ToolUseID string         `json:"tool_use_id"`
+}
+
+// permission answers the permission prompt of Claude Code with the agent policy (ADR-24). A refusal is
+// kept by tool_use id, so the tool event of the next request carries its reason.
+func (s *ProxySession) permission(w http.ResponseWriter, r *http.Request) {
+	var request permissionRequest
+	if err := json.NewDecoder(io.LimitReader(r.Body, maxPermissionBytes)).Decode(&request); err != nil || request.ToolName == "" {
+		anthropicError(w, http.StatusBadRequest, "invalid_request_error", "easycode: invalid permission request")
+		return
+	}
+	decision := DecidePermission(s.wave, policyOf(s.wave), request.ToolName, request.Input)
+	if !decision.Allow && request.ToolUseID != "" {
+		s.decisionMu.Lock()
+		if len(s.refusals) < maxDecisions {
+			s.refusals[request.ToolUseID] = decision.Reason
+		}
+		s.decisionMu.Unlock()
+	}
+	answer := map[string]string{"behavior": "allow"}
+	if !decision.Allow {
+		answer = map[string]string{"behavior": "deny", "message": decision.Message}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(answer)
+}
+
+// refusal takes the refusal the permission prompt recorded for the tool_use ("" when none).
+func (s *ProxySession) refusal(id string) string {
+	s.decisionMu.Lock()
+	defer s.decisionMu.Unlock()
+	reason := s.refusals[id]
+	delete(s.refusals, id)
+	return reason
+}
+
+func refusalSummary(reason string) string {
+	switch reason {
+	case permission.RefusedPath:
+		return "escrita negada fora das pastas permitidas"
+	case permission.RefusedForeignArtifact:
+		return "escrita negada em artefato aprovado de outro agente"
+	case permission.RefusedCommand:
+		return "comando fora das categorias do agente"
+	}
+	return "ferramenta ou comando fora da lista do agente"
 }
 
 // platformTools maps the Claude Code tools to the tools of the platform (permissoes.yaml).

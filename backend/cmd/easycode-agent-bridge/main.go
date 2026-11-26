@@ -2,7 +2,9 @@
 // (ADR-23, US-58). The container has no network: "exec" listens on a loopback TCP address, where Claude
 // Code sends its model calls, forwards every connection to the Unix socket of the wave model proxy of
 // the worker and runs Claude Code. "guard" is the PreToolUse hook of Claude Code: it refuses writes
-// outside the paths the agent may write. "version" prints the bridge version. Static binary, no
+// outside the paths the agent may write. "mcp" is the MCP stdio server of the platform: its permission tool
+// is the --permission-prompt-tool of Claude Code and asks the worker, through the same socket, whether a
+// tool call is allowed (ADR-24). "version" prints the bridge version. Static binary, no
 // dependency on the image of the container.
 package main
 
@@ -38,7 +40,7 @@ func main() {
 
 func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "usage: agent-bridge exec|guard|version")
+		fmt.Fprintln(stderr, "usage: agent-bridge exec|guard|mcp|version")
 		return 2
 	}
 	switch args[0] {
@@ -49,6 +51,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return guard(stdin, stderr, os.Getenv("EASYCODE_WRITABLE"), workspace, denialsFile)
 	case "exec":
 		return execute(args[1:], stdin, stdout, stderr)
+	case "mcp":
+		return serveMCP(stdin, stdout, newPermissionClient(os.Getenv("ANTHROPIC_BASE_URL"), os.Getenv("ANTHROPIC_AUTH_TOKEN")))
 	}
 	fmt.Fprintf(stderr, "agent-bridge: unknown command %q\n", args[0])
 	return 2
