@@ -465,6 +465,11 @@ export const ptBR = {
         addTokenTitle: 'Cadastrar token do Claude Code',
         replaceTokenTitle: 'Trocar token do Claude Code',
         howToToken: 'Como obter o token',
+        copyHelp:
+          'O Claude Code usa os modelos da Anthropic pelo provedor próprio. Há {count} modelos Anthropic com preço vigente que ainda não estão no Claude Code.',
+        copyAction: 'Usar os modelos da Anthropic',
+        copySource: 'Copiado do modelo Anthropic com o mesmo id',
+        copied: '{count} modelos copiados para o Claude Code.',
         whereIsToken: 'Onde consigo o token do Claude Code?',
         subscriptionTyped:
           'Este valor é um token de assinatura: uso individual, não serve para um time.',

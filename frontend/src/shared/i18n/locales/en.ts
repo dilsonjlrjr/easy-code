@@ -460,6 +460,11 @@ export const en: MessageSchema = {
         addTokenTitle: 'Add the Claude Code token',
         replaceTokenTitle: 'Replace the Claude Code token',
         howToToken: 'How to get the token',
+        copyHelp:
+          'Claude Code uses the Anthropic models through its own provider. {count} Anthropic models with a current price are not in Claude Code yet.',
+        copyAction: 'Use the Anthropic models',
+        copySource: 'Copied from the Anthropic model with the same id',
+        copied: '{count} models copied to Claude Code.',
         whereIsToken: 'Where do I get the Claude Code token?',
         subscriptionTyped:
           'This value is a subscription token: individual use, it does not fit a team.',

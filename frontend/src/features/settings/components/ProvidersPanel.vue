@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAnnouncer } from '@/shared/composables/useAnnouncer'
 import { useLoader } from '@/shared/composables/useLoader'
@@ -32,6 +32,52 @@ const removing = ref(false)
 const removeFailure = ref<unknown>()
 const modelDialogOpen = ref(false)
 const modelDialogModel = ref<Model>()
+
+/**
+ * US-58: Claude Code calls the Anthropic models through its own provider. The Anthropic models with a
+ * current price that claude-code does not have yet can be copied in one action (same id, capabilities and
+ * price), through the same audited API as the price import.
+ */
+const anthropicToCopy = computed(() =>
+  store.models.filter(
+    (model) =>
+      model.provider === 'anthropic' &&
+      model.active &&
+      model.current_price &&
+      !store.models.some((other) => other.provider === CLAUDE_CODE && other.model === model.model),
+  ),
+)
+const copying = ref(false)
+const copyFailure = ref<unknown>()
+
+async function copyAnthropicModels(): Promise<void> {
+  copying.value = true
+  copyFailure.value = undefined
+  try {
+    const results = await store.importPrices(
+      anthropicToCopy.value.flatMap((model) => {
+        const price = model.current_price
+        if (!price) return []
+        return {
+          provider: CLAUDE_CODE,
+          model: model.model,
+          newModel: { display_name: model.display_name, capabilities: model.capabilities, active: true },
+          price: {
+            effective_since: price.effective_since,
+            currency: price.currency,
+            per_million_tokens: price.per_million_tokens,
+            source: t('settings.providers.claudeCode.copySource'),
+          },
+        }
+      }),
+    )
+    const failed = results.find((result) => result.error !== undefined)
+    if (failed) copyFailure.value = failed.error
+    announce(t('settings.providers.claudeCode.copied', { count: results.length - (failed ? 1 : 0) }))
+  } finally {
+    copying.value = false
+  }
+}
 
 const PRICE_TYPES: Array<keyof PricesPerMillion> = ['input', 'output', 'read_cache', 'write_cache']
 
@@ -254,6 +300,21 @@ function lastTestText(provider: Provider): string {
           <p v-if="!providerUsable(provider)" class="t2 provider-sub">
             {{ $t('settings.providers.claudeCode.notUsable') }}
           </p>
+          <div v-if="anthropicToCopy.length > 0" class="provider-sub" data-testid="copy-anthropic-models">
+            <p class="t2">
+              {{ $t('settings.providers.claudeCode.copyHelp', { count: anthropicToCopy.length }) }}
+            </p>
+            <button
+              type="button"
+              class="btn"
+              :disabled="copying"
+              :aria-busy="copying ? 'true' : undefined"
+              @click="copyAnthropicModels"
+            >
+              {{ $t('settings.providers.claudeCode.copyAction') }}
+            </button>
+            <ProblemAlert v-if="copyFailure" :error="copyFailure" />
+          </div>
           <div
             v-if="usesSubscription(provider)"
             class="note note-warn"
