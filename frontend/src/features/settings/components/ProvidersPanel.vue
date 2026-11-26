@@ -44,13 +44,18 @@ const anthropicToCopy = computed(() =>
       model.provider === 'anthropic' &&
       model.active &&
       model.current_price &&
-      !store.models.some((other) => other.provider === CLAUDE_CODE && other.model === model.model),
+      !store.models.some(
+        (other) =>
+          other.provider === CLAUDE_CODE && other.model === model.model && other.current_price,
+      ),
   ),
 )
 const copying = ref(false)
 const copyFailure = ref<unknown>()
 
 async function copyAnthropicModels(): Promise<void> {
+  // A price period never starts in the past (RNF-16): the copy is in force from now on.
+  const effectiveSince = new Date().toISOString()
   copying.value = true
   copyFailure.value = undefined
   try {
@@ -61,9 +66,13 @@ async function copyAnthropicModels(): Promise<void> {
         return {
           provider: CLAUDE_CODE,
           model: model.model,
-          newModel: { display_name: model.display_name, capabilities: model.capabilities, active: true },
+          newModel: store.models.some(
+            (other) => other.provider === CLAUDE_CODE && other.model === model.model,
+          )
+            ? undefined
+            : { display_name: model.display_name, capabilities: model.capabilities, active: true },
           price: {
-            effective_since: price.effective_since,
+            effective_since: effectiveSince,
             currency: price.currency,
             per_million_tokens: price.per_million_tokens,
             source: t('settings.providers.claudeCode.copySource'),
