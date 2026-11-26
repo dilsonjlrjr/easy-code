@@ -95,6 +95,16 @@ func (r Repositories) ensure(ctx context.Context, dir string) error {
 	return err
 }
 
+// Prepare implements runtime.RepositoryPreparer: it creates the bare repository of the project when it is
+// missing, so a volume the worker cannot write fails the wave before the agent runs, not at the commit.
+func (r Repositories) Prepare(ctx context.Context, projectID string) error {
+	dir, err := r.Path(projectID)
+	if err != nil {
+		return err
+	}
+	return r.ensure(ctx, dir)
+}
+
 // Files implements runtime.Repository: the text files of the main branch (the base of a wave).
 func (r Repositories) Files(ctx context.Context, projectID string) (map[string]string, error) {
 	dir, err := r.Path(projectID)

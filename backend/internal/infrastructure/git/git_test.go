@@ -3,7 +3,11 @@ package git_test
 import (
 	"bytes"
 	"context"
+	"errors"
+	"io/fs"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -51,5 +55,36 @@ func TestCommitsAreReadBackAndIdempotentPerWave(t *testing.T) {
 	}
 	if _, err := repos.Path("../../etc"); err == nil {
 		t.Fatal("project id must be a UUID")
+	}
+}
+
+// A repositories root the worker cannot write fails Prepare with a permission error (the wave fails
+// before the agent runs, instead of at the commit).
+func TestPrepareCreatesTheRepositoryAndReportsAnUnwritableRoot(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	ctx := context.Background()
+	repos := git.New(t.TempDir())
+	if err := repos.Prepare(ctx, project); err != nil {
+		t.Fatalf("prepare: %v", err)
+	}
+	dir, _ := repos.Path(project)
+	if _, err := os.Stat(filepath.Join(dir, "HEAD")); err != nil {
+		t.Fatalf("prepare creates the bare repository: %v", err)
+	}
+	if err := repos.Prepare(ctx, project); err != nil {
+		t.Fatalf("prepare is idempotent: %v", err)
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
+	root := t.TempDir()
+	if err := os.Chmod(root, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(root, 0o700) })
+	if err := git.New(root).Prepare(ctx, project); !errors.Is(err, fs.ErrPermission) {
+		t.Fatalf("unwritable root must report a permission error, got %v", err)
 	}
 }

@@ -7,8 +7,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"strings"
+	"syscall"
 	"time"
 	"unicode/utf8"
 
@@ -82,6 +84,11 @@ func (a Agent) ModeIn(stage string) string {
 type Repository interface {
 	Files(ctx context.Context, projectID string) (map[string]string, error)
 	Commit(ctx context.Context, projectID string, commit Commit) (string, error)
+}
+
+// RepositoryPreparer is a Repository that can create the project repository ahead of the run.
+type RepositoryPreparer interface {
+	Prepare(ctx context.Context, projectID string) error
 }
 
 // Commit is the content of one wave commit.
@@ -461,6 +468,13 @@ func (e *Executor) execute(ctx context.Context, c Claimed) error {
 		wave.Limits = agent.Policy.Ceiling.Min(e.settings.ProjectLimits)
 	}
 	if e.repository != nil {
+		if preparer, ok := e.repository.(RepositoryPreparer); ok {
+			// a repository the worker cannot create (e.g. a volume owned by another user) fails the wave now,
+			// before a full agent run that the commit would throw away
+			if err := preparer.Prepare(ctx, c.ProjectID); err != nil {
+				return e.permanent(ctx, c, err)
+			}
+		}
 		if wave.Base, err = e.repository.Files(ctx, c.ProjectID); err != nil {
 			return err
 		}
@@ -734,6 +748,24 @@ func (e *Executor) stepFailed(ctx context.Context, c Claimed, call *CallRecord, 
 	return false, e.fail(ctx, c, CauseUnrecoverable)
 }
 
+// permanent fails the wave when err cannot go away by running it again (no permission, read-only file
+// system, disk full): returned as is, the lease would expire and the wave would be claimed again as
+// crashed, repeating the whole agent run forever. Other errors are returned unchanged.
+func (e *Executor) permanent(ctx context.Context, c Claimed, err error) error {
+	if !isPermanent(err) {
+		return err
+	}
+	e.logger.ErrorContext(ctx, "wave failed by a permanent error", slog.String("wave", c.Code), slog.String("error", err.Error()))
+	if failErr := e.fail(ctx, c, CauseUnrecoverable); failErr != nil {
+		return errors.Join(err, failErr)
+	}
+	return nil
+}
+
+func isPermanent(err error) bool {
+	return errors.Is(err, fs.ErrPermission) || errors.Is(err, syscall.EROFS) || errors.Is(err, syscall.ENOSPC)
+}
+
 func (e *Executor) fail(ctx context.Context, c Claimed, cause string) error {
 	return e.tx.InTx(ctx, func(ctx context.Context) error {
 		totals, err := e.ledger.Fail(ctx, c.Lease, cause)
@@ -870,7 +902,7 @@ func (e *Executor) deliver(ctx context.Context, c Claimed, agent Agent, wave Wav
 			files[output.Path] = output.Content
 		}
 		if sha, err = e.repository.Commit(ctx, c.ProjectID, Commit{Wave: c.Code, Agent: c.Agent, Message: commitMessage(c, wave), Files: files}); err != nil {
-			return Checkpoint{}, true, err
+			return Checkpoint{}, true, e.permanent(ctx, c, err)
 		}
 	}
 	return Checkpoint{}, true, e.saveStep(ctx, c, write, func(ctx context.Context) error {

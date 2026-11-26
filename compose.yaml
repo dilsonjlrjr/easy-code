@@ -48,6 +48,8 @@ x-backend: &backend
   depends_on:
     migrate:
       condition: service_completed_successfully
+    volume-owner:
+      condition: service_completed_successfully
 
 services:
   postgres:
@@ -120,6 +122,19 @@ services:
       - sealing-public:/run/easycode-sealing
     restart: "no"
 
+  # Gives the repositories and files volumes to the platform user (65532) before api and worker start. The
+  # image owner reaches a named volume only when it is empty on its first mount: a volume created by an older
+  # stack stays owned by root and every wave fails at the commit (mkdir ... permission denied).
+  volume-owner:
+    image: postgres:17.6-bookworm
+    user: "0:0"
+    entrypoint: ["chown", "65532:65532", "/var/lib/easycode/repos", "/var/lib/easycode/files"]
+    network_mode: none
+    volumes:
+      - repos:/var/lib/easycode/repos
+      - files:/var/lib/easycode/files
+    restart: "no"
+
   api:
     <<: *backend
     build:
@@ -146,6 +161,8 @@ services:
       - repos:/var/lib/easycode/repos:ro
       - files:/var/lib/easycode/files
     depends_on:
+      volume-owner:
+        condition: service_completed_successfully
       migrate:
         condition: service_completed_successfully
       gateway-keys:
