@@ -9,7 +9,7 @@ import CanvasIcon from '@/shared/ui/CanvasIcon.vue'
 import ProblemAlert from '@/shared/ui/ProblemAlert.vue'
 import type { Model, PricesPerMillion, Provider } from '../api/providersApi'
 import { useProvidersStore } from '../stores/providersStore'
-import { CLAUDE_CODE_INSTALL, providerUsable, usesSubscription } from '../claudeCode'
+import { CLAUDE_CODE, CLAUDE_CODE_INSTALL, providerUsable, usesSubscription } from '../claudeCode'
 import ModelDialog from './ModelDialog.vue'
 import ProviderKeyDialog from './ProviderKeyDialog.vue'
 import ProviderKeyGuideDialog from './ProviderKeyGuideDialog.vue'
@@ -203,7 +203,11 @@ function lastTestText(provider: Provider): string {
             @click="openGuide(provider)"
           >
             <CanvasIcon name="question" :size="16" />
-            {{ $t('settings.keyGuide.howTo') }}
+            {{
+              provider.id === CLAUDE_CODE
+                ? $t('settings.providers.claudeCode.howToToken')
+                : $t('settings.keyGuide.howTo')
+            }}
           </button>
           <button
             type="button"
@@ -212,9 +216,13 @@ function lastTestText(provider: Provider): string {
             @click="openKeyDialog(provider)"
           >
             {{
-              provider.key.status === 'active'
-                ? $t('settings.providers.replaceKey')
-                : $t('settings.providers.addKey')
+              provider.id === CLAUDE_CODE
+                ? provider.key.status === 'active'
+                  ? $t('settings.providers.claudeCode.replaceToken')
+                  : $t('settings.providers.claudeCode.addToken')
+                : provider.key.status === 'active'
+                  ? $t('settings.providers.replaceKey')
+                  : $t('settings.providers.addKey')
             }}
           </button>
           <button

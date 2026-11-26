@@ -82,9 +82,13 @@ async function save(): Promise<void> {
         <div class="dialog-body">
           <h2 id="key-dialog-title">
             {{
-              isReplacement
-                ? $t('settings.providers.replaceKeyTitle', { provider: providerName })
-                : $t('settings.providers.addKeyTitle', { provider: providerName })
+              isClaudeCode
+                ? isReplacement
+                  ? $t('settings.providers.claudeCode.replaceTokenTitle')
+                  : $t('settings.providers.claudeCode.addTokenTitle')
+                : isReplacement
+                  ? $t('settings.providers.replaceKeyTitle', { provider: providerName })
+                  : $t('settings.providers.addKeyTitle', { provider: providerName })
             }}
           </h2>
           <p class="t2 help">
@@ -101,7 +105,11 @@ async function save(): Promise<void> {
             :disabled="testing"
             @click="openGuide"
           >
-            {{ $t('settings.keyGuide.whereIsKey', { provider: providerName }) }}
+            {{
+              isClaudeCode
+                ? $t('settings.providers.claudeCode.whereIsToken')
+                : $t('settings.keyGuide.whereIsKey', { provider: providerName })
+            }}
           </button>
           <v-text-field
             v-model="key"

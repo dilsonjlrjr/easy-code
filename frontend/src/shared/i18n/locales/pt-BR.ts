@@ -457,9 +457,15 @@ export const ptBR = {
         costCovered: 'custo estimado; coberto pela assinatura',
         costNote:
           'Com a assinatura, o custo de cada chamada é estimado pela tabela de preços e coberto pela assinatura; os tokens ficam registrados e o orçamento continua valendo.',
-        keyLabel: 'Chave de API ou token da assinatura',
+        keyLabel: 'Token do Claude Code (ou chave de API)',
         keyHelp:
-          'Cole uma chave de API da Anthropic (sk-ant-api…) ou o token gerado por claude setup-token (sk-ant-oat…). A credencial é testada antes de ser gravada; depois, só os 4 últimos caracteres aparecem.',
+          'Rode claude setup-token no servidor e cole o token gerado (começa com sk-ant-oat). Ele usa a sua assinatura Pro ou Max. Para um time, cole uma chave de API da Anthropic (sk-ant-api…). O token é testado antes de ser gravado; depois, só os 4 últimos caracteres aparecem.',
+        addToken: 'Cadastrar token',
+        replaceToken: 'Trocar token',
+        addTokenTitle: 'Cadastrar token do Claude Code',
+        replaceTokenTitle: 'Trocar token do Claude Code',
+        howToToken: 'Como obter o token',
+        whereIsToken: 'Onde consigo o token do Claude Code?',
         subscriptionTyped:
           'Este valor é um token de assinatura: uso individual, não serve para um time.',
       },
@@ -481,7 +487,7 @@ export const ptBR = {
           'Clique em Create Key, dê um nome que identifique o uso (por exemplo, easy-code) e confirme.',
       },
       claudeCode: {
-        open: 'Para um time, use uma chave de API: entre no console da Anthropic e abra o menu API keys. Para uso individual com assinatura Pro ou Max, rode claude setup-token no servidor e copie o token (começa com sk-ant-oat).',
+        open: 'No servidor da plataforma, rode claude setup-token, faça o login da sua assinatura Pro ou Max e copie o token (começa com sk-ant-oat). Para um time, use uma chave de API: entre no console da Anthropic e abra o menu API keys.',
         create:
           'Clique em Create Key, dê um nome que identifique o uso (por exemplo, easy-code) e confirme.',
       },

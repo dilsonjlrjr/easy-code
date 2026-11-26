@@ -452,9 +452,15 @@ export const en: MessageSchema = {
         costCovered: 'estimated cost; covered by the subscription',
         costNote:
           'With the subscription, the cost of each call is estimated by the price table and covered by the subscription; the tokens are recorded and the budget still applies.',
-        keyLabel: 'API key or subscription token',
+        keyLabel: 'Claude Code token (or API key)',
         keyHelp:
-          'Paste an Anthropic API key (sk-ant-api…) or the token made by claude setup-token (sk-ant-oat…). The credential is tested before it is saved; after that, only its last 4 characters are shown.',
+          'Run claude setup-token on the server and paste the token it prints (it starts with sk-ant-oat). It uses your Pro or Max subscription. For a team, paste an Anthropic API key (sk-ant-api…). The token is tested before it is saved; afterwards only its last 4 characters show.',
+        addToken: 'Add token',
+        replaceToken: 'Replace token',
+        addTokenTitle: 'Add the Claude Code token',
+        replaceTokenTitle: 'Replace the Claude Code token',
+        howToToken: 'How to get the token',
+        whereIsToken: 'Where do I get the Claude Code token?',
         subscriptionTyped:
           'This value is a subscription token: individual use, it does not fit a team.',
       },
@@ -476,7 +482,7 @@ export const en: MessageSchema = {
           'Click Create Key, give it a name that tells its use (for example, easy-code) and confirm.',
       },
       claudeCode: {
-        open: 'For a team, use an API key: sign in to the Anthropic console and open API keys. For individual use with a Pro or Max subscription, run claude setup-token on the server and copy the token (it starts with sk-ant-oat).',
+        open: 'On the platform server, run claude setup-token, sign in with your Pro or Max subscription and copy the token (it starts with sk-ant-oat). For a team, use an API key: sign in to the Anthropic console and open API keys.',
         create:
           'Click Create Key, give it a name that tells its use (for example, easy-code) and confirm.',
       },
