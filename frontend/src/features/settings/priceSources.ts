@@ -272,5 +272,20 @@ export async function fetchPriceOffers(
     signal: options.signal,
   })
   if (!response.ok) throw new Error(`HTTP ${String(response.status)}`)
-  return source.parse(await response.json(), options.today ?? new Date())
+  return withClaudeCode(source.parse(await response.json(), options.today ?? new Date()))
+}
+
+/**
+ * Claude Code calls the same Anthropic models through its own provider (US-58, ADR-23): every Anthropic
+ * offer also comes as claude-code, at the same price, so the administrator can register both at once.
+ */
+export function withClaudeCode(offers: PriceOffer[]): PriceOffer[] {
+  const copies = offers
+    .filter((item) => item.provider === 'anthropic')
+    .filter((item) => !offers.some((other) => other.provider === 'claude-code' && other.model === item.model))
+    .map((item) => ({ ...item, provider: 'claude-code' as ProviderId }))
+  return [...offers, ...copies].sort(
+    (left, right) =>
+      left.provider.localeCompare(right.provider) || left.model.localeCompare(right.model),
+  )
 }
