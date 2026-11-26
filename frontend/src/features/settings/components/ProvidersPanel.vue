@@ -34,55 +34,42 @@ const modelDialogOpen = ref(false)
 const modelDialogModel = ref<Model>()
 
 /**
- * US-58: Claude Code calls the Anthropic models through its own provider. The Anthropic models with a
- * current price that claude-code does not have yet can be copied in one action (same id, capabilities and
- * price), through the same audited API as the price import.
+ * US-58: Claude Code calls the Anthropic models through its own provider. The active Anthropic models that
+ * claude-code does not have yet are created in one action (same id and capabilities), with no price: a
+ * claude-code model without an own price uses the price in force of the Anthropic model (ADR-23, 0020), so
+ * a new Anthropic price applies to both without a copy.
  */
 const anthropicToCopy = computed(() =>
   store.models.filter(
     (model) =>
       model.provider === 'anthropic' &&
       model.active &&
-      model.current_price &&
-      !store.models.some(
-        (other) =>
-          other.provider === CLAUDE_CODE && other.model === model.model && other.current_price,
-      ),
+      !store.models.some((other) => other.provider === CLAUDE_CODE && other.model === model.model),
   ),
 )
 const copying = ref(false)
 const copyFailure = ref<unknown>()
 
 async function copyAnthropicModels(): Promise<void> {
-  // A price period never starts in the past (RNF-16): the copy is in force from now on.
-  const effectiveSince = new Date().toISOString()
   copying.value = true
   copyFailure.value = undefined
+  let copied = 0
   try {
-    const results = await store.importPrices(
-      anthropicToCopy.value.flatMap((model) => {
-        const price = model.current_price
-        if (!price) return []
-        return {
-          provider: CLAUDE_CODE,
-          model: model.model,
-          newModel: store.models.some(
-            (other) => other.provider === CLAUDE_CODE && other.model === model.model,
-          )
-            ? undefined
-            : { display_name: model.display_name, capabilities: model.capabilities, active: true },
-          price: {
-            effective_since: effectiveSince,
-            currency: price.currency,
-            per_million_tokens: price.per_million_tokens,
-            source: t('settings.providers.claudeCode.copySource'),
-          },
-        }
-      }),
-    )
-    const failed = results.find((result) => result.error !== undefined)
-    if (failed) copyFailure.value = failed.error
-    announce(t('settings.providers.claudeCode.copied', { count: results.length - (failed ? 1 : 0) }))
+    for (const model of anthropicToCopy.value) {
+      try {
+        await store.saveModel(CLAUDE_CODE, model.model, {
+          display_name: model.display_name,
+          capabilities: model.capabilities,
+          active: true,
+        })
+        copied++
+      } catch (error) {
+        copyFailure.value = error
+        break
+      }
+    }
+    await store.loadModels()
+    announce(t('settings.providers.claudeCode.copied', { count: copied }))
   } finally {
     copying.value = false
   }
@@ -253,7 +240,11 @@ function lastTestText(provider: Provider): string {
           <button
             type="button"
             class="btn btn-ghost"
-            :aria-label="$t('settings.keyGuide.howToNamed', { provider: provider.name })"
+            :aria-label="
+              provider.id === CLAUDE_CODE
+                ? $t('settings.providers.claudeCode.howToTokenNamed')
+                : $t('settings.keyGuide.howToNamed', { provider: provider.name })
+            "
             :data-testid="`key-guide-${provider.id}`"
             @click="openGuide(provider)"
           >
@@ -309,7 +300,11 @@ function lastTestText(provider: Provider): string {
           <p v-if="!providerUsable(provider)" class="t2 provider-sub">
             {{ $t('settings.providers.claudeCode.notUsable') }}
           </p>
-          <div v-if="anthropicToCopy.length > 0" class="provider-sub" data-testid="copy-anthropic-models">
+          <div
+            v-if="anthropicToCopy.length > 0"
+            class="provider-sub"
+            data-testid="copy-anthropic-models"
+          >
             <p class="t2">
               {{ $t('settings.providers.claudeCode.copyHelp', { count: anthropicToCopy.length }) }}
             </p>

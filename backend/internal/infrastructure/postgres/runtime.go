@@ -612,20 +612,20 @@ RETURNING id`,
 	return id, nil
 }
 
-// CurrentPriceID implements runtime.PriceLookup.
+// CurrentPriceID implements runtime.PriceLookup: the own price in force or, for a claude-code model without
+// one, the price of the anthropic model of the same name (0020).
 func (l Ledger) CurrentPriceID(ctx context.Context, projectID string, modelID int64, at time.Time) (int64, error) {
-	var id int64
+	var id *int64
 	err := conn(ctx, l.pool).QueryRow(WithOperation(ctx, "model_prices.current_id"), `
-SELECT mp.id FROM easycode.model_prices mp JOIN easycode.projects p ON p.organization_id = mp.organization_id
- WHERE p.public_id = $1::uuid AND mp.model_id = $2 AND mp.effective_since <= $3 ORDER BY mp.effective_since DESC LIMIT 1`,
+SELECT easycode.price_in_force(p.organization_id, $2, $3) FROM easycode.projects p WHERE p.public_id = $1::uuid`,
 		projectID, modelID, at).Scan(&id)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return 0, failure.New(failure.KindConflict, pricing.CodeModelWithoutCurrentPrice, nil)
-	}
-	if err != nil {
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return 0, fmt.Errorf("current price: %w", classify(err))
 	}
-	return id, nil
+	if id == nil {
+		return 0, failure.New(failure.KindConflict, pricing.CodeModelWithoutCurrentPrice, nil)
+	}
+	return *id, nil
 }
 
 // sourceAttachments lists the attachments of the business need of the project of a wave (US-03), the

@@ -41,15 +41,15 @@ func scanPrice(row pgx.Row) (pricing.Price, error) {
 	return p, err
 }
 
-// Models implements apppricing.Catalog with the price in force at the moment for the organization.
+// Models implements apppricing.Catalog with the price in force at the moment for the organization; a
+// claude-code model without an own price shows the one it inherits from anthropic (0020).
 func (c Catalog) Models(ctx context.Context, organizationID string, filter apppricing.ModelFilter, at time.Time) ([]apppricing.ModelView, error) {
 	rows, err := conn(ctx, c.pool).Query(WithOperation(ctx, "models.list"), `
-SELECT m.provider, m.name, m.display_name, m.tool_use, m.context_tokens, m.prompt_cache, m.image_input, m.active, cp.id
+SELECT m.provider, m.name, m.display_name, m.tool_use, m.context_tokens, m.prompt_cache, m.image_input, m.active, cp.id,
+       coalesce(cp.model_id <> m.id, false)
   FROM easycode.models m
-  LEFT JOIN LATERAL (
-    SELECT mp.id FROM easycode.model_prices mp JOIN easycode.organizations o ON o.id = mp.organization_id
-     WHERE o.public_id = $1::uuid AND mp.model_id = m.id AND mp.effective_since <= $4
-     ORDER BY mp.effective_since DESC LIMIT 1) cp ON true
+  LEFT JOIN easycode.model_prices cp ON cp.id = easycode.price_in_force(
+    (SELECT o.id FROM easycode.organizations o WHERE o.public_id = $1::uuid), m.id, $4)
  WHERE ($2 = '' OR m.provider = $2) AND ($3::boolean IS NULL OR m.active = $3)
  ORDER BY m.provider, m.name`, organizationID, filter.Provider, filter.Active, at)
 	if err != nil {
@@ -63,7 +63,7 @@ SELECT m.provider, m.name, m.display_name, m.tool_use, m.context_tokens, m.promp
 		var out row
 		m := &out.view.Model
 		err := r.Scan(&m.Provider, &m.Name, &m.DisplayName, &m.Capabilities.ToolUse, &m.Capabilities.ContextTokens,
-			&m.Capabilities.PromptCache, &m.Capabilities.ImageInput, &m.Active, &out.priceID)
+			&m.Capabilities.PromptCache, &m.Capabilities.ImageInput, &m.Active, &out.priceID, &out.view.PriceInherited)
 		if m.DisplayName == "" {
 			m.DisplayName = m.Name
 		}

@@ -74,6 +74,8 @@ export interface Model extends NewModel {
   provider: ProviderId
   model: string
   current_price?: ModelPrice | null
+  /** 'anthropic' when a claude-code model uses the price of the Anthropic model of the same id (ADR-23). */
+  price_inherited_from?: 'anthropic' | null
 }
 
 export type ModelPriceModification = Partial<

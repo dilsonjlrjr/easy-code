@@ -24,6 +24,8 @@ const CodeFailedPrecondition = "failed-precondition"
 type ModelView struct {
 	Model        pricing.Model
 	CurrentPrice *pricing.Price
+	// PriceInherited marks a claude-code model priced by the anthropic model of the same name (ADR-23).
+	PriceInherited bool
 }
 
 // ModelFilter narrows listModels.

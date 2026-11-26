@@ -217,9 +217,7 @@ SELECT octet_length(pr.business_need)
                     WHERE a.project_id = pr.id AND a.state = 'approved'), 0),
        p.id::text, p.input_price::text
   FROM easycode.projects pr
-  LEFT JOIN LATERAL (SELECT mp.id, mp.input_price FROM easycode.model_prices mp
-                      WHERE mp.organization_id = pr.organization_id AND mp.model_id = $2 AND mp.effective_since <= now()
-                      ORDER BY mp.effective_since DESC LIMIT 1) p ON true
+  LEFT JOIN easycode.model_prices p ON p.id = easycode.price_in_force(pr.organization_id, $2, now())
  WHERE pr.id = $1`, projectID, modelID).Scan(&in.bytes, &priceID, &inputPrice)
 	if err != nil {
 		return in, fmt.Errorf("estimate inputs: %w", classify(err))

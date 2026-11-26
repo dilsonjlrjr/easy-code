@@ -61,9 +61,7 @@ SELECT EXISTS (SELECT 1 FROM easycode.model_pairs mp JOIN pr ON pr.id = mp.proje
                    SELECT 1 FROM easycode.provider_keys k WHERE k.organization_id = (SELECT organization_id FROM pr)
                       AND k.provider = u.provider AND k.state = 'active'))
             ELSE EXISTS (SELECT 1 FROM easycode.provider_keys k WHERE k.organization_id = (SELECT organization_id FROM pr) AND k.state = 'active') END,
-       NOT EXISTS (SELECT 1 FROM used u WHERE NOT EXISTS (
-         SELECT 1 FROM easycode.model_prices p WHERE p.organization_id = (SELECT organization_id FROM pr)
-            AND p.model_id = u.id AND p.effective_since <= $2)),
+       NOT EXISTS (SELECT 1 FROM used u WHERE easycode.price_in_force((SELECT organization_id FROM pr), u.id, $2) IS NULL),
        (SELECT budget_stop_limit IS NOT NULL FROM pr),
        (SELECT btrim(business_need) <> '' FROM pr)`, projectID, at).Scan(&hasPair, &keysOK, &pricesOK, &hasBudget, &hasNeed)
 	if err != nil {

@@ -39,6 +39,7 @@ export interface ModelState {
   active: boolean
   capabilities: Json
   current_price?: Json | null
+  price_inherited_from?: 'anthropic' | null
 }
 
 export interface ProjectState {
@@ -707,6 +708,16 @@ export class FakeApi {
         (item) => item.provider === model.provider && item.model === model.model,
       )
       model.current_price = existing?.current_price ?? null
+      if (model.provider === 'claude-code' && !model.current_price) {
+        // 0020: a claude-code model without an own price uses the price of the Anthropic model (ADR-23).
+        const twin = this.models.find(
+          (item) => item.provider === 'anthropic' && item.model === model.model,
+        )
+        if (twin?.current_price) {
+          model.current_price = twin.current_price
+          model.price_inherited_from = 'anthropic'
+        }
+      }
       this.models = [...this.models.filter((item) => item !== existing), model]
       return { status: 200, body: model }
     }

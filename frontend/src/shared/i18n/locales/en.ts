@@ -460,10 +460,10 @@ export const en: MessageSchema = {
         addTokenTitle: 'Add the Claude Code token',
         replaceTokenTitle: 'Replace the Claude Code token',
         howToToken: 'How to get the token',
+        howToTokenNamed: 'How to get the Claude Code token',
         copyHelp:
-          'Claude Code uses the Anthropic models through its own provider. {count} Anthropic models with a current price are not in Claude Code yet.',
+          'Claude Code uses the Anthropic models through its own provider, at the Anthropic price in force. {count} active Anthropic models are not in Claude Code yet.',
         copyAction: 'Use the Anthropic models',
-        copySource: 'Copied from the Anthropic model with the same id',
         copied: '{count} models copied to Claude Code.',
         whereIsToken: 'Where do I get the Claude Code token?',
         subscriptionTyped:
@@ -537,6 +537,7 @@ export const en: MessageSchema = {
       noModels:
         'No model registered. Fetch prices from a source or register a model in Providers and models.',
       noCurrentPrice: 'no current price',
+      inheritedFrom: 'inherited from Anthropic',
       newPeriod: 'Record new price period',
       currentTitle: 'Current price per model',
       currentCaption: 'Current price of each model, with the date its period started',

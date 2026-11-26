@@ -56,6 +56,9 @@ type modelJSON struct {
 	Capabilities capabilitiesJSON `json:"capabilities"`
 	Active       bool             `json:"active"`
 	CurrentPrice *modelPriceJSON  `json:"current_price"`
+	// PriceInheritedFrom is "anthropic" when a claude-code model uses the price of the anthropic model of the
+	// same name (ADR-23); null when the price is its own or there is none.
+	PriceInheritedFrom *string `json:"price_inherited_from"`
 }
 
 func priceOf(p pricing.Price) modelPriceJSON {
@@ -75,6 +78,10 @@ func modelOf(view apppricing.ModelView) modelJSON {
 	if view.CurrentPrice != nil {
 		price := priceOf(*view.CurrentPrice)
 		out.CurrentPrice = &price
+		if view.PriceInherited {
+			from := "anthropic"
+			out.PriceInheritedFrom = &from
+		}
 	}
 	return out
 }

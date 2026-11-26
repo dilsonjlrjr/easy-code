@@ -153,7 +153,15 @@ async function onImported(count: number): Promise<void> {
                 <span class="t2 mono model-id">{{ model.model }}</span>
               </th>
               <template v-if="model.current_price">
-                <td>{{ format.dateTime(model.current_price.effective_since) }}</td>
+                <td>
+                  {{ format.dateTime(model.current_price.effective_since) }}
+                  <span
+                    v-if="model.price_inherited_from"
+                    class="chip"
+                    :data-testid="`inherited-${model.provider}-${model.model}`"
+                    >{{ $t('settings.prices.inheritedFrom') }}</span
+                  >
+                </td>
                 <td v-for="priceType in PRICE_TYPES" :key="priceType">
                   {{
                     format.amount(

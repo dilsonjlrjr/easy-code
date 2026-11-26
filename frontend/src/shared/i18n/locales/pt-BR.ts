@@ -465,10 +465,10 @@ export const ptBR = {
         addTokenTitle: 'Cadastrar token do Claude Code',
         replaceTokenTitle: 'Trocar token do Claude Code',
         howToToken: 'Como obter o token',
+        howToTokenNamed: 'Como obter o token do Claude Code',
         copyHelp:
-          'O Claude Code usa os modelos da Anthropic pelo provedor próprio. Há {count} modelos Anthropic com preço vigente que ainda não estão no Claude Code.',
+          'O Claude Code usa os modelos da Anthropic pelo provedor próprio, com o preço vigente da Anthropic. Há {count} modelos Anthropic ativos que ainda não estão no Claude Code.',
         copyAction: 'Usar os modelos da Anthropic',
-        copySource: 'Copiado do modelo Anthropic com o mesmo id',
         copied: '{count} modelos copiados para o Claude Code.',
         whereIsToken: 'Onde consigo o token do Claude Code?',
         subscriptionTyped:
@@ -542,6 +542,7 @@ export const ptBR = {
       noModels:
         'Nenhum modelo cadastrado. Busque preços em fonte externa ou cadastre um modelo em Provedores e modelos.',
       noCurrentPrice: 'sem preço vigente',
+      inheritedFrom: 'herdado da Anthropic',
       newPeriod: 'Registrar nova vigência',
       currentTitle: 'Preço vigente por modelo',
       currentCaption: 'Preço vigente de cada modelo, com a data de início da vigência',

@@ -144,6 +144,44 @@ test('US-58 CA-2: Claude Code not detected shows the install step', async ({ pag
   await expectNoSeriousA11yViolations(page)
 })
 
+test('US-58: the Anthropic models come to Claude Code without a price copy and inherit the price', async ({
+  page,
+}) => {
+  const api = signedInApi()
+    .withClaudeCode(true)
+    .withModel(
+      { model: 'claude-sonnet-5-5', display_name: 'Claude Sonnet 5.5' },
+      {
+        id: 7,
+        effective_since: '2026-11-20T00:00:00Z',
+        currency: 'USD',
+        per_million_tokens: { input: '3', output: '15', read_cache: '0.3', write_cache: '3.75' },
+        source: 'tabela',
+        used: false,
+        recorded_at: '2026-11-20T00:00:00Z',
+      },
+    )
+  await api.install(page)
+  const pricePosts: string[] = []
+  page.on('request', (request) => {
+    if (request.method() === 'POST' && request.url().includes('/prices'))
+      pricePosts.push(request.url())
+  })
+  await page.goto('/settings/providers')
+
+  const copy = page.getByTestId('copy-anthropic-models')
+  await expect(copy).toContainText('preço vigente da Anthropic')
+  await copy.getByRole('button', { name: 'Usar os modelos da Anthropic' }).click()
+  await expect(copy).toHaveCount(0)
+  expect(pricePosts).toEqual([])
+
+  await page.goto('/settings/prices')
+  await expect(page.getByTestId('inherited-claude-code-claude-sonnet-5-5')).toContainText(
+    'herdado da Anthropic',
+  )
+  await expectNoSeriousA11yViolations(page)
+})
+
 test('US-58 CA-1/CA-3/CA-4: Claude Code detected takes a subscription token and warns it is individual use', async ({
   page,
 }) => {
@@ -156,10 +194,10 @@ test('US-58 CA-1/CA-3/CA-4: Claude Code detected takes a subscription token and 
   await expect(card.getByTestId('detection-claude-code')).toContainText('versão 2.1.0')
   await expect(card.getByTestId('install-claude-code')).toHaveCount(0)
 
-  await card.getByRole('button', { name: 'Cadastrar chave' }).click()
+  await card.getByRole('button', { name: 'Cadastrar token' }).click()
   const dialog = page.getByRole('dialog')
   await expect(dialog).toContainText('claude setup-token')
-  await dialog.getByLabel('Chave de API ou token da assinatura').fill('sk-ant-oat01-secret-wxyz')
+  await dialog.getByLabel('Token do Claude Code (ou chave de API)').fill('sk-ant-oat01-secret-wxyz')
   await expect(dialog.getByTestId('subscription-typed')).toBeVisible()
   await dialog.getByRole('button', { name: 'Testar e salvar' }).click()
 
